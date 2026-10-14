@@ -4,6 +4,11 @@ This directory begins a native Linux port of the Werkkzeug3 player used by
 fr-038. It does not yet play the demo. The original Windows sources and Theta
 assets remain the reference; no Wine or Windows SDK is needed for these targets.
 
+The native frame runner now executes the demo root's animation, events and image
+compositing. Sixteen of 54 sampled timeline positions render with diagnostic
+scene geometry and the saved overlays/effects. Full scene materials, particles,
+audio synchronization and visual comparison remain unfinished.
+
 The first target, `wz3-inspect`, reads the complete version-13 Theta projects
 directly, including operator parameters, animation records, timeline events,
 splines, embedded blobs and demo settings. It also accepts version 14's additional
@@ -381,8 +386,8 @@ Local checks cover event order, boundary times, duration rounding and overflow,
 backward static-event sampling, nested variable/matrix restoration, multiple
 viewport executions, and unchanged saved data. The new event scene also renders
 with llvmpipe. These are individual event branches; execution from the demo root,
-its global variables, output-target reuse, compositing, dynamic triggers and
-stateful EventTime remain to be connected.
+its global variables, output-target reuse and compositing are handled by the
+frame runner below. Dynamic triggers and stateful EventTime remain unported.
 
 ## Material state and native unlit shaders
 
@@ -433,19 +438,95 @@ they also pass with llvmpipe. CPU initialization/update tests pass with ASan/UBS
 
 The swatches use RGBA8 uploads and native mipmap generation; legacy pixel-format,
 mipmap-count and alpha-threshold rules still need reproduction. Bump lighting,
-shadows, environment mapping, fog, render targets and final scene material drawing
-remain pending. `wz3-scene-render` continues to use diagnostic shading. Individual
+shadows, environment mapping, fog and final scene material drawing remain
+pending. Render targets are now supported in the frame compositor below.
+`wz3-scene-render` continues to use diagnostic shading. Individual
 swatches do not execute the demo root's global-variable or compositing scopes,
 and comparison against original Windows frames is still required.
 
+## Demo root and native image compositor
+
+`FramePlayer` executes Demo, Load/Store/Nop, Event/Time, Viewport, Select, Copy,
+Blur, Crashzoom, Color, Merge, Layer2D and RenderTarget. It preserves ancestor
+animation scopes, initializes shared materials through the root's scopes, and
+executes material updates when a layer draws. Scene traversal shares the same
+material bank and timeline. Draw commands freeze material values, scene instances,
+viewport dimensions, UV rectangles and target bindings in execution order.
+
+The target pool follows the four-size `.k` editor path in `genoverlay.cpp`:
+three RGBA8 targets each at 1024×512, 512×256, 256×128 and full size. Full size
+uses 1024×512 storage cropped to the current master viewport. UV scaling tracks
+that crop, including changes inside nested RenderTarget operations. The pool
+retains the source's reference counts, owner lookup, per-operator cache timing,
+screen fallback on exhaustion, and resets before each Demo IPP input. This is
+distinct from the later Debris player configuration that sets `GENOVER_RTSIZES`
+to zero. The `.k` recipes require the four-size interpretation.
+
+One source defect is repaired explicitly: `Exec_IPP_Select` still takes `count`,
+but `KOp::Exec` no longer passes `OPC_OUTPUTCOUNT` (marked removed in `kdoc.hpp`).
+The native runner uses `GetOutputCount()`'s equivalent, the number of graph
+consumers, for `Refs += count - 1`. This restores the intended fan-out accounting;
+it does not reproduce an undefined stack argument. Tests cover a Select with
+one input and two consumers so input count cannot accidentally substitute for
+output count. Comparison with original executable captures is still needed.
+
+`FrameRenderer` uses a persistent surfaceless EGL/GLES3 context and texture-backed
+framebuffers. IPP draws stay on the GPU; only the final screen is read back.
+Shaders, procedural texture uploads and target storage survive between frames.
+Layer2D uses the saved material's combiners, blend state, UV transforms, rectangle
+and depth. Render targets can be sampled by later material draws. Blur and
+Crashzoom preserve the source's two draws per four samples, quantized weights and
+intermediate RGBA8 rounding. Tests distinguish this from a single four-tap sum.
+
+```sh
+build/native/wz3-frame werkkzeug3/data/theta/theta_final.k root 72 build/native/root-72.json
+build/native/wz3-frame-render werkkzeug3/data/theta/theta_final.k root 72 \
+  build/native/root-72.ppm --diagnostic-geometry
+python3 werkkzeug3/native/tools/frame_audit.py \
+  --renderer build/native/wz3-frame-render --output build/native/theta-root-gallery \
+  --expect-evaluated 16 --expect-rendered 16
+```
+
+The graphics command **requires `--diagnostic-geometry` when a scene is present**.
+It draws scene geometry with the existing checker shader, then executes the
+saved postprocessing and overlays. Omitting the option fails rather than silently
+substituting a scene shader. This is a compositor milestone, not complete Theta
+playback or a claim of original visual fidelity.
+
+The audit samples the full root at 54 distinct midpoints from 57 enabled IPP
+events. **16 samples execute and render**; 38 fail explicitly at PartSystem,
+Particles or Walk. Beats 56, 72, 144 and 216 each emit 14 draws with one viewport;
+beat 384 emits 17 draws with two viewports, including render-to-texture. Overlay
+transition samples emit additional draws. The gallery retains command snapshots,
+image hashes, exact failures and graphics driver details. Each gallery sample
+starts a fresh player; repeated-frame tests separately exercise retained targets
+and mutable event durations. Neither is a continuous audio-driven playback test.
+
+CPU tests cover ordering, scoped global variables, shared target reuse, crop UVs,
+nested master restoration, the three-slot capacity, zero-duration events and
+failure recovery. GPU tests check overlay alpha blending, target orientation,
+resolution changes, blur rounding, Merge/Crashzoom and explicit diagnostic opt-in.
+Five root samples also run repeatedly in one native player/renderer. The 23-test
+Release suite passes on Radeon RX 7900 XT; compositor tests pass on llvmpipe and
+the 13-test CPU suite passes under Clang ASan/UBSan. Small driver-dependent
+rounding differences are possible; bit-identical original output is unverified.
+
+Current limits: unsupported IPP commands/flags fail explicitly, including Merge's
+texture-alpha mode. New GPU target storage starts black with depth one because
+the original initial contents are unspecified; later draws retain it. Targets
+currently have separate depth attachments. Imported/procedural textures still
+use RGBA8 and native mipmaps rather than all legacy format rules. Scene geometry
+uploads are shared within a viewport draw but are not yet retained across frames.
+Scene lighting, shadow volumes, fog, particle/effect execution, uncached text
+metrics, dynamic events, audio timing and original-frame comparison remain.
+
 ## Next steps
 
-1. Execute the demo root and IPP graph using the event scheduler; extend scene
-   execution to particles and effects, and verify native font
-   metrics against GDI.
+1. Extend root scene execution to Particles, PartSystem and Walk, and verify native
+   font metrics against GDI.
 2. Reproduce the editor's operator type checking and version migrations.
 3. Connect material passes to scene drawing and implement lighting/shadow and
-   postprocessing shaders, checking output against the
+   remaining effect shaders, checking output against the
    reference rather than treating a successful graphics upload as visual fidelity.
 4. Integrate the native animation runtime with scene/material/effect execution
    and Ogg playback driven by a sample-based clock.

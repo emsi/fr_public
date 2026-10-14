@@ -6,7 +6,7 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 find_package(JPEG REQUIRED)
 find_package(Freetype REQUIRED)
 option(WZ3_SANITIZE "Enable address and undefined-behavior sanitizers" OFF)
-option(WZ3_BUILD_RENDERER "Build headless EGL/GLES3 texture and mesh previews" OFF)
+option(WZ3_BUILD_RENDERER "Build headless EGL/GLES3 previews and frame compositor" OFF)
 option(WZ3_TEST_GRAPHICS "Run EGL tests (requires a working graphics driver)" OFF)
 if(WZ3_TEST_GRAPHICS AND NOT WZ3_BUILD_RENDERER)
   message(FATAL_ERROR "WZ3_TEST_GRAPHICS requires WZ3_BUILD_RENDERER")
@@ -14,10 +14,10 @@ endif()
 
 add_library(wz3_project src/project.cpp src/graph.cpp src/texture.cpp src/bitmap_composite.cpp
   src/bitmap_filters.cpp src/bitmap_text.cpp src/font.cpp src/jpeg_decode.c src/mesh.cpp src/mesh_topology.cpp
-  src/mesh_kernel.cpp src/mesh_evaluate.cpp src/mesh_noise.cpp src/mesh_displace.cpp src/animation.cpp src/timeline.cpp src/material.cpp src/material_shader.cpp src/scene.cpp)
+  src/mesh_kernel.cpp src/mesh_evaluate.cpp src/mesh_noise.cpp src/mesh_displace.cpp src/animation.cpp src/timeline.cpp src/material.cpp src/material_shader.cpp src/scene.cpp src/frame.cpp)
 # Mesh Perlin uses downward rounding; animation uses nearest-even. Preserve
 # their scalar operation boundaries and explicit floating-point environments.
-set_source_files_properties(src/mesh_kernel.cpp src/mesh_noise.cpp src/animation.cpp src/timeline.cpp src/material_shader.cpp src/scene.cpp PROPERTIES
+set_source_files_properties(src/mesh_kernel.cpp src/mesh_noise.cpp src/animation.cpp src/timeline.cpp src/material_shader.cpp src/scene.cpp src/frame.cpp PROPERTIES
   COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
 target_link_libraries(wz3_project PRIVATE JPEG::JPEG Freetype::Freetype)
 target_include_directories(wz3_project PUBLIC include PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
@@ -44,6 +44,9 @@ add_custom_command(
   DEPENDS tools/mesh_kernel.py ../genmesh.cpp VERBATIM)
 target_sources(wz3_project PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated/mesh_kernel.inc" "${CMAKE_CURRENT_BINARY_DIR}/generated/mesh_noise.inc")
 
+add_executable(wz3-frame src/frame_preview.cpp)
+target_link_libraries(wz3-frame PRIVATE wz3_project)
+target_compile_options(wz3-frame PRIVATE -Wall -Wextra -Wpedantic -Werror)
 add_executable(wz3-inspect src/inspect.cpp)
 target_link_libraries(wz3-inspect PRIVATE wz3_project)
 target_compile_options(wz3-inspect PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -67,6 +70,10 @@ if(WZ3_BUILD_RENDERER)
   find_package(PkgConfig REQUIRED)
   pkg_check_modules(EGL REQUIRED IMPORTED_TARGET egl)
   pkg_check_modules(GLES REQUIRED IMPORTED_TARGET glesv2)
+  add_executable(wz3-frame-render src/frame_preview.cpp src/frame_render.cpp src/render.cpp)
+  target_compile_definitions(wz3-frame-render PRIVATE WZ3_GPU_FRAME=1)
+  target_link_libraries(wz3-frame-render PRIVATE wz3_project PkgConfig::EGL PkgConfig::GLES)
+  target_compile_options(wz3-frame-render PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_executable(wz3-render src/preview.cpp src/render.cpp)
   target_compile_definitions(wz3-render PRIVATE WZ3_GPU_PREVIEW=1)
   target_link_libraries(wz3-render PRIVATE wz3_project PkgConfig::EGL PkgConfig::GLES)
@@ -97,6 +104,11 @@ if(BUILD_TESTING)
     message(STATUS "No test font found; set WZ3_TEST_FONT_FILE to enable font atlas tests")
   endif()
   if(WZ3_TEST_GRAPHICS)
+    add_executable(wz3-frame-render-tests tests/render_frame.cpp src/frame_render.cpp src/render.cpp)
+    target_link_libraries(wz3-frame-render-tests PRIVATE wz3_project PkgConfig::EGL PkgConfig::GLES)
+    add_test(NAME gpu_frame_compositor COMMAND wz3-frame-render-tests
+      "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta/theta_final.k")
+    set_tests_properties(gpu_frame_compositor PROPERTIES LABELS graphics)
     add_test(NAME gpu_theta_gradient COMMAND wz3-render
       "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta/theta_final.k" 263
       "${CMAKE_CURRENT_BINARY_DIR}/theta-gradient.ppm")
@@ -130,6 +142,10 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_BINARY_DIR}/theta-material.ppm")
     set_tests_properties(gpu_material_combiners gpu_theta_material PROPERTIES LABELS graphics)
   endif()
+  add_executable(wz3-frame-tests tests/frame.cpp)
+  target_link_libraries(wz3-frame-tests PRIVATE wz3_project)
+  add_test(NAME frame_execution COMMAND wz3-frame-tests
+    "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta/theta_final.k")
   add_executable(wz3-graph-tests tests/graph.cpp)
   target_link_libraries(wz3-graph-tests PRIVATE wz3_project)
   add_test(NAME graph_connections COMMAND wz3-graph-tests)

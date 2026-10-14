@@ -3,6 +3,7 @@
 #include "wz3/texture.hpp"
 #include "wz3/mesh.hpp"
 #include "wz3/scene.hpp"
+#include "gles.hpp"
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <GLES3/gl3.h>
@@ -15,72 +16,8 @@
 
 namespace wz3 {
 namespace {
-void egl_check(bool ok, const char* action) {
-  if (!ok) {
-    std::ostringstream message;
-    message << action << " failed (EGL 0x" << std::hex << eglGetError() << ')';
-    throw std::runtime_error(message.str());
-  }
-}
-struct Context {
-  EGLDisplay display = EGL_NO_DISPLAY;
-  EGLContext context = EGL_NO_CONTEXT;
-  EGLSurface surface = EGL_NO_SURFACE;
-  Context(unsigned width, unsigned height, bool depth = false) {
-    try {
-      const char* extensions = eglQueryString(EGL_NO_DISPLAY, EGL_EXTENSIONS);
-      if (!extensions || std::string_view(extensions).find("EGL_MESA_platform_surfaceless") == std::string_view::npos)
-        throw std::runtime_error("EGL_MESA_platform_surfaceless is required by this headless preview");
-      display = eglGetPlatformDisplay(EGL_PLATFORM_SURFACELESS_MESA, EGL_DEFAULT_DISPLAY, nullptr);
-      egl_check(display != EGL_NO_DISPLAY, "eglGetPlatformDisplay");
-      EGLint major, minor;
-      egl_check(eglInitialize(display, &major, &minor), "eglInitialize");
-      egl_check(eglBindAPI(EGL_OPENGL_ES_API), "eglBindAPI");
-      const EGLint attributes[] = {
-        EGL_SURFACE_TYPE, EGL_PBUFFER_BIT, EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
-        EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8,
-        EGL_DEPTH_SIZE, depth ? 24 : 0,
-        EGL_SAMPLE_BUFFERS, 0, EGL_SAMPLES, 0, EGL_NONE
-      };
-      EGLConfig config;
-      EGLint count;
-      egl_check(eglChooseConfig(display, attributes, &config, 1, &count), "eglChooseConfig");
-      if (!count) throw std::runtime_error("no RGBA8 GLES3 pbuffer configuration");
-      const EGLint size[] = {EGL_WIDTH, EGLint(width), EGL_HEIGHT, EGLint(height), EGL_NONE};
-      surface = eglCreatePbufferSurface(display, config, size);
-      egl_check(surface != EGL_NO_SURFACE, "eglCreatePbufferSurface");
-      const EGLint version[] = {EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE};
-      context = eglCreateContext(display, config, EGL_NO_CONTEXT, version);
-      egl_check(context != EGL_NO_CONTEXT, "eglCreateContext");
-      egl_check(eglMakeCurrent(display, surface, surface, context), "eglMakeCurrent");
-    } catch (...) { release(); throw; }
-  }
-  Context(const Context&) = delete;
-  Context& operator=(const Context&) = delete;
-  ~Context() { release(); }
-  void release() {
-    if (display != EGL_NO_DISPLAY) {
-      eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-      if (context != EGL_NO_CONTEXT) eglDestroyContext(display, context);
-      if (surface != EGL_NO_SURFACE) eglDestroySurface(display, surface);
-      eglTerminate(display);
-    }
-  }
-};
-GLuint shader(GLenum type, const char* source) {
-  const GLuint id = glCreateShader(type);
-  glShaderSource(id, 1, &source, nullptr);
-  glCompileShader(id);
-  GLint ok = 0;
-  glGetShaderiv(id, GL_COMPILE_STATUS, &ok);
-  if (!ok) {
-    char log[4096]{};
-    glGetShaderInfoLog(id, sizeof(log), nullptr, log);
-    glDeleteShader(id);
-    throw std::runtime_error(std::string("shader compilation failed: ") + log);
-  }
-  return id;
-}
+using gles::Context;
+using gles::shader;
 }
 
 std::vector<std::uint8_t> render_texture(const Texture& texture) {
@@ -258,13 +195,8 @@ std::vector<std::uint8_t> render_mesh(const Mesh& mesh, unsigned width, unsigned
             << " visible pixels, " << depth_bits << "-bit depth buffer\n";
   return output;
 }
-std::vector<std::uint8_t> render_scene(const SceneFrame& frame,unsigned width,unsigned height) {
-  if(width<16 || height<16 || width>4096 || height>4096)throw std::runtime_error("invalid scene render size");
+void draw_scene_geometry(const SceneFrame& frame,unsigned width,unsigned height) {
   const auto view_projection=scene_view_projection(frame.camera,width,height);
-  Context context(width,height,true);
-  std::cerr<<"GL vendor: "<<glGetString(GL_VENDOR)<<"\nGL renderer: "<<glGetString(GL_RENDERER)<<"\nGL version: "<<glGetString(GL_VERSION)<<'\n';
-  GLint depth_bits=0;glGetIntegerv(GL_DEPTH_BITS,&depth_bits);
-  if(depth_bits<16)throw std::runtime_error("scene render needs a depth buffer");
   const auto vertex=shader(GL_VERTEX_SHADER,R"(#version 300 es
     layout(location=0) in vec3 position;
     layout(location=1) in vec3 uv;
@@ -297,15 +229,12 @@ std::vector<std::uint8_t> render_scene(const SceneFrame& frame,unsigned width,un
   if(!linked) {char log[4096]{};glGetProgramInfoLog(program,sizeof(log),nullptr,log);throw std::runtime_error(std::string("scene shader link failed: ")+log);}
   glUseProgram(program);glUniformMatrix4fv(glGetUniformLocation(program,"view_projection"),1,GL_FALSE,view_projection.data());
   const auto model_location=glGetUniformLocation(program,"model");
-  glViewport(0,0,width,height);glDisable(GL_DITHER);glDisable(GL_BLEND);glDisable(GL_CULL_FACE);
-  glEnable(GL_DEPTH_TEST);glDepthFunc(GL_LEQUAL);
-  const unsigned red=(frame.background>>16)&255,green=(frame.background>>8)&255,blue=frame.background&255;
-  // This standalone geometry pass has no preceding render target to preserve.
-  glClearColor(red/255.0f,green/255.0f,blue/255.0f,1);glClearDepthf(1);glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+  glDisable(GL_DITHER);glDisable(GL_BLEND);glDisable(GL_CULL_FACE);
+  glEnable(GL_DEPTH_TEST);glDepthMask(GL_TRUE);glDepthFunc(GL_LEQUAL);
   if(glCheckFramebufferStatus(GL_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE)throw std::runtime_error("incomplete scene framebuffer");
   struct Buffers {GLuint vao{},vertices{},indices{};GLsizei count{};};
   struct Vertex {Vec3 position,uv,normal;};
-  std::map<const Mesh*,Buffers> geometry;std::size_t triangles=0,allocated=0;
+  std::map<const Mesh*,Buffers> geometry;std::size_t allocated=0;
   for(const auto& instance:frame.instances) {
     if(!instance.mesh)throw std::runtime_error("missing scene geometry");
     auto [found,created]=geometry.try_emplace(instance.mesh.get());auto& buffer=found->second;
@@ -327,15 +256,22 @@ std::vector<std::uint8_t> render_scene(const SceneFrame& frame,unsigned width,un
       glEnableVertexAttribArray(0);glEnableVertexAttribArray(1);glEnableVertexAttribArray(2);
       glGenBuffers(1,&buffer.indices);glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,buffer.indices);glBufferData(GL_ELEMENT_ARRAY_BUFFER,indices.size()*sizeof(std::uint32_t),indices.data(),GL_STATIC_DRAW);
     }else glBindVertexArray(buffer.vao);
-    glUniformMatrix4fv(model_location,1,GL_FALSE,instance.world.data());glDrawElements(GL_TRIANGLES,buffer.count,GL_UNSIGNED_INT,nullptr);triangles+=buffer.count/3;
+    glUniformMatrix4fv(model_location,1,GL_FALSE,instance.world.data());glDrawElements(GL_TRIANGLES,buffer.count,GL_UNSIGNED_INT,nullptr);
   }
-  std::vector<std::uint8_t> output(std::size_t(width)*height*4);glReadPixels(0,0,width,height,GL_RGBA,GL_UNSIGNED_BYTE,output.data());
-  const auto error=glGetError();
   for(auto [mesh,b]:geometry) {static_cast<void>(mesh);glDeleteVertexArrays(1,&b.vao);glDeleteBuffers(1,&b.vertices);glDeleteBuffers(1,&b.indices);}
-  glDeleteProgram(program);if(error!=GL_NO_ERROR)throw std::runtime_error("scene GPU error "+std::to_string(error));
-  std::size_t visible=0;for(std::size_t i=0;i<output.size();i+=4)visible+=output[i]!=red || output[i+1]!=green || output[i+2]!=blue;
+  glDeleteProgram(program);const auto error=glGetError();if(error!=GL_NO_ERROR)throw std::runtime_error("scene GPU error "+std::to_string(error));
+}
+std::vector<std::uint8_t> render_scene(const SceneFrame& frame,unsigned width,unsigned height) {
+  if(width<16 || height<16 || width>4096 || height>4096)throw std::runtime_error("invalid scene render size");
+  Context context(width,height,true);
+  std::cerr<<"GL renderer: "<<glGetString(GL_RENDERER)<<'\n';
+  glViewport(0,0,width,height);glDepthMask(GL_TRUE);glClearDepthf(1);
+  glClearColor(((frame.background>>16)&255)/255.0f,((frame.background>>8)&255)/255.0f,(frame.background&255)/255.0f,1);
+  glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+  draw_scene_geometry(frame,width,height);
+  std::vector<std::uint8_t> output(std::size_t(width)*height*4);glReadPixels(0,0,width,height,GL_RGBA,GL_UNSIGNED_BYTE,output.data());
+  if(glGetError()!=GL_NO_ERROR)throw std::runtime_error("scene readback failed");
   for(unsigned y=0;y<height/2;++y)std::swap_ranges(output.begin()+std::size_t(y)*width*4,output.begin()+std::size_t(y+1)*width*4,output.begin()+std::size_t(height-y-1)*width*4);
-  std::cerr<<"Scene GPU readback: "<<frame.instances.size()<<" instances, "<<geometry.size()<<" shared meshes, "<<triangles<<" triangles, "<<visible<<" visible pixels\n";
   return output;
 }
 std::vector<std::uint8_t> render_material_quad(const Material& material,
