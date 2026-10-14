@@ -10,6 +10,6 @@ struct PrintLayout {
 // EffectPrintInfo and the literal-text/alignment path of Exec_Effect_Print.
 // Game-state/FPS substitutions need a runtime provider and are rejected.
 PrintLayout layout_print(std::span<const std::uint32_t>,std::string_view,
-                         const std::array<GlyphMetric,256>&);
+                         const std::array<GlyphMetric,256>&,bool legacy_alignment=false);
 SceneMatrix print_normalized_projection(unsigned width,unsigned height);
 } // namespace wz3

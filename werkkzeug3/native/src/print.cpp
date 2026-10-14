@@ -7,14 +7,13 @@ namespace {
 void require(bool ok,const char* message) {if(!ok)throw std::runtime_error(message);}
 struct Nearest {int previous=std::fegetround();Nearest(){std::fesetround(FE_TONEAREST);}~Nearest(){std::fesetround(previous);}};
 }
-PrintLayout layout_print(std::span<const std::uint32_t> parameters,std::string_view text,const std::array<GlyphMetric,256>& glyphs) {
+PrintLayout layout_print(std::span<const std::uint32_t> parameters,std::string_view text,const std::array<GlyphMetric,256>& glyphs,bool legacy_alignment) {
   const Nearest rounding;require(parameters.size()==5 || parameters.size()==6,"unsupported Print layout");
   std::array<std::uint32_t,6> p{};std::copy(parameters.begin(),parameters.end(),p.begin());
-  // Theta's five-word layout predates Radius and the two-bit alignment field.
-  // Bit 0 is otherwise unused by the archived handler. Interpret it as the old
-  // center-X toggle only for that saved layout; original-capture confirmation
-  // remains pending. Six-word records retain the archived flag semantics.
-  if(parameters.size()==5 && (p[0]&1) && !(p[0]&0x300))p[0]=(p[0]&~1u)|0x100;
+  // Both the five-word editor record and the six-word final 1.01 release
+  // predate the newer two-bit alignment field. The release reference confirms
+  // bit 0 centers each line. Later six-word records retain newer semantics.
+  if((parameters.size()==5 || legacy_alignment) && (p[0]&1) && !(p[0]&0x300))p[0]=(p[0]&~1u)|0x100;
   const auto flags=p[0];require(!(flags&~0x377u),"unsupported Print flags");
   std::array<float,5> v;for(unsigned i=0;i<5;++i) {v[i]=as_float(p[i+1]);require(std::isfinite(v[i]) && std::abs(v[i])<=1e6f,"invalid Print numeric parameter");}
   const auto sx=v[0],sy=v[1],spacing=v[2],line_spacing=v[3],radius=v[4];

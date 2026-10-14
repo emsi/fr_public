@@ -171,7 +171,7 @@ struct ScenePlayer::Impl {
           if(bitmap->fonts[page]) {require(!atlas || atlas==bitmap->fonts[page],"ambiguous Print font page");atlas=bitmap->fonts[page];}
         }
         require(atlas!=nullptr,"Print material has no matching font atlas page");
-        auto layout=layout_print(scope.parameters,op.strings[0],atlas->glyphs);draw.normalized=layout.normalized;draw.vertices=std::move(layout.vertices);
+        auto layout=layout_print(scope.parameters,op.strings[0],atlas->glyphs,project.runtime_graph);draw.normalized=layout.normalized;draw.vertices=std::move(layout.vertices);
         if(!draw.normalized)for(auto& vertex:draw.vertices)vertex.position=scene_point(world,vertex.position);
       }
       frame.effects.push_back(std::move(draw));

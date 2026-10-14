@@ -56,6 +56,14 @@ void layout() {
   }
   auto p=std::vector<std::uint32_t>{0x11,f(1),f(1),0,0};const auto legacy=wz3::layout_print(p,"ABC",glyphs);p[0]=0x110;p.push_back(0);const auto modern=wz3::layout_print(p,"ABC",glyphs);
   check(legacy.vertices[0].position==modern.vertices[0].position,"five-word center-X migration");
+  auto released=p;released[0]=0x11;
+  const auto centered=wz3::layout_print(released,"ABC",glyphs,true);
+  check(centered.vertices[0].position==modern.vertices[0].position,"six-word release center-X migration");
+  check(wz3::layout_print(released,"ABC",glyphs).vertices[0].position!=centered.vertices[0].position,
+        "later six-word Print changed its alignment semantics");
+  released[0]=0x211;
+  check(wz3::layout_print(released,"ABC",glyphs,true).vertices[0].position==wz3::layout_print(released,"ABC",glyphs).vertices[0].position,
+        "release compatibility overrode explicit alignment bits");
   for(const auto& text:std::vector<std::string>{"%3s0", "%s0a|b;", std::string(512,'A')}) {bool caught=false;try{wz3::layout_print(p,text,glyphs);}catch(const std::runtime_error&){caught=true;}check(caught,"unsupported Print formatting/line overflow accepted");}
   std::string many;for(unsigned i=0;i<20;++i)many+=std::string(300,'A')+'\n';source::compare(p,many,glyphs);check(wz3::layout_print(p,many,glyphs).vertices.size()==4096*4,"Print source geometry cap");
   std::cout<<count<<" Print layouts matched archived source (alignment, markers, blanks, spacing and curvature)\n";

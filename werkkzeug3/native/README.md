@@ -647,13 +647,16 @@ layout follows the archived handler; literal text and normalized debug projectio
 are supported. Game/FPS substitutions, built-in page zero and font pages sourced
 outside the material's texture graph remain explicit unsupported cases.
 
-Theta's five-word Print record predates the Radius parameter. Radius defaults to
-zero. It also sets bit 0, which the archived newer handler ignores while using
-bits 8..9 for horizontal alignment. Native loading interprets that old bit as
-center-X only for a five-word record without newer alignment bits. This is an
-**inferred compatibility migration**, not an original-executable verification:
-without it the saved credits start at screen center and clip off the right edge.
-Six-word records retain the archived flag behavior.
+Theta's five-word editor Print record predates the Radius parameter, which
+defaults to zero. Both it and the released final 1.01 six-word record use bit 0
+for horizontal centering. The newer archived handler instead uses bits 8..9.
+Native layout translates the old flag for five-word records and for the recovered
+release format, while preserving explicit newer alignment bits. Other six-word
+editor records retain the newer handler semantics. The aligned reference confirms
+the release's centered lines: without this translation, each line starts at the
+screen center and clips on the right. The recovered serif glyphs, text size and
+line spacing now closely match the reference credits; small temporal/image
+sampling differences remain to measure.
 
 The saved credits atlas has no cached glyph mask. Its empty font name selects
 Arial in the original GDI implementation. Native rendering requires an explicit
@@ -1116,6 +1119,14 @@ the independent Python decoder. All 127 animation programs execute in the audit
 (635 evaluations), with 15,677 spline samples. This establishes native graph
 execution, not final visual or physical audio synchronization fidelity.
 
+A full SDL/X11 playback of the recovered graph at 1024×768 completed 16,550
+frames, 15,719 presentations and 11,406 dummy-audio callbacks through beat 609
+(264,782 ms), with zero new static assets/uploads/programs during playback.
+This exercised the native callback clock but did not test physical audio output.
+The subsequent legacy Print alignment correction was verified with 15,626
+continuous GPU frames through beat 575, in addition to layout and sanitizer tests.
+
+
 The [2011 Annikras video linked by Pouët](https://www.youtube.com/watch?v=rrgzBptM2bM)
 provides an initial visual reference. It is a third-party capture, not a new
 controlled run of the executable. Whole-track audio correlation aligns it at
@@ -1137,7 +1148,20 @@ The tool records media hashes, overlap/window correlations and exact seek times.
 Frame requests use the native 16 ms simulation step. Video frame cadence and
 lossy compression still limit image comparison. Early geometry/camera captures
 correspond visually; the credits expose the confirmed project/font differences.
-This is not a pixel-fidelity pass for the whole demo. The native Text decoder
+This is not a pixel-fidelity pass for the whole demo.
+The released-graph comparison now provides specific remaining discrepancies:
+
+| Music time | Observation against the aligned video |
+| --- | --- |
+| 30 s | Tunnel geometry, materials and camera closely correspond. |
+| 120 s | Cube distribution differs despite a corresponding tunnel/camera. |
+| 195 s | The creature has a different projected position/size. |
+| 220 s | Native lighting is much brighter in the sampled frame. |
+| 250 s | Recovered glyphs, credits and centered layout closely correspond. |
+
+Frame phase, original timing, random precalculation and legacy engine behavior
+still need to be separated before assigning causes to those differences.
+ The native Text decoder
 now accepts the release's cached font atlases, preserving all metrics through
 Blur/Merge/Store. The recovered `duality` atlas contains 73 glyph records and
 `Droid` four; decoding both needs no installed font. Verify the real blobs after
@@ -1156,8 +1180,8 @@ release-versus-video comparisons possible without the editor-project differences
 
 ## Next steps
 
-1. Verify the released graph's Print alignment, timing and remaining visual
-   differences against the aligned reference.
+1. Recover/verify release timing and investigate the observed cube distribution,
+   creature motion and late lighting differences against the aligned reference.
 2. Reproduce the editor's operator type checking and version migrations.
 3. Compare saved material shading against original frames and extend remaining
    shader/format support where the comparison exposes a difference.
