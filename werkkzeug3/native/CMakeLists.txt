@@ -14,10 +14,10 @@ endif()
 
 add_library(wz3_project src/project.cpp src/graph.cpp src/texture.cpp src/bitmap_composite.cpp
   src/bitmap_filters.cpp src/bitmap_text.cpp src/font.cpp src/jpeg_decode.c src/mesh.cpp src/mesh_topology.cpp
-  src/mesh_kernel.cpp src/mesh_evaluate.cpp src/mesh_noise.cpp src/mesh_displace.cpp src/animation.cpp src/timeline.cpp src/material.cpp src/material_shader.cpp src/scene.cpp src/frame.cpp src/particles.cpp src/effect_particles.cpp src/walk.cpp src/print.cpp)
+  src/mesh_kernel.cpp src/mesh_evaluate.cpp src/mesh_noise.cpp src/mesh_displace.cpp src/animation.cpp src/timeline.cpp src/material.cpp src/material_shader.cpp src/scene.cpp src/frame.cpp src/particles.cpp src/effect_particles.cpp src/walk.cpp src/print.cpp src/scene_draw.cpp)
 # Mesh Perlin uses downward rounding; animation uses nearest-even. Preserve
 # their scalar operation boundaries and explicit floating-point environments.
-set_source_files_properties(src/mesh_kernel.cpp src/mesh_noise.cpp src/animation.cpp src/timeline.cpp src/material_shader.cpp src/scene.cpp src/frame.cpp src/particles.cpp src/effect_particles.cpp src/walk.cpp src/print.cpp PROPERTIES
+set_source_files_properties(src/mesh_kernel.cpp src/mesh_noise.cpp src/animation.cpp src/timeline.cpp src/material_shader.cpp src/scene.cpp src/frame.cpp src/particles.cpp src/effect_particles.cpp src/walk.cpp src/print.cpp src/scene_draw.cpp PROPERTIES
   COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
 target_link_libraries(wz3_project PRIVATE JPEG::JPEG Freetype::Freetype)
 target_include_directories(wz3_project PUBLIC include PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
@@ -78,7 +78,7 @@ if(WZ3_BUILD_RENDERER)
   target_compile_definitions(wz3-render PRIVATE WZ3_GPU_PREVIEW=1)
   target_link_libraries(wz3-render PRIVATE wz3_project PkgConfig::EGL PkgConfig::GLES)
   target_compile_options(wz3-render PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  add_executable(wz3-mesh-render src/mesh_preview.cpp src/render.cpp)
+  add_executable(wz3-mesh-render src/mesh_preview.cpp src/render.cpp src/frame_render.cpp)
   target_compile_definitions(wz3-mesh-render PRIVATE WZ3_GPU_PREVIEW=1)
   target_link_libraries(wz3-mesh-render PRIVATE wz3_project PkgConfig::EGL PkgConfig::GLES)
   target_compile_options(wz3-mesh-render PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -93,6 +93,9 @@ if(WZ3_BUILD_RENDERER)
 endif()
 
 if(BUILD_TESTING)
+  add_executable(wz3-scene-draw-tests tests/scene_draw.cpp)
+  target_link_libraries(wz3-scene-draw-tests PRIVATE wz3_project)
+  add_test(NAME scene_draw_order COMMAND wz3-scene-draw-tests)
   add_custom_command(
     OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/print_oracle.inc"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/print_oracle.py"
@@ -148,6 +151,10 @@ if(BUILD_TESTING)
     message(STATUS "No test font found; set WZ3_TEST_FONT_FILE to enable font atlas tests")
   endif()
   if(WZ3_TEST_GRAPHICS)
+    add_executable(wz3-mesh-material-tests tests/render_mesh_material.cpp src/frame_render.cpp src/render.cpp)
+    target_link_libraries(wz3-mesh-material-tests PRIVATE wz3_project PkgConfig::EGL PkgConfig::GLES)
+    add_test(NAME gpu_mesh_materials COMMAND wz3-mesh-material-tests "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta/theta_final.k")
+    set_tests_properties(gpu_mesh_materials PROPERTIES LABELS graphics)
     add_executable(wz3-frame-render-tests tests/render_frame.cpp src/frame_render.cpp src/render.cpp)
     target_link_libraries(wz3-frame-render-tests PRIVATE wz3_project PkgConfig::EGL PkgConfig::GLES)
     set(WZ3_FRAME_TEST_ARGS "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta/theta_final.k")

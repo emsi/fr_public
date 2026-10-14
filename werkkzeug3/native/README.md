@@ -8,7 +8,8 @@ The native frame runner now executes the demo root's animation, events and image
 compositing. All 54 sampled timeline positions render with diagnostic scene
 geometry and saved particle, text, overlay and image effects when an explicit
 font file is supplied. A 2,601-frame CPU run also traverses the timeline through
-the credits. Full scene materials, lighting/shadows, audio synchronization and
+the credits. Unlit mesh materials also render natively in isolation. Full scene
+lighting/shadows, audio synchronization and
 comparison with original output remain unfinished.
 
 The first target, `wz3-inspect`, reads the complete version-13 Theta projects
@@ -478,10 +479,9 @@ strict `age > lifetime` and swap deletion; multiple paint jobs can advance the
 same slot more than once in a frame.
 
 The GLES compositor draws these billboards using their saved unlit texture
-combiners, vertex colors, blend/depth/cull state and UV transforms. Scene meshes
-still use diagnostic shading. Particle jobs retain their relative paint order;
-interleaving with the complete mesh material/light/shadow pipeline remains to be
-ported. The scene-only geometry renderer rejects effect scenes instead of omitting
+combiners, vertex colors, blend/depth/cull state and UV transforms. Particle jobs
+now interleave with ordinary mesh passes in strict material mode. Theta scenes
+still need diagnostic shading until the light/shadow pipeline is ported. The scene-only geometry renderer rejects effect scenes instead of omitting
 their particles.
 
 For a preview with accumulated motion and retained GPU targets, replay from zero:
@@ -654,11 +654,69 @@ they also pass with llvmpipe. CPU initialization/update tests pass with ASan/UBS
 
 The swatches use RGBA8 uploads and native mipmap generation; legacy pixel-format,
 mipmap-count and alpha-threshold rules still need reproduction. Bump lighting,
-shadows, environment mapping, fog and final scene material drawing remain
-pending. Render targets are now supported in the frame compositor below.
+shadows, environment mapping and fog remain pending. Unlit scene mesh drawing
+is now connected to the frame compositor. Render targets are now supported in the frame compositor below.
 `wz3-scene-render` continues to use diagnostic shading. Individual
 swatches do not execute the demo root's global-variable or compositing scopes,
 and comparison against original Windows frames is still required.
+
+## Saved mesh material drawing
+
+The frame renderer now draws ordinary static mesh material passes with the saved
+camera, instance transform, face material binding, UVs, packed vertex colors,
+depth/cull/alpha/blend state and procedural or render-target textures. GPU geometry
+is retained across frames and shared by repeated instances. New material snapshots
+can change color and UV transforms without re-uploading the geometry.
+
+Faces are grouped by material binding and mesh pass. The draw queue follows
+`Engine_::BuildPaintJobs`: material+mesh pass wraps to eight bits **before** the
+instance pass adjustment clamps to 0..255. Mesh jobs arrive in reverse encounter
+order; effects and meshes share the sorted pass/phase queue. Ordinary late mesh
+phases use light slot 15, while effects use slot zero, as in the non-kkrieger
+archive. The old low 16 sort bits came from a process address; native code uses
+deterministic material binding/pass IDs. Transparent ties between different
+materials therefore still need comparison with original output. This path has
+no CPU frustum optimization; normal GPU clipping applies.
+
+The renderer rejects lighting inserts, per-light/default materials, specialized
+mesh finalizers, fog, depth bias and unsupported texture projections. It does not
+skip those passes or replace them with checker shading. The existing diagnostic
+option remains available for full-root traversal.
+
+```sh
+build/native/wz3-mesh-render werkkzeug3/data/theta/theta_final.k mesh.fireball \
+  build/native/fireball-material.ppm --materials
+python3 werkkzeug3/native/tools/mesh_audit.py \
+  --renderer build/native/wz3-mesh-render --materials \
+  --output build/native/theta-mesh-materials \
+  --expect-supported 32 --expect-unsupported 0 --expect-rendered 10
+```
+
+**10 of 32 named meshes** render with their saved materials: the two circle
+meshes, three fireball meshes, highway2, citybridge, cityblock, bridge2 and citycomp.
+These are isolated beat-zero material snapshots with a fitted inspection camera;
+they do not replace the scene camera, timeline or compositing in the real player.
+The gallery records the other 22 failures explicitly. This is separate from
+static geometry coverage, which remains 32/32 named and 752/752 reachable meshes.
+
+GPU tests check face binding, retained geometry with changing transforms/materials,
+depth-only occlusion, culling, packed vertex colors, interleaved mesh/effect
+blending and sampled render-target orientation/UV transforms. They render all ten
+real Theta meshes on both Radeon and llvmpipe. CPU tests check batch grouping,
+signed pass wrapping/clamping, stable equal-material order, unsupported paths and
+ARGB quantization with restored floating-point rounding mode.
+
+All **54 full-root samples still require lighting inserts** and fail explicitly
+in strict material mode. The diagnostic gallery continues to render all 54.
+The separate strict audit makes this remaining boundary reproducible:
+
+```sh
+python3 werkkzeug3/native/tools/frame_audit.py \
+  --renderer build/native/wz3-frame-render --strict-materials \
+  --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf \
+  --output build/native/theta-material-frames \
+  --expect-evaluated 54 --expect-rendered 0
+```
 
 ## Demo root and native image compositor
 
@@ -704,10 +762,10 @@ python3 werkkzeug3/native/tools/frame_audit.py \
   --expect-evaluated 54 --expect-rendered 54
 ```
 
-The graphics command **requires `--diagnostic-geometry` when a scene is present**.
-It draws scene geometry with the existing checker shader and particles with
-their saved materials, then executes the saved postprocessing and overlays. Omitting the option fails rather than silently
-substituting a scene shader. This is a compositor milestone, not complete Theta
+The graphics command uses saved materials by default and rejects unsupported
+scene shading. **Theta still needs `--diagnostic-geometry`** because its scenes
+require the unfinished lighting pipeline. That option draws checker mesh geometry
+and saved particle/text materials, followed by the saved postprocessing and overlays. This is a compositor milestone, not complete Theta
 playback or a claim of original visual fidelity.
 
 The audit samples the full root at 54 distinct midpoints from 57 enabled IPP
@@ -723,17 +781,19 @@ nested master restoration, the three-slot capacity, zero-duration events and
 failure recovery. GPU tests check overlay alpha blending, target orientation,
 resolution changes, blur rounding, Merge/Crashzoom and explicit diagnostic opt-in.
 Twelve geometry samples and three credits samples also run repeatedly in native
-players/renderers. The 28-test
-Release suite passes on Radeon RX 7900 XT; compositor tests pass on llvmpipe and
-the 18-test CPU suite passes under Clang ASan/UBSan. Small driver-dependent
+players/renderers. The 30-test
+Release suite passes on Radeon RX 7900 XT; mesh material and compositor tests pass
+on llvmpipe. All 19 CPU tests, including the new draw-order checks, pass under
+Clang ASan/UBSan. Small driver-dependent
 rounding differences are possible; bit-identical original output is unverified.
 
 Current limits: unsupported IPP commands/flags fail explicitly, including Merge's
 texture-alpha mode. New GPU target storage starts black with depth one because
 the original initial contents are unspecified; later draws retain it. Targets
 currently have separate depth attachments. Imported/procedural textures still
-use RGBA8 and native mipmaps rather than all legacy format rules. Scene geometry
-uploads are shared within a viewport draw but are not yet retained across frames.
+use RGBA8 and native mipmaps rather than all legacy format rules. Saved-material mesh
+uploads are retained across frames; the diagnostic checker still rebuilds them
+for each viewport draw.
 Scene lighting, shadow volumes, fog, original font metrics, dynamic events, audio
 timing and original-frame comparison remain.
 
@@ -742,8 +802,8 @@ timing and original-frame comparison remain.
 1. Verify inferred Print alignment migration and native font metrics against
    the original executable/GDI.
 2. Reproduce the editor's operator type checking and version migrations.
-3. Connect material passes to scene drawing and implement lighting/shadow and
-   remaining effect shaders, checking output against the
+3. Implement lighting inserts, per-light passes, shadow volumes and remaining
+   material shaders on the mesh draw queue, checking output against the
    reference rather than treating a successful graphics upload as visual fidelity.
 4. Integrate the native animation runtime with scene/material/effect execution
    and Ogg playback driven by a sample-based clock.

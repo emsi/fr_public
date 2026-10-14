@@ -44,9 +44,9 @@ public:
                   std::optional<std::int32_t> milliseconds={});
 };
 void write_frame(std::ostream&,const DemoFrame&);
-// Keeps render targets and generated texture uploads alive across frames.
-// Until the scene material engine is ported, scene draws require an explicit
-// diagnostic_geometry=true. IPP and Layer2D still use their saved materials.
+// Keeps render targets, textures and saved-material mesh uploads across frames.
+// Unsupported scene shading fails explicitly. diagnostic_geometry=true selects
+// checker mesh shading; effects, IPP and Layer2D retain their saved materials.
 class FrameRenderer {
   struct Impl;
   std::unique_ptr<Impl> impl;

@@ -17,6 +17,8 @@ def main():
     parser.add_argument("--renderer", type=Path, help="Optional wz3-mesh-render executable")
     parser.add_argument("--project", type=Path, default=root / "werkkzeug3/data/theta/theta_final.k")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--materials", action="store_true", help="render saved materials at beat zero instead of the diagnostic checker")
+    parser.add_argument("--expect-rendered", type=int)
     parser.add_argument("--expect-supported", type=int)
     parser.add_argument("--expect-unsupported", type=int)
     parser.add_argument("--all-operators", action="store_true", help="Audit every reachable MESH operator, including unnamed intermediate results")
@@ -56,7 +58,8 @@ def main():
             record.update(obj=obj.name, obj_sha256=hashlib.sha256(obj.read_bytes()).hexdigest())
             content = f'<p><a href="{obj.name}">Download OBJ</a></p><pre>{html.escape(run.stdout)}</pre>'
             if args.renderer:
-                render = subprocess.run([args.renderer, args.project, str(op["id"]), ppm], capture_output=True, text=True, timeout=180)
+                mode = ["--materials"] if args.materials else []
+                render = subprocess.run([args.renderer, args.project, str(op["id"]), ppm, *mode], capture_output=True, text=True, timeout=180)
                 record["render"] = {"exit_code": render.returncode, "stdout": render.stdout, "stderr": render.stderr}
                 if render.returncode == 0:
                     data = ppm.read_bytes()
@@ -74,19 +77,24 @@ def main():
     supported = sum(record["supported"] for record in records)
     unsupported = len(records) - supported
     scope = "reachable mesh operators" if args.all_operators else "named meshes"
-    title = f"Theta geometry: {supported}/{len(records)} {scope} exported"
+    rendered = sum("image" in record for record in records)
+    rendering = ("Saved mesh materials at beat zero and a fitted inspection camera. Unsupported lighting fails explicitly. Scene animation and compositing are not applied." if args.materials else
+                 "Diagnostic UV checker and crease-aware weighted normals. Original material shaders, camera and animation are not applied.")
+    title = f"Theta geometry: {supported}/{len(records)} {scope} exported, {rendered} rendered"
     report = {"project": str(args.project.resolve()), "project_sha256": hashlib.sha256(args.project.read_bytes()).hexdigest(),
               "exporter": str(args.exporter.resolve()), "renderer": str(args.renderer.resolve()) if args.renderer else None,
-              "scope": scope, "supported": supported, "unsupported": unsupported, "render_failures": render_failures, "meshes": records}
+              "scope": scope, "rendering": rendering, "rendered": rendered, "supported": supported, "unsupported": unsupported, "render_failures": render_failures, "meshes": records}
     (args.output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     (args.output / "index.html").write_text(
         '<!doctype html><meta charset="utf-8"><title>' + title + '</title>' +
         '<style>body{background:#222;color:#eee;font:16px sans-serif;margin:2rem}a{color:#9cf}main{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:1rem}article{background:#333;padding:1rem}h2{font-size:1rem}img{width:100%;height:280px;object-fit:contain}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}</style>' +
-        f'<h1>{title}</h1><p>Native geometry previews with a diagnostic UV checker and crease-aware weighted normals. Original material shaders, camera and animation are not applied.</p>' +
+        f'<h1>{title}</h1><p>{html.escape(rendering)}</p>' +
         '<p>Theta by Farbrausch (fr-038). Derived artwork: CC-BY-SA 3.0. See werkkzeug3/data/theta/LICENSE and readme.txt in the archive.</p><main>' +
         "".join(cards) + '</main>\n')
     print(title)
-    if render_failures:
+    if args.expect_rendered is not None and rendered != args.expect_rendered:
+        raise SystemExit("GPU material coverage differs from expected count; inspect report.json")
+    if render_failures and args.expect_rendered is None:
         raise SystemExit("GPU rendering failed for: " + ", ".join(render_failures))
     if ((args.expect_supported is not None and args.expect_supported != supported) or
             (args.expect_unsupported is not None and args.expect_unsupported != unsupported)):

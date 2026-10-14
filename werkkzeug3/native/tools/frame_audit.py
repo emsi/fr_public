@@ -19,6 +19,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--beats", type=float, nargs="+", help="explicit sample beats instead of event midpoints")
     parser.add_argument("--font-file", type=Path, help="explicit font for uncached credits atlas")
+    parser.add_argument("--strict-materials", action="store_true", help="use saved mesh materials; reject unsupported scene shading")
     parser.add_argument("--expect-evaluated", type=int)
     parser.add_argument("--expect-rendered", type=int)
     args = parser.parse_args()
@@ -64,7 +65,8 @@ def main():
                           sha256=hashlib.sha256(snapshot.read_bytes()).hexdigest())
             body += f'<a href="{snapshot.name}">Ordered draw commands</a>'
             if args.renderer:
-                render = subprocess.run([args.renderer, *command, ppm, "--diagnostic-geometry", *options], capture_output=True, text=True, timeout=180)
+                mode = [] if args.strict_materials else ["--diagnostic-geometry"]
+                render = subprocess.run([args.renderer, *command, ppm, *mode, *options], capture_output=True, text=True, timeout=180)
                 record["render"] = dict(exit_code=render.returncode, stdout=render.stdout, stderr=render.stderr)
                 if render.returncode == 0:
                     width, height = write_png(ppm.read_bytes(), png)
@@ -77,9 +79,11 @@ def main():
         print(f'{"OK" if record["evaluated"] else "UNSUPPORTED"}: root at beat {beat:g}', flush=True)
     evaluated = sum(record["evaluated"] for record in records)
     rendered = sum("image" in record for record in records)
+    rendering = ("saved mesh, particle, Print, IPP and Layer2D materials; unsupported shading fails explicitly" if args.strict_materials else
+                 "diagnostic scene geometry with saved particle, Print, IPP and Layer2D materials")
     report = dict(project=str(args.project.resolve()), project_sha256=hashlib.sha256(args.project.read_bytes()).hexdigest(),
                   scope="full demo root; independent samples from fresh players, no audio clock or continuous playback",
-                  rendering="diagnostic scene geometry with saved particle, Print, IPP and Layer2D materials",
+                  rendering=rendering,
                   evaluated=evaluated, rendered=rendered, samples=records)
     if args.font_file:
         report["font"] = dict(file=str(args.font_file.resolve()), sha256=hashlib.sha256(args.font_file.read_bytes()).hexdigest(), original_gdi_fidelity=False)
@@ -89,7 +93,7 @@ def main():
         '<style>body{background:#111;color:#ddd;font:16px sans-serif;margin:2rem}main{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:1rem}'
         'article{background:#222;padding:1rem}img{width:100%}pre{white-space:pre-wrap}a{color:#8cf}</style>'
         f'<h1>Native Theta root: {evaluated}/{len(records)} samples evaluated, {rendered} rendered</h1>'
-        '<p>Diagnostic scene geometry; saved compositing and overlays. Scene materials, lighting, shadows, stateful particle effects and audio remain pending. '
+        f'<p>{html.escape(rendering)}. Lighting, shadows and audio remain pending. '
         'Each sample starts a fresh player; this is not a continuous-playback test.</p>'
         '<p>fr-038: Theta by Farbrausch. Derived previews: CC-BY-SA 3.0; see werkkzeug3/data/theta/LICENSE and readme.txt.</p>'
         '<main>' + "\n".join(cards) + '</main>\n')

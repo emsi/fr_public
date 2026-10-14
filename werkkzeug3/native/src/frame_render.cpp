@@ -2,6 +2,7 @@
 #include "wz3/frame.hpp"
 #include "wz3/texture.hpp"
 #include "wz3/print.hpp"
+#include "wz3/scene_draw.hpp"
 #include "gles.hpp"
 #include <algorithm>
 #include <iostream>
@@ -60,6 +61,13 @@ struct FrameRenderer::Impl {
   std::map<std::size_t,std::shared_ptr<const Texture>> supplied_bitmaps;
   std::map<std::size_t,std::size_t> bitmap_sizes;
   std::map<std::string,GLuint> programs;
+  struct MeshGeometry {
+    std::shared_ptr<const Mesh> owner;GLuint buffer{};
+    std::vector<std::pair<GLint,GLsizei>> batches;
+  };
+  struct MeshDraw {GLuint buffer;GLint first;GLsizei count;};
+  std::map<const Mesh*,MeshGeometry> geometry;
+  std::size_t geometry_bytes{};
   GLuint vao{},particle_buffer{};std::array<GLuint,4> samplers{};
   std::size_t surface_bytes{},bitmap_bytes{};
   Impl(const Project& p,const Graph& g,const TextureOptions& options):project(p),graph(g),texture_options(options) {
@@ -71,6 +79,7 @@ struct FrameRenderer::Impl {
     for(const auto& [id,s]:surfaces) {static_cast<void>(id);destroy(s);}
     for(const auto& [id,t]:bitmaps) {static_cast<void>(id);glDeleteTextures(1,&t);}
     for(const auto& [source,p]:programs) {static_cast<void>(source);glDeleteProgram(p);}
+    for(const auto& [id,g]:geometry) {static_cast<void>(id);glDeleteBuffers(1,&g.buffer);}
     glDeleteBuffers(1,&particle_buffer);glDeleteSamplers(4,samplers.data());glDeleteVertexArrays(1,&vao);
   }
   void activate() {gles::egl_check(eglMakeCurrent(context.display,context.surface,context.surface,context.context),"frame context activation");}
@@ -111,13 +120,13 @@ struct FrameRenderer::Impl {
     if(!ok) {char log[4096]{};glGetProgramInfoLog(p,sizeof(log),nullptr,log);glDeleteProgram(p);throw std::runtime_error(std::string("frame shader link failed: ")+log);}
     programs.emplace(key,p);return p;
   }
-  void quad(const FrameQuad& q,std::size_t destination,const SceneEffectDraw* effect=nullptr,const SceneMatrix* projection=nullptr) {
+  void quad(const FrameQuad& q,std::size_t destination,const SceneEffectDraw* effect=nullptr,const SceneMatrix* projection=nullptr,const MeshDraw* mesh=nullptr) {
     const auto& s=q.shader;const auto flags=s.words[0];
-    require(!(flags&0xfc0078),"unlit draw fog, shadow or depth bias is not ported");
-    const auto p=program(s,effect!=nullptr);glUseProgram(p);glBindVertexArray(vao);
+    require(!(flags&0xfc0058),"unlit draw fog, shadow or depth bias is not ported");
+    const bool vertices=effect || mesh;const auto p=program(s,vertices);glUseProgram(p);glBindVertexArray(vao);
     std::array<float,36> matrices{};std::array<float,16> rects{},colors{};std::array<float,4> flip{};
     for(unsigned i=0;i<4;++i) {
-      auto uv_shader=s;if(!effect)uv_shader.words[4+i]&=~0x10u; // Quad UV0 and UV1 are supplied explicitly.
+      auto uv_shader=s;if(!vertices)uv_shader.words[4+i]&=~0x10u; // Quad UV0 and UV1 are supplied explicitly.
       const auto m=material_uv_matrix(uv_shader,i);std::copy(m.begin(),m.end(),matrices.begin()+i*9);
       std::copy(q.uv[i].begin(),q.uv[i].end(),rects.begin()+i*4);
       for(unsigned c=0;c<4;++c)colors[i*4+c]=((s.words[28+i]>>(c==0 ? 16 : c==1 ? 8 : c==2 ? 0 : 24))&255)/255.0f;
@@ -142,7 +151,8 @@ struct FrameRenderer::Impl {
     glUniform4fv(glGetUniformLocation(p,"rectangle"),1,q.rectangle.data());glUniform1f(glGetUniformLocation(p,"depth"),q.depth);
     glUniform4fv(glGetUniformLocation(p,"uv_rect[0]"),4,rects.data());glUniformMatrix3fv(glGetUniformLocation(p,"uv_transform[0]"),4,GL_FALSE,matrices.data());
     glUniform4fv(glGetUniformLocation(p,"flip_texture"),1,flip.data());glUniform4fv(glGetUniformLocation(p,"material_colors[0]"),4,colors.data());
-    glFrontFace(effect ? GL_CW : GL_CCW);if(flags&2)glDisable(GL_CULL_FACE);else {glEnable(GL_CULL_FACE);glCullFace((flags&4) ? GL_FRONT : GL_BACK);}
+    glColorMask(!(flags&0x20),!(flags&0x20),!(flags&0x20),!(flags&0x20));
+    glFrontFace(vertices ? GL_CW : GL_CCW);if(flags&2)glDisable(GL_CULL_FACE);else {glEnable(GL_CULL_FACE);glCullFace((flags&4) ? GL_FRONT : GL_BACK);}
     glEnable(GL_DEPTH_TEST);glDepthMask((flags&0x100) ? GL_TRUE : GL_FALSE);glDepthFunc(!(flags&0x200) ? GL_ALWAYS : (flags&0x80) ? GL_EQUAL : GL_LEQUAL);
     const auto blend=(flags>>12)&15;require(blend<=9,"unsupported frame blend mode");
     if(!blend)glDisable(GL_BLEND);
@@ -151,40 +161,83 @@ struct FrameRenderer::Impl {
       constexpr GLenum dst[]={0,GL_ONE_MINUS_SRC_ALPHA,GL_ONE,GL_SRC_COLOR,GL_SRC_COLOR,GL_ONE_MINUS_SRC_COLOR,GL_ONE,GL_ONE_MINUS_SRC_COLOR,GL_ONE,GL_ONE};
       glEnable(GL_BLEND);glBlendEquation(blend==6 ? GL_FUNC_REVERSE_SUBTRACT : GL_FUNC_ADD);glBlendFunc(src[blend],dst[blend]);
     }
-    if(!effect)glDrawArrays(GL_TRIANGLE_STRIP,0,4);
+    if(!vertices)glDrawArrays(GL_TRIANGLE_STRIP,0,4);
     else {
-      require(projection && effect->vertices.size()%4==0 && effect->vertices.size()<=65536*4,"invalid effect geometry");
-      std::vector<SceneEffectVertex> triangles;triangles.reserve(effect->vertices.size()/4*6);
-      for(std::size_t base=0;base<effect->vertices.size();base+=4)for(unsigned i:{0u,1u,2u,0u,2u,3u})triangles.push_back(effect->vertices[base+i]);
+      require(projection,"missing mesh/effect projection");
+      GLint first=0;GLsizei count=0;
+      if(mesh) {glBindBuffer(GL_ARRAY_BUFFER,mesh->buffer);first=mesh->first;count=mesh->count;}
+      else {
+        require(effect->vertices.size()%4==0 && effect->vertices.size()<=65536*4,"invalid effect geometry");
+        std::vector<SceneEffectVertex> triangles;triangles.reserve(effect->vertices.size()/4*6);
+        for(std::size_t base=0;base<effect->vertices.size();base+=4)for(unsigned i:{0u,1u,2u,0u,2u,3u})triangles.push_back(effect->vertices[base+i]);
+        glBindBuffer(GL_ARRAY_BUFFER,particle_buffer);glBufferData(GL_ARRAY_BUFFER,triangles.size()*sizeof(SceneEffectVertex),triangles.data(),GL_STREAM_DRAW);count=GLsizei(triangles.size());
+      }
       glUniformMatrix4fv(glGetUniformLocation(p,"view_projection"),1,GL_FALSE,projection->data());
-      glBindBuffer(GL_ARRAY_BUFFER,particle_buffer);glBufferData(GL_ARRAY_BUFFER,triangles.size()*sizeof(SceneEffectVertex),triangles.data(),GL_STREAM_DRAW);
       glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,sizeof(SceneEffectVertex),reinterpret_cast<void*>(offsetof(SceneEffectVertex,position)));
       glVertexAttribPointer(1,2,GL_FLOAT,GL_FALSE,sizeof(SceneEffectVertex),reinterpret_cast<void*>(offsetof(SceneEffectVertex,uv)));
       glVertexAttribPointer(2,4,GL_UNSIGNED_BYTE,GL_TRUE,sizeof(SceneEffectVertex),reinterpret_cast<void*>(offsetof(SceneEffectVertex,color)));
       glEnableVertexAttribArray(0);glEnableVertexAttribArray(1);glEnableVertexAttribArray(2);
-      glDrawArrays(GL_TRIANGLES,0,GLsizei(triangles.size()));
+      glDrawArrays(GL_TRIANGLES,first,count);
     }
+  }
+  FrameQuad resolve_material(const MaterialShader& shader,const SceneEffectDraw* effect=nullptr) {
+    FrameQuad q;q.shader=shader;
+    for(unsigned slot=0;slot<4;++slot)if(q.shader.textures[slot]) {
+      auto id=*q.shader.textures[slot];
+      if(effect && effect->textures.contains(id)) {q.textures[slot]=FrameTexture{false,id};continue;}
+      bool resolved=false;
+      for(unsigned depth=0;depth<512;++depth) {
+        require(id<project.operators.size() && graph.nodes[id].active,"invalid scene texture");const auto cmd=project.operators[id].command;
+        if(cmd==1) {require(graph.nodes[id].links.size()==1 && graph.nodes[id].links[0],"unresolved scene texture Load");id=*graph.nodes[id].links[0];}
+        else if(cmd==2 || cmd==3) {require(graph.nodes[id].inputs.size()==1,"invalid scene texture alias");id=graph.nodes[id].inputs[0];}
+        else {resolved=true;break;}
+      }
+      require(resolved,"scene texture alias depth limit");
+      q.textures[slot]=project.operators[id].command==0x26 ? FrameTexture{true,13+id} : FrameTexture{false,id};
+    }
+    return q;
+  }
+  void effect(const SceneEffectDraw& draw,const SceneMatrix& projection,const FrameTarget& target) {
+    if(draw.vertices.empty())return;
+    const auto matrix=draw.normalized ? print_normalized_projection(target.width,target.height) : projection;
+    quad(resolve_material(draw.shader,&draw),target.surface,&draw,&matrix);
   }
   void effects(const SceneFrame& scene,const FrameTarget& target) {
     const auto projection=scene_view_projection(scene.camera,target.width,target.height);
-    for(const auto& effect:scene.effects) {
-      if(effect.vertices.empty())continue;
-      FrameQuad q;q.shader=effect.shader;
-      for(unsigned slot=0;slot<4;++slot)if(q.shader.textures[slot]) {
-        auto id=*q.shader.textures[slot];
-        if(effect.textures.contains(id)) {q.textures[slot]=FrameTexture{false,id};continue;}
-        bool resolved=false;
-        for(unsigned depth=0;depth<512;++depth) {
-          require(id<project.operators.size() && graph.nodes[id].active,"invalid effect texture");const auto cmd=project.operators[id].command;
-          if(cmd==1) {require(graph.nodes[id].links.size()==1 && graph.nodes[id].links[0],"unresolved effect texture Load");id=*graph.nodes[id].links[0];}
-          else if(cmd==2 || cmd==3) {require(graph.nodes[id].inputs.size()==1,"invalid effect texture alias");id=graph.nodes[id].inputs[0];}
-          else {resolved=true;break;}
+    for(const auto& draw:scene.effects)effect(draw,projection,target);
+  }
+  const MeshGeometry& mesh_geometry(const std::shared_ptr<const Mesh>& mesh,const std::vector<SceneMeshBatch>& batches) {
+    if(const auto found=geometry.find(mesh.get());found!=geometry.end())return found->second;
+    MeshGeometry data;data.owner=mesh;std::vector<SceneEffectVertex> triangles;
+    std::size_t count=0;for(const auto& batch:batches)for(auto f:batch.faces)count+=(mesh->faces[f].count-2)*3;
+    const auto bytes=count*sizeof(SceneEffectVertex);require(bytes<=512u*1024*1024-geometry_bytes,"scene GPU geometry budget exceeded");triangles.reserve(count);
+    std::vector<std::uint32_t> colors;colors.reserve(mesh->vertices.size());
+    for(const auto& v:mesh->vertices)colors.push_back(mesh_vertex_color(v.color));
+    for(const auto& batch:batches) {
+      const auto first=GLint(triangles.size());
+      for(auto f:batch.faces) {
+        const auto& face=mesh->faces[f];
+        for(unsigned c=1;c+1<face.count;++c)for(unsigned corner:{0u,c,c+1}) {
+          const auto& v=mesh->vertices[face.vertices[corner]];
+          triangles.push_back({v.position,{v.uv[0],v.uv[1]},colors[face.vertices[corner]]});
         }
-        require(resolved,"effect texture alias depth limit");
-        q.textures[slot]=project.operators[id].command==0x26 ? FrameTexture{true,13+id} : FrameTexture{false,id};
       }
-      const auto matrix=effect.normalized ? print_normalized_projection(target.width,target.height) : projection;
-      quad(q,target.surface,&effect,&matrix);
+      data.batches.emplace_back(first,GLsizei(triangles.size()-first));
+    }
+    glGenBuffers(1,&data.buffer);glBindBuffer(GL_ARRAY_BUFFER,data.buffer);glBufferData(GL_ARRAY_BUFFER,bytes,triangles.data(),GL_STATIC_DRAW);
+    geometry_bytes+=bytes;return geometry.emplace(mesh.get(),std::move(data)).first->second;
+  }
+  void scene_materials(const SceneFrame& scene,const FrameTarget& target) {
+    const auto draws=scene_unlit_jobs(scene);const auto projection=scene_view_projection(scene.camera,target.width,target.height);
+    for(const auto& job:draws.jobs) {
+      if(job.effect) {effect(scene.effects[*job.effect],projection,target);continue;}
+      const auto& instance=scene.instances[job.instance];const auto& batches=draws.meshes.at(instance.mesh.get());
+      const auto material=*batches[job.batch].material;const auto& pass=scene.materials.at(material).passes[job.material_pass];
+      try {
+        const auto& data=mesh_geometry(instance.mesh,batches);const auto [first,count]=data.batches[job.batch];
+        const auto matrix=scene_combine(projection,instance.world);const MeshDraw mesh{data.buffer,first,count};
+        quad(resolve_material(pass.shader),target.surface,nullptr,&matrix,&mesh);
+      }catch(const std::exception& e) {throw std::runtime_error("mesh material "+std::to_string(material)+": "+e.what());}
     }
   }
 
@@ -192,8 +245,6 @@ struct FrameRenderer::Impl {
 FrameRenderer::FrameRenderer(const Project& p,const Graph& g,const TextureOptions& options):impl(std::make_unique<Impl>(p,g,options)) {}
 FrameRenderer::~FrameRenderer()=default;
 std::vector<std::uint8_t> FrameRenderer::render(const DemoFrame& frame,bool diagnostic) {
-  if(!diagnostic)for(const auto& c:frame.commands)if(std::holds_alternative<SceneFrame>(c.draw))
-    throw std::runtime_error("scene material drawing is not ported; --diagnostic-geometry enables checker geometry explicitly");
   auto& s=*impl;s.activate();glDisable(GL_DITHER);
   require(frame.surfaces.contains(0) && frame.surfaces.at(0).width==frame.width && frame.surfaces.at(0).height==frame.height,"invalid screen surface");
   for(const auto& [id,size]:frame.surfaces)s.surface(id,size);
@@ -205,7 +256,7 @@ std::vector<std::uint8_t> FrameRenderer::render(const DemoFrame& frame,bool diag
     try {
       if(const auto* q=std::get_if<FrameQuad>(&c.draw))s.quad(*q,c.target.surface);
       else if(const auto* cl=std::get_if<FrameClear>(&c.draw))clear(*cl);
-      else {const auto& scene=std::get<SceneFrame>(c.draw);clear({scene.viewport_flags&3,scene.background});if(!scene.instances.empty())draw_scene_geometry(scene,c.target.width,c.target.height);s.effects(scene,c.target);}
+      else {const auto& scene=std::get<SceneFrame>(c.draw);clear({scene.viewport_flags&3,scene.background});if(diagnostic) {if(!scene.instances.empty())draw_scene_geometry(scene,c.target.width,c.target.height);s.effects(scene,c.target);}else s.scene_materials(scene,c.target);}
       require(glGetError()==GL_NO_ERROR,"frame draw produced an OpenGL error");
     }catch(const std::exception& e) {throw std::runtime_error("operator "+std::to_string(c.operator_id)+": "+e.what());}
   }
