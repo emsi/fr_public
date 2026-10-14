@@ -354,26 +354,19 @@ struct FrameRenderer::Impl {
   void scene_materials(const SceneFrame& scene,const FrameTarget& target) {
     const auto draws=scene_draw_jobs(scene,target.width,target.height);const auto projection=scene_view_projection(scene.camera,target.width,target.height);
     const auto restore_scissor=[&]{glScissor(0,surfaces.at(target.surface).height-target.height,target.width,target.height);};
-    const auto after=[&](unsigned pass,unsigned usage) {
-      restore_scissor();if(!draws.inserts[pass])return;
-      if(usage==0 || usage==5){FrameQuad q;auto& w=q.shader.words;w[0]=0x30002|(usage==0 ? 0x3000 : 0x8000);w[9]=0x10;w[28]=0x00ffffff;w[23]=8;quad(q,target.surface);}
-      if(usage==4){glStencilMask(255);glClearStencil(0);glClear(GL_STENCIL_BUFFER_BIT);}
-      if(usage==3)glDisable(GL_STENCIL_TEST);
+    const auto insert=[&](unsigned usage) {
+      restore_scissor();FrameQuad q;auto& w=q.shader.words;w[0]=0x30002|(usage==0 ? 0x3000 : 0x8000);w[9]=0x10;w[28]=0x00ffffff;w[23]=8;quad(q,target.surface);
     };
-    std::optional<std::tuple<unsigned,unsigned,std::optional<std::size_t>>> current;
-    for(const auto& job:draws.jobs) {
-      const auto group=std::tuple(job.sort_key>>24,(job.sort_key>>16)&15,job.light);
-      if(current!=group) {
-        if(current)after(std::get<0>(*current),std::get<1>(*current));
-        current=group;restore_scissor();
-        if(job.light){const auto& r=draws.lights[*job.light].rectangle;const int left=int(target.width*(1+r[0])*.5f),right=int(target.width*(1+r[2])*.5f),top=int(target.height*(1-r[3])*.5f),bottom=int(target.height*(1-r[1])*.5f);glScissor(left,surfaces.at(target.surface).height-bottom,right-left,bottom-top);}
-      }
-      if(job.effect) {effect(scene.effects[*job.effect],projection,target,scene.camera);continue;}
+    const auto scissor=[&](std::optional<std::size_t> light) {
+      restore_scissor();if(light){const auto& r=draws.lights[*light].rectangle;const int left=int(target.width*(1+r[0])*.5f),right=int(target.width*(1+r[2])*.5f),top=int(target.height*(1-r[3])*.5f),bottom=int(target.height*(1-r[1])*.5f);glScissor(left,surfaces.at(target.surface).height-bottom,right-left,bottom-top);}
+    };
+    const auto paint=[&](const auto& job) {
+      if(job.effect) {effect(scene.effects[*job.effect],projection,target,scene.camera);return;}
       const auto& instance=scene.instances[job.instance];const auto& batches=draws.meshes.at(instance.mesh.get());
       const auto material=batches[job.batch].material;const auto& pass=(material ? scene.materials.at(*material) : scene_default_material()).passes[job.material_pass];
       try {
         if(pass.program==MaterialProgram::shadow) {
-          require(job.light.has_value(),"shadow job needs a light");shadow(instance,scene,pass.shader,projection,draws.lights[*job.light].light,job.shadow_zfail);continue;
+          require(job.light.has_value(),"shadow job needs a light");shadow(instance,scene,pass.shader,projection,draws.lights[*job.light].light,job.shadow_zfail);return;
         }
         const auto& data=mesh_geometry(instance.mesh,batches);const auto [first,count]=data.batches[job.batch];
         const auto matrix=scene_combine(projection,instance.world);const MeshDraw mesh{data.buffer,first,count};
@@ -387,8 +380,45 @@ struct FrameRenderer::Impl {
         std::optional<SceneFog> fog;if(pass.shader.words[0]&0x40)fog=scene_fog(scene.camera,instance.world);
         quad(resolve_material(pass.shader),target.surface,nullptr,&matrix,&mesh,setup ? &*setup : nullptr,fog ? &*fog : nullptr);
       }catch(const std::exception& e) {throw std::runtime_error("mesh material "+(material ? std::to_string(*material) : "default")+": "+e.what());}
+    };
+    if(project.runtime_graph) {
+      // Final Theta predates BuildPaintJobs. Its Engine::Paint at 0x810475
+      // finishes whole phases, including destination-alpha specular, before
+      // drawing ordinary effects. The archived sort interleaves light-zero
+      // effects with lighting and makes their alpha turn into white rectangles.
+      const auto phase=[&](unsigned usage,std::optional<std::size_t> light={}) {
+        scissor(light);
+        for(const auto& job:draws.jobs)if(((job.sort_key>>16)&15)==usage && job.light==light)paint(job);
+      };
+      const auto mode=(scene.viewport_flags>>4)&3;
+      if(mode==1)phase(7);
+      else {
+        phase(0);if(mode!=2)insert(0);
+        for(std::size_t light=0;light<draws.lights.size();++light) {
+          phase(3,light);glDisable(GL_STENCIL_TEST);phase(4,light);
+          restore_scissor();glStencilMask(255);glClearStencil(0);glClear(GL_STENCIL_BUFFER_BIT);
+        }
+        phase(5);if(mode!=2)insert(5);
+        phase(6);phase(7);
+      }
+    } else {
+      const auto after=[&](unsigned pass,unsigned usage) {
+        restore_scissor();if(!draws.inserts[pass])return;
+        if(usage==0 || usage==5)insert(usage);
+        if(usage==4){glStencilMask(255);glClearStencil(0);glClear(GL_STENCIL_BUFFER_BIT);}
+        if(usage==3)glDisable(GL_STENCIL_TEST);
+      };
+      std::optional<std::tuple<unsigned,unsigned,std::optional<std::size_t>>> current;
+      for(const auto& job:draws.jobs) {
+        const auto group=std::tuple(job.sort_key>>24,(job.sort_key>>16)&15,job.light);
+        if(current!=group) {
+          if(current)after(std::get<0>(*current),std::get<1>(*current));
+          current=group;scissor(job.light);
+        }
+        paint(job);
+      }
+      if(current)after(std::get<0>(*current),std::get<1>(*current));
     }
-    if(current)after(std::get<0>(*current),std::get<1>(*current));
     restore_scissor();
   }
 

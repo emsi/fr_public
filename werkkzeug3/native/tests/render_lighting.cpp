@@ -56,6 +56,31 @@ void insert_specular() {
   m.passes[1].shader.words[1]=0;center(render(renderer,s),{255,127,127,127},4);
   m.passes[1].shader.words[1]=0x40;center(render(renderer,s),{128,0,0,0},3);
 }
+void released_effect_order() {
+  FrameFixture fixture;fixture.p.runtime_graph=true;wz3::FrameRenderer renderer(fixture.p,fixture.g);auto s=scene();
+  auto base=solid(0xff000000,0x300,wz3::MaterialUsage::base);base.shader.words[23]=13;
+  auto lamp=light(0x00800000);lamp.shader.words[0]=0x302280;
+  auto post=solid(0xff808080,0x4280,wz3::MaterialUsage::postlight);post.shader.words[23]=12;
+  s.materials[0].material11_insert=true;s.materials[0].passes={base,lamp,post};
+  s.lights[0].amplify=.5f;s.lights.push_back(s.lights[0]);
+  wz3::SceneEffectDraw effect;effect.sort_key=7u<<16;
+  effect.shader=solid(0xff000020,0x2002,wz3::MaterialUsage::other).shader;
+  effect.vertices={{{-.75f,.75f,1},{0,0},0xffffffff},{{.75f,.75f,1},{1,0},0xffffffff},
+                   {{.75f,-.75f,1},{1,1},0xffffffff},{{-.75f,-.75f,1},{0,1},0xffffffff}};
+  s.effects={effect};
+  // The original completes every light and the postlight/specular phase before
+  // ordinary effects, even when their material pass numbers are lower. Drawing
+  // this alpha-one effect early turns its rectangle white in the specular add.
+  for(unsigned i=0;i<2;++i)center(render(renderer,s),{128,0,32,255},3);
+  auto& passes=s.materials[0].passes;passes[0].render_pass=2;passes[1].render_pass=1;passes[2].render_pass=3;
+  center(render(renderer,s),{128,0,32,255},3);
+  s.viewport_flags=0x13;center(render(renderer,s),{0,0,32,255}); // simple: other only
+  s.viewport_flags=0x23;center(render(renderer,s),{128,0,32,255},3); // no specular
+  // Empty lighting phases still clear alpha before adding specular: an unlit
+  // scene with an opaque black background must not become a white screen.
+  s.viewport_flags=3;s.instances.clear();s.materials.clear();s.lights.clear();
+  center(render(renderer,s),{0,0,32,255});
+}
 void theta(const char* path) {
   const auto p=wz3::read_project(path);const auto g=wz3::connect(p);wz3::FramePlayer player(p,g);wz3::FrameRenderer renderer(p,g);
   for(int beat:{4,204,256,336,384,432}) {
@@ -65,4 +90,4 @@ void theta(const char* path) {
   }
 }
 }
-int main(int argc,char** argv){try{diffuse_and_range();signed_bump();insert_specular();if(argc>1)theta(argv[1]);}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(int argc,char** argv){try{diffuse_and_range();signed_bump();insert_specular();released_effect_order();if(argc>1)theta(argv[1]);}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

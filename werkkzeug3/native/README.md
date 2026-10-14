@@ -1284,6 +1284,45 @@ simulation cadence and video compression still limit this comparison.
 | 220 s | 149.93 | Bright lighting phase, geometry and floating particles closely correspond. |
 | 250 s | 32.27 | Recovered glyphs, credits and centered layout closely correspond. |
 
+A broader sweep of **148 continuous-playback snapshots**, covering event
+midpoints and regular four-second samples, exposed a large opening-scene bug
+that the five checkpoints above missed. Ordinary particle effects were drawn
+before the lighting/specular phases had finished; their destination alpha then
+became white rectangles. Final Theta's restored `Engine::Paint` at `0x810475`
+uses whole phases: base, each light's shadow/light pair, postlight, specular
+addition, environment, then ordinary effects. The later archived source uses a
+different interleaved job sort. The native release renderer now follows the
+released phase boundaries; editor projects retain the archived rendering order.
+
+`tools/release_render_oracle.py` executes only this original dispatcher's control
+flow, replacing graphics and paint calls with recording hooks. Twenty cases
+cover empty and multiple light lists, shadow flags, specular enabled/disabled,
+and simple rendering. No graphics, draw handlers or Windows APIs execute:
+
+```sh
+uv run --no-project --with unicorn python werkkzeug3/native/tools/release_render_oracle.py \
+  build/reference/theta/extracted/restored-code-image.bin \
+  --output build/reference/theta/render-order.json
+```
+
+The dispatcher slice `0x810475..0x8106b1` has SHA-256
+`440e48fab72b4438e5a983b2ab88eb6824719f40796b3925ca70937ae180bf85`.
+This establishes phase boundaries, not ordering within a phase or pixel fidelity.
+A GPU regression draws alpha-one effects with two lights, checks phase order
+across different material passes, and exercises simple, no-specular and empty
+lighting paths. The former renderer fails this fixture.
+
+| Music time | RGB MSE before phase correction | After | Observation |
+| --- | ---: | ---: | --- |
+| 4 s | 40325.70 | 2184.44 | Purple clouds replace white rectangles; surface shading still differs. |
+| 12 s | 24504.50 | 648.00 | Tunnel glow and geometry become visible. |
+| 16 s | 23647.89 | 541.45 | The particle-overdraw artifact is removed. |
+
+These are nearest-frame searches with the same crop, metric and search window.
+Other sweep positions still differ substantially, including the scene around
+36–44 seconds. The wider comparison is diagnostic coverage, not full-demo
+acceptance.
+
 The earlier bright-versus-dark 220-second mismatch was a frame-selection issue;
 it does not justify changing the renderer's lighting. The later release-specific
 particle correction lowered the 120-second RGB MSE from 7106.40 to 2732.10 and
