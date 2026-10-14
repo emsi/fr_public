@@ -32,7 +32,7 @@ std::string source(const MaterialShader& s,unsigned index) {
 }
 }
 std::string material_fragment_shader(const MaterialShader& s) {
-  require(!(s.words[2]&7),"lighting pixel shader is not ported");
+  require(!(s.words[2]&7),"lighting requires the scene mesh shader");
   require(!(s.words[1]&0x731),"environment/projective material shader is not ported");
   std::string code="#version 300 es\nprecision highp float;\nin vec2 material_uv[4];\nin vec4 material_vertex_color;\nuniform vec4 material_colors[4];\nout vec4 color;\n";
   for(unsigned i=0;i<4;++i)if(s.textures[i])code+="uniform highp sampler2D material_tex"+std::to_string(i)+";\n";

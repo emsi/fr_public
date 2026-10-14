@@ -8,8 +8,8 @@ The native frame runner now executes the demo root's animation, events and image
 compositing. All 54 sampled timeline positions render with diagnostic scene
 geometry and saved particle, text, overlay and image effects when an explicit
 font file is supplied. A 2,601-frame CPU run also traverses the timeline through
-the credits. Unlit mesh materials also render natively in isolation. Full scene
-lighting/shadows, audio synchronization and
+the credits. Saved mesh materials and lighting now render 22 of the 54 samples
+without checker shading. Shadow volumes, fog, audio synchronization and
 comparison with original output remain unfinished.
 
 The first target, `wz3-inspect`, reads the complete version-13 Theta projects
@@ -55,7 +55,8 @@ The scalar interpolation is checked against an independent SSE2 instruction
 oracle for all 65,536 normal fade values on x86. All eleven Merge modes are also
 checked against a separate SIMD translation of the original MMX instructions.
 Dots retains the original seeded random generator. Format records pixel format
-and mipmap metadata; actual signed normal-map GPU upload is still pending.
+and mipmap metadata; the frame renderer now uploads signed normal maps with
+source-style mip generation (see lighting below).
 Texture generation uses the original default size offset of zero and a bounded
 256 MiB intermediate cache. JPEG decoding uses a separate temporary RGB buffer
 and rejects images larger than 4096 pixels on either axis.
@@ -481,7 +482,7 @@ same slot more than once in a frame.
 The GLES compositor draws these billboards using their saved unlit texture
 combiners, vertex colors, blend/depth/cull state and UV transforms. Particle jobs
 now interleave with ordinary mesh passes in strict material mode. Theta scenes
-still need diagnostic shading until the light/shadow pipeline is ported. The scene-only geometry renderer rejects effect scenes instead of omitting
+need diagnostic shading when their shadow/fog paths are not yet ported. The scene-only geometry renderer rejects effect scenes instead of omitting
 their particles.
 
 For a preview with accumulated motion and retained GPU targets, replay from zero:
@@ -646,16 +647,17 @@ SRT2 uses radians, matching the two original code paths.
 
 At local time 0.5, **36 of 42 unlit materials** render on Radeon. The other six
 depend on five render-target bindings or the uncached font atlas. All 23 materials
-with multiple rendering phases still require their lighting/shadow pipeline.
+with multiple rendering phases use the frame renderer's lighting pipeline below;
+the standalone swatch renderer still rejects them.
 The gallery retains CPU snapshots, readback hashes, failures and driver details.
 GPU tests check analytical pixel values for combiners, intermediate saturation,
 alpha, blending, texture orientation, transformed UVs and sampler independence;
 they also pass with llvmpipe. CPU initialization/update tests pass with ASan/UBSan.
 
 The swatches use RGBA8 uploads and native mipmap generation; legacy pixel-format,
-mipmap-count and alpha-threshold rules still need reproduction. Bump lighting,
-shadows, environment mapping and fog remain pending. Unlit scene mesh drawing
-is now connected to the frame compositor. Render targets are now supported in the frame compositor below.
+mipmap-count and alpha-threshold rules still need reproduction for ordinary color
+textures. The frame compositor supports signed normal textures and bump lighting.
+Shadow volumes, environment mapping and fog remain pending.
 `wz3-scene-render` continues to use diagnostic shading. Individual
 swatches do not execute the demo root's global-variable or compositing scopes,
 and comparison against original Windows frames is still required.
@@ -675,12 +677,12 @@ order; effects and meshes share the sorted pass/phase queue. Ordinary late mesh
 phases use light slot 15, while effects use slot zero, as in the non-kkrieger
 archive. The old low 16 sort bits came from a process address; native code uses
 deterministic material binding/pass IDs. Transparent ties between different
-materials therefore still need comparison with original output. This path has
-no CPU frustum optimization; normal GPU clipping applies.
+materials therefore still need comparison with original output. Five-plane
+frustum culling and per-light sphere/batch intersection now filter draw jobs.
 
-The renderer rejects lighting inserts, per-light/default materials, specialized
-mesh finalizers, fog, depth bias and unsupported texture projections. It does not
-skip those passes or replace them with checker shading. The existing diagnostic
+The renderer supports lighting inserts and per-light/default materials. It rejects
+required shadow volumes, specialized mesh finalizers, fog, depth bias and
+unsupported texture projections. It does not skip those passes or replace them with checker shading. The existing diagnostic
 option remains available for full-root traversal.
 
 ```sh
@@ -688,16 +690,17 @@ build/native/wz3-mesh-render werkkzeug3/data/theta/theta_final.k mesh.fireball \
   build/native/fireball-material.ppm --materials
 python3 werkkzeug3/native/tools/mesh_audit.py \
   --renderer build/native/wz3-mesh-render --materials \
-  --output build/native/theta-mesh-materials \
-  --expect-supported 32 --expect-unsupported 0 --expect-rendered 10
+  --output build/native/theta-lit-meshes \
+  --expect-supported 32 --expect-unsupported 0 --expect-rendered 32
 ```
 
-**10 of 32 named meshes** render with their saved materials: the two circle
-meshes, three fireball meshes, highway2, citybridge, cityblock, bridge2 and citycomp.
-These are isolated beat-zero material snapshots with a fitted inspection camera;
-they do not replace the scene camera, timeline or compositing in the real player.
-The gallery records the other 22 failures explicitly. This is separate from
-static geometry coverage, which remains 32/32 named and 752/752 reachable meshes.
+All **32 named mesh material previews execute** with beat-zero material snapshots,
+a fitted camera and the original fallback inspection light. Nine previews are
+black with that camera/light combination; this count measures execution rather
+than visibility or original scene fidelity. The earlier unlit stage rendered ten:
+the two circle meshes, three fireballs, highway2, citybridge, cityblock, bridge2
+and citycomp. Static geometry coverage remains 32/32 named and 752/752 reachable
+meshes. Full-root rendering uses its actual scene lights and cameras instead.
 
 GPU tests check face binding, retained geometry with changing transforms/materials,
 depth-only occlusion, culling, packed vertex colors, interleaved mesh/effect
@@ -706,16 +709,59 @@ real Theta meshes on both Radeon and llvmpipe. CPU tests check batch grouping,
 signed pass wrapping/clamping, stable equal-material order, unsupported paths and
 ARGB quantization with restored floating-point rounding mode.
 
-All **54 full-root samples still require lighting inserts** and fail explicitly
-in strict material mode. The diagnostic gallery continues to render all 54.
-The separate strict audit makes this remaining boundary reproducible:
+## Native scene lighting
+
+The renderer reproduces the archived shader-model-1.1 lighting path, including its
+lookup textures rather than substituting a modern analytic falloff. A 64×64 cubemap
+normalizes interpolated tangent-space light and halfway vectors. A 32³ volume
+stores quantized quadratic attenuation and is sampled with trilinear filtering.
+The tangent-space coordinate order is normal, bitangent, tangent. Light and eye
+coordinates retain `sMaterial11::Set`'s transposed-model transform, including its
+behavior under nonuniform model scale.
+
+Diffuse light accumulates in RGB. Specular uses the source's clamped power
+parameters and three squaring steps; its contribution accumulates in destination
+alpha. Material inserts clear destination alpha after the base phase, multiply
+in the texture phase, and add destination alpha back into RGB after post-light.
+This preserves the separate diffuse-texture and specular stages. Stencil-zero
+light tests and per-light stencil clearing use depth24/stencil8 targets; required
+shadow-volume drawing still fails explicitly.
+
+Light selection retains the range/distance importance ordering, stable ties,
+sphere/frustum culling, source projected scissor rectangle and 16-light limit.
+The native limit is enforced without the archive's overflowing light-count path.
+If no usable lights remain, the viewport's archived Theta fallback light is used
+when visible. Mesh jobs duplicate per intersecting light; simple paint mode keeps
+only OTHER mesh phases. Event-prioritized weapon lights remain unsupported.
+
+Signed `Q8W8V8U8` maps now use GLES `RGBA8_SNORM`. Each mip is generated from the
+original 15-bit image, using its filtered/point threshold and mip count, then
+normalized and truncated to signed bytes as in the non-intro upload path. This
+also preserves signed alpha for specularity masks. Color textures still use the
+earlier RGBA8/native-mipmap path; their legacy format rules remain separate work.
+
+`lighting_math` compiles the two unmodified archived lookup generators and signed
+normal conversion in a portable test host. All 24,576 cube texels, 32,768 volume
+texels and 4,096 sampled normal conversions match. Independent checks cover mip
+filtering, light selection, frustum rejection, pass duplication, shadow rejection
+and transposed-model transforms. GPU tests cover directional/point diffuse light,
+range, amplification, alpha testing, additive lights, signed bump maps, specular
+inserts and repeated frames. Six real root positions render on Radeon and llvmpipe.
+These checks do not replace an original-executable image comparison: old GPU
+arithmetic, cube seam sampling and transparent material ties remain fidelity risks.
+
+The strict root audit now renders **22/54 samples** with saved materials and
+lighting. The other 32 report their first remaining requirement: 26 need shadow
+volumes and six need fog. The diagnostic gallery still covers all 54.
 
 ```sh
+build/native/wz3-frame-render werkkzeug3/data/theta/theta_final.k root 384 \
+  build/native/theta-lit-corridor.ppm
 python3 werkkzeug3/native/tools/frame_audit.py \
   --renderer build/native/wz3-frame-render --strict-materials \
   --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf \
-  --output build/native/theta-material-frames \
-  --expect-evaluated 54 --expect-rendered 0
+  --output build/native/theta-light-frames \
+  --expect-evaluated 54 --expect-rendered 22
 ```
 
 ## Demo root and native image compositor
@@ -763,13 +809,13 @@ python3 werkkzeug3/native/tools/frame_audit.py \
 ```
 
 The graphics command uses saved materials by default and rejects unsupported
-scene shading. **Theta still needs `--diagnostic-geometry`** because its scenes
-require the unfinished lighting pipeline. That option draws checker mesh geometry
+scene shading. **32 of the 54 Theta samples still need `--diagnostic-geometry`** because their
+scenes require shadow volumes or fog. That option draws checker mesh geometry
 and saved particle/text materials, followed by the saved postprocessing and overlays. This is a compositor milestone, not complete Theta
 playback or a claim of original visual fidelity.
 
 The audit samples the full root at 54 distinct midpoints from 57 enabled IPP
-events. **All 54 samples execute and render with an explicit font file**. Beats 56, 72, 144 and 216 each emit 14 draws with one viewport;
+events. **All 54 samples execute and render in diagnostic mode with an explicit font file**. Beats 56, 72, 144 and 216 each emit 14 draws with one viewport;
 beat 384 emits 17 draws with two viewports, including render-to-texture. Overlay
 transition samples emit additional draws. The gallery retains command snapshots,
 image hashes, exact failures and graphics driver details. Each gallery sample
@@ -781,20 +827,20 @@ nested master restoration, the three-slot capacity, zero-duration events and
 failure recovery. GPU tests check overlay alpha blending, target orientation,
 resolution changes, blur rounding, Merge/Crashzoom and explicit diagnostic opt-in.
 Twelve geometry samples and three credits samples also run repeatedly in native
-players/renderers. The 30-test
+players/renderers. The 32-test
 Release suite passes on Radeon RX 7900 XT; mesh material and compositor tests pass
-on llvmpipe. All 19 CPU tests, including the new draw-order checks, pass under
+on llvmpipe. All 20 CPU tests, including lighting math and draw-order checks, pass under
 Clang ASan/UBSan. Small driver-dependent
 rounding differences are possible; bit-identical original output is unverified.
 
 Current limits: unsupported IPP commands/flags fail explicitly, including Merge's
 texture-alpha mode. New GPU target storage starts black with depth one because
 the original initial contents are unspecified; later draws retain it. Targets
-currently have separate depth attachments. Imported/procedural textures still
+currently have separate depth/stencil attachments. Imported/procedural textures still
 use RGBA8 and native mipmaps rather than all legacy format rules. Saved-material mesh
 uploads are retained across frames; the diagnostic checker still rebuilds them
 for each viewport draw.
-Scene lighting, shadow volumes, fog, original font metrics, dynamic events, audio
+Shadow volumes, fog, original font metrics, dynamic events, audio
 timing and original-frame comparison remain.
 
 ## Next steps
@@ -802,8 +848,8 @@ timing and original-frame comparison remain.
 1. Verify inferred Print alignment migration and native font metrics against
    the original executable/GDI.
 2. Reproduce the editor's operator type checking and version migrations.
-3. Implement lighting inserts, per-light passes, shadow volumes and remaining
-   material shaders on the mesh draw queue, checking output against the
+3. Implement shadow volumes, fog and remaining material shaders on the mesh
+   draw queue, checking output against the
    reference rather than treating a successful graphics upload as visual fidelity.
 4. Integrate the native animation runtime with scene/material/effect execution
    and Ogg playback driven by a sample-based clock.

@@ -46,7 +46,7 @@ int main(int argc,char** argv) {
         for(auto texture:pass.shader.textures)if(texture && !textures.contains(*texture))textures.emplace(*texture,wz3::evaluate_texture(project,graph,*texture));
       }
       const auto image=wz3::render_material_quad(result,textures,512,512);wz3::write_ppm(argv[4],512,512,image);
-      std::cout<<"Material "<<id<<": "<<result.passes.size()<<" unlit passes on a flat quad; lighting and full-scene shading remain pending\n";
+      std::cout<<"Material "<<id<<": "<<result.passes.size()<<" unlit passes on a flat quad; scene lighting is handled by wz3-frame-render\n";
 #else
       std::ofstream out(argv[4]);
       if(!out)throw std::runtime_error("cannot open material output");

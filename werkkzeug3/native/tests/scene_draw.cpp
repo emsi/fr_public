@@ -12,7 +12,7 @@ void queue() {
   wz3::SceneFrame scene;scene.instances={{0,mesh,wz3::scene_identity(),0,3},{0,mesh,wz3::scene_identity(),0,3}};
   wz3::MaterialPass pass;pass.render_pass=2;scene.materials[12].passes={pass};
   wz3::SceneEffectDraw effect;effect.sort_key=(4u<<24)|(7u<<16);scene.effects={effect};
-  const auto list=wz3::scene_unlit_jobs(scene);
+  const auto list=wz3::scene_draw_jobs(scene);
   check(list.meshes.size()==1 && list.meshes.at(mesh.get()).size()==2,"face pass split/shared mesh batching");
   check(list.jobs.size()==5,"missing ordinary draw jobs");
   check(list.jobs[0].sort_key>>24==3 && list.jobs[0].instance==1 && list.jobs[0].batch==1,"wrap signed face pass before clamping instance adjustment");
@@ -20,16 +20,16 @@ void queue() {
   check(list.jobs[2].effect==0 && list.jobs[3].sort_key>>24==4,"effect light-zero slot precedes ordinary mesh light-fifteen slot");
   check(list.jobs[3].instance==1 && list.jobs[4].instance==0,"mesh order within second pass");
   scene.instances[0].pass_adjust=-500;scene.instances[1].pass_adjust=500;
-  const auto clamped=wz3::scene_unlit_jobs(scene);check(clamped.jobs.front().sort_key>>24==0 && clamped.jobs.back().sort_key>>24==255,"instance pass clamp");
+  const auto clamped=wz3::scene_draw_jobs(scene);check(clamped.jobs.front().sort_key>>24==0 && clamped.jobs.back().sort_key>>24==255,"instance pass clamp");
   scene.materials[12].passes[0].usage=wz3::MaterialUsage::base;
-  const auto base=wz3::scene_unlit_jobs(scene);check((base.jobs.front().sort_key&0x00ff0000)==0,"base phase precedes all light slots");
+  const auto base=wz3::scene_draw_jobs(scene);check((base.jobs.front().sort_key&0x00ff0000)==0,"base phase precedes all light slots");
   for(unsigned failure=0;failure<4;++failure) {
     auto broken=scene;
     if(failure==0)broken.materials.clear();
-    if(failure==1)broken.materials[12].material11_insert=true;
-    if(failure==2)broken.materials[12].passes[0].usage=wz3::MaterialUsage::light;
+    if(failure==1)broken.materials[12].passes[0].usage=wz3::MaterialUsage(8);
+    if(failure==2)broken.materials[12].passes[0].program=wz3::MaterialProgram::shadow;
     if(failure==3)broken.materials[12].passes[0].program=wz3::MaterialProgram::sprites;
-    bool rejected=false;try {wz3::scene_unlit_jobs(broken);}catch(const std::runtime_error&){rejected=true;}
+    bool rejected=false;try {wz3::scene_draw_jobs(broken);}catch(const std::runtime_error&){rejected=true;}
     check(rejected,"unimplemented scene material behavior was silently skipped");
   }
 }

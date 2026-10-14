@@ -60,7 +60,7 @@ def main():
         '<style>body{background:#111;color:#ddd;font:16px sans-serif;margin:2rem}main{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:1rem}'
         'article{background:#222;padding:1rem}img{width:100%}pre{white-space:pre-wrap}a{color:#8cf}</style>'
         f'<h1>Theta: {evaluated}/{len(records)} material states; {rendered} unlit swatches</h1>'
-        '<p>Original material combiners, blending and UV transforms on a flat quad. Bump lighting, shadows, environment mapping, fog and render-target textures remain pending. These are not complete demo frames.</p>'
+        '<p>Original material combiners, blending and UV transforms on a flat quad. These flat swatches omit lighting, shadows, environment mapping, fog and frame render-target bindings. These are not complete demo frames.</p>'
         '<p>fr-038: Theta by Farbrausch. Derived previews: CC-BY-SA 3.0; see werkkzeug3/data/theta/LICENSE and readme.txt.</p><main>' + "\n".join(cards) + '</main>\n')
     print(f"Material states: {evaluated}/{len(records)}; rendered swatches: {rendered}")
     if evaluated != len(records) or (args.expect_evaluated is not None and evaluated != args.expect_evaluated) or (

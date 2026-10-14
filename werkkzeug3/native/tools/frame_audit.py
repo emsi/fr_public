@@ -79,7 +79,7 @@ def main():
         print(f'{"OK" if record["evaluated"] else "UNSUPPORTED"}: root at beat {beat:g}', flush=True)
     evaluated = sum(record["evaluated"] for record in records)
     rendered = sum("image" in record for record in records)
-    rendering = ("saved mesh, particle, Print, IPP and Layer2D materials; unsupported shading fails explicitly" if args.strict_materials else
+    rendering = ("saved mesh lighting/materials, particle, Print, IPP and Layer2D materials; unsupported shading fails explicitly" if args.strict_materials else
                  "diagnostic scene geometry with saved particle, Print, IPP and Layer2D materials")
     report = dict(project=str(args.project.resolve()), project_sha256=hashlib.sha256(args.project.read_bytes()).hexdigest(),
                   scope="full demo root; independent samples from fresh players, no audio clock or continuous playback",
@@ -93,7 +93,7 @@ def main():
         '<style>body{background:#111;color:#ddd;font:16px sans-serif;margin:2rem}main{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:1rem}'
         'article{background:#222;padding:1rem}img{width:100%}pre{white-space:pre-wrap}a{color:#8cf}</style>'
         f'<h1>Native Theta root: {evaluated}/{len(records)} samples evaluated, {rendered} rendered</h1>'
-        f'<p>{html.escape(rendering)}. Lighting, shadows and audio remain pending. '
+        f'<p>{html.escape(rendering)}. Shadow volumes, fog, audio and original-output comparison remain pending. '
         'Each sample starts a fresh player; this is not a continuous-playback test.</p>'
         '<p>fr-038: Theta by Farbrausch. Derived previews: CC-BY-SA 3.0; see werkkzeug3/data/theta/LICENSE and readme.txt.</p>'
         '<main>' + "\n".join(cards) + '</main>\n')
