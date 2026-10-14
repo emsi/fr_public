@@ -1,6 +1,6 @@
 // Distributed under the BSD license in werkkzeug3/LICENSE.txt.
 #pragma once
-#include "wz3/project.hpp"
+#include "wz3/playback_timing.hpp"
 
 namespace wz3 {
 struct PcmAudio {
@@ -26,16 +26,4 @@ public:
   std::uint64_t callback_count() const noexcept {return callbacks;}
 };
 
-// mainplayer.cpp's two sample-to-beat formulas, including Buzz's integer tick
-// length. SoundOffset is editor-only and is not exported to the original player.
-class PlaybackTiming {
-  std::int32_t bpm_fixed{},end_beat{};
-  unsigned rate{},buzz_tick{};
-  bool strict_endpoint{};
-public:
-  PlaybackTiming(const Project&,unsigned sample_rate);
-  std::int32_t beat(std::uint64_t frames) const;
-  std::int32_t milliseconds(std::uint64_t frames) const;
-  std::uint64_t end_frames() const;
-};
 } // namespace wz3

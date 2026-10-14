@@ -1,6 +1,7 @@
 // Distributed under the BSD license in werkkzeug3/LICENSE.txt.
 #include "wz3/frame.hpp"
 #include "wz3/texture.hpp"
+#include "wz3/playback_timing.hpp"
 #include "audio_sdl.hpp"
 #include <GLES3/gl3.h>
 #include <algorithm>

@@ -1,6 +1,7 @@
 // Distributed under the BSD license in werkkzeug3/LICENSE.txt.
 #include "wz3/frame.hpp"
 #include "wz3/texture.hpp"
+#include "wz3/playback_timing.hpp"
 #include <charconv>
 #include <chrono>
 #include <cmath>
@@ -15,7 +16,7 @@ template<class T> T number(std::string_view text) {
 }
 }
 int main(int argc,char** argv) {
-  if(argc<5) {std::cerr<<"Usage: "<<argv[0]<<" PROJECT.k ROOT_OR_ID BEATS OUTPUT [--diagnostic-geometry] [--preroll-ms STEP] [--font-file FONT.ttf]\n";return 2;}
+  if(argc<5) {std::cerr<<"Usage: "<<argv[0]<<" PROJECT.k|theta.wz3r ROOT_OR_ID BEATS OUTPUT [--diagnostic-geometry] [--preroll-ms STEP] [--font-file FONT.ttf]\n";return 2;}
   try {
     [[maybe_unused]] bool diagnostic=false;unsigned step=0;wz3::TextureOptions options;
     for(int i=5;i<argc;++i) {
@@ -33,16 +34,18 @@ int main(int argc,char** argv) {
 #if WZ3_GPU_FRAME
     wz3::FrameRenderer renderer(project,graph,options);
 #endif
-    const auto end=wz3::beat_milliseconds(std::int32_t(time),wz3::as_float(project.settings[4]));
+    const wz3::PlaybackTiming timing(project,44100);
+    const auto end_sample=timing.samples_at_beat(std::int32_t(time));
+    const auto end=timing.milliseconds(end_sample);
     std::size_t preroll_frames=0;const auto started=std::chrono::steady_clock::now();
     if(step) {
       if(std::uint64_t(end)/step>100000)throw std::runtime_error("preroll frame limit");
-      for(std::int64_t ms=0;ms<end;ms+=step) {
-        const auto beat=std::int32_t(double(ms)*wz3::as_float(project.settings[4])*65536/60000);
+      for(std::uint64_t ms=0;ms*44100/1000<end_sample;ms+=step) {
+        const auto sample=ms*44100/1000;const auto beat=timing.beat(sample);
         try {
-          const auto previous=player.frame(root,beat,1024,768,std::int32_t(ms));
+          const auto previous=player.frame(root,beat,1024,768,timing.milliseconds(sample));
 #if WZ3_GPU_FRAME
-          renderer.render(previous,diagnostic);
+          renderer.draw(previous,diagnostic);
 #endif
         }catch(const std::exception& e){throw std::runtime_error("preroll at "+std::to_string(ms)+" ms (beat "+std::to_string(double(beat)/65536)+"): "+e.what());}
         ++preroll_frames;

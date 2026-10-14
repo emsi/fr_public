@@ -67,6 +67,30 @@ be combined with `--preload-only`. A complete recovered-release render took
 23.0 seconds on the tested Radeon; this is rendering throughput, not a playback
 or audio-latency measurement.
 
+The standalone `wz3-frame`/`wz3-frame-render` tools use the same sample clock for
+preroll and beat-to-millisecond conversion. This matters for Buzz timing and
+stateful gait/particle updates: nominal BPM conversion previously introduced a
+different elapsed time. A requested beat maps to the first 44.1 kHz sample
+reaching it; intermediate steps use sample-derived milliseconds, including
+rounding at 16 ms boundaries. The final frame retains the exact requested beat.
+Clock conversion and its tests are part of the CPU library and need no SDL,
+Vorbis or graphics dependencies. An endpoint is required only for playback.
+
+For example, 220 seconds of released Theta corresponds to sample 9,702,000 and
+fixed beat 33,171,445 (`506.1560821533203` beats):
+
+```sh
+build/native/wz3-frame-render build/reference/theta/extracted/theta.wz3r root \
+  506.1560821533203 build/reference/theta/frame-220.ppm --preroll-ms 16
+```
+
+After **13,751 consecutive frames**, this output is byte-identical to the native
+player's 220-second snapshot (SHA-256
+`301322e0f6abf77830e29cbedc48358921b748e3a2e9cf03e20bafeb40026cfd`).
+Preroll draws intermediate frames entirely on the GPU; only the final image is
+read back. The inverse-clock tests check both timing modes at 8, 44.1, 48 and
+192 kHz, recovered x86 vectors, endpoint boundaries and frame-time overrides.
+
 Music is decoded up front to interleaved float PCM with a 256 MiB limit (Theta
 uses about 87.4 MiB). The SDL callback copies samples without allocation or
 decoding. The renderer borrows SDL's GLES3 context and blits directly to the window,
@@ -1203,7 +1227,7 @@ frames, 15,276 presentations and 11,084 dummy-audio callbacks through the recove
 endpoint, with zero new static assets/uploads/programs during playback. Offline
 rendering produced byte-identical captures at 30, 120, 195, 220 and 250 seconds
 and the endpoint. This verifies simulation/render history independently of
-callback pacing; it does not test physical audio output. All 42 local Release
+callback pacing; it does not test physical audio output. All 43 local Release
 tests pass, including 16 graphics tests.
 
 

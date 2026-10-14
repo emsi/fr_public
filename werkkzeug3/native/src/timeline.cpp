@@ -1,5 +1,6 @@
 // Distributed under the BSD license in werkkzeug3/LICENSE.txt.
 #include "wz3/timeline.hpp"
+#include "wz3/playback_timing.hpp"
 #include <algorithm>
 #include <bit>
 #include <cfenv>
@@ -17,6 +18,10 @@ void FrameClock::advance(std::int32_t milliseconds) {
 std::int32_t beat_milliseconds(std::int32_t beat,float bpm) {
   const Nearest rounding;require(beat>=0 && std::isfinite(bpm) && bpm>0,"beat clock requires nonnegative beat and positive BPM");
   const auto ms=double(beat)*60000/(65536.0*bpm);require(ms<=2147483647,"beat clock overflow");return std::int32_t(ms);
+}
+std::int32_t beat_milliseconds(std::int32_t beat,const Project& project) {
+  const PlaybackTiming timing(project,44100);
+  return timing.milliseconds(timing.samples_at_beat(beat));
 }
 EventTimeline::EventTimeline(const Project& p,const Graph& graph):project(p),events(p.events),targets(events.size()),active_events(p.operators.size()) {
   require(graph.nodes.size()==p.operators.size(),"timeline graph size mismatch");

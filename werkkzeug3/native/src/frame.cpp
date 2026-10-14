@@ -253,7 +253,7 @@ DemoFrame FramePlayer::frame(std::size_t root,std::int32_t beat,unsigned width,u
   require(width && height && width<=4096 && height<=4096,"invalid frame dimensions");auto& s=*impl;
   auto initial=frame_environment(0);s.prepare(root,initial);s.result={};s.result.beat=beat;s.result.width=width;s.result.height=height;
   s.result.milliseconds=milliseconds.value_or(0);
-  if(!milliseconds)s.result.milliseconds=beat_milliseconds(beat,as_float(s.project.settings[4]));
+  if(!milliseconds)s.result.milliseconds=beat_milliseconds(beat,s.project);
   s.scenes.begin_frame(s.result.milliseconds);
   s.result.surfaces.emplace(0,FrameSurface{width,height});
   for(unsigned i=0;i<12;++i) {const auto size=i/3;const auto shift=size==3 ? 0 : size;s.result.surfaces.emplace(i+1,FrameSurface{1024u>>shift,512u>>shift});}

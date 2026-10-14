@@ -11,9 +11,11 @@ struct FrameClock {
   bool reset{};
   void advance(std::int32_t milliseconds);
 };
-// Convenience for offline sampling. Actual playback can supply audio-derived
-// beat and wall-clock milliseconds independently, as the original player did.
+// Explicit continuous-BPM conversion for callers without saved clock settings.
+// Prefer the project overload when available, including for offline sampling.
 std::int32_t beat_milliseconds(std::int32_t beat,float bpm);
+// Project-aware conversion follows the player's integer sample clock at 44.1 kHz.
+std::int32_t beat_milliseconds(std::int32_t beat,const Project&);
 
 // KEnvironment::AddStaticEvent and Exec_Misc_Event. A timeline owns its mutable
 // event times: starting a zero-length event must never modify the saved project.
