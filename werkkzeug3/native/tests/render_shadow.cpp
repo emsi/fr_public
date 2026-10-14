@@ -62,6 +62,19 @@ void controlled() {
     check_receiver(two,render(renderer,unshadowed),render(renderer,two),&blue_only);
   }
 }
+void coplanar_cap() {
+  FrameFixture fixture;auto s=scene(fixture);wz3::FrameRenderer renderer(fixture.p,fixture.g);
+  // Isolate the finite shadow cap: the caster writes only stencil, while an
+  // unlit LIGHT pass reveals stencil-zero pixels on the receiver.
+  s.materials[0].passes={s.materials[0].passes.back()};
+  auto& light=s.materials[1].passes[1].shader.words;light[0]=0x300280;light[1]=light[2]=0;light[9]=0x10;light[28]=0xffffffff;light[23]=8;
+  s.lights[0].position={0,0,6};
+  for(float z:{2.49f,2.5f,2.51f}) {
+    auto receiver=wall();for(auto& v:receiver->vertices)v.position[2]=z;s.instances[1].mesh=receiver;
+    const auto pixels=render(renderer,s);const int expected=z<=2.5f ? 32 : 255;
+    check(std::abs(int(pixels[(64*128+64)*4])-expected)<=1,"shadow cap must fail depth at equality (archived D3DCMP_LESS)");
+  }
+}
 void theta(const char* path) {
   const auto p=wz3::read_project(path);const auto g=wz3::connect(p);wz3::FramePlayer player(p,g);wz3::FrameRenderer renderer(p,g);
   for(float beat:{56.f,72.f,96.f,120.f,144.f,184.f,216.f,448.5f,480.f,511.5f}) {
@@ -73,4 +86,4 @@ void theta(const char* path) {
   }
 }
 }
-int main(int argc,char** argv){try{controlled();if(argc>1)theta(argv[1]);}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(int argc,char** argv){try{controlled();coplanar_cap();if(argc>1)theta(argv[1]);}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

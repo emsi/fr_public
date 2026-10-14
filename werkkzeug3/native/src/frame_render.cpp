@@ -327,7 +327,9 @@ struct FrameRenderer::Impl {
     for(unsigned i=1;i<5;++i)glDisableVertexAttribArray(i);
     const auto matrix=scene_combine(projection,instance.world);glUniformMatrix4fv(glGetUniformLocation(shadow_program,"view_projection"),1,GL_FALSE,matrix.data());glUniform3fv(glGetUniformLocation(shadow_program,"light_position"),1,position.data());
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,shadow_index_buffer);glBufferData(GL_ELEMENT_ARRAY_BUFFER,count*sizeof(std::uint32_t),indices.indices.data(),GL_STREAM_DRAW);
-    glColorMask(GL_FALSE,GL_FALSE,GL_FALSE,GL_FALSE);glDepthMask(GL_FALSE);glEnable(GL_DEPTH_TEST);glDepthFunc(GL_LEQUAL);glDisable(GL_BLEND);glDisable(GL_CULL_FACE);glFrontFace(GL_CW);
+    // sMaterial11::Compile uses D3DCMP_LESS when SHADOWMASK is set. Equality
+    // must fail so coplanar finite caps participate in the z-fail count.
+    glColorMask(GL_FALSE,GL_FALSE,GL_FALSE,GL_FALSE);glDepthMask(GL_FALSE);glEnable(GL_DEPTH_TEST);glDepthFunc(GL_LESS);glDisable(GL_BLEND);glDisable(GL_CULL_FACE);glFrontFace(GL_CW);
     glEnable(GL_STENCIL_TEST);glStencilMask(255);glStencilFunc(GL_ALWAYS,0,255);
     glStencilOpSeparate(GL_FRONT,GL_KEEP,zfail ? GL_DECR_WRAP : GL_KEEP,zfail ? GL_KEEP : GL_INCR_WRAP);
     glStencilOpSeparate(GL_BACK,GL_KEEP,zfail ? GL_INCR_WRAP : GL_KEEP,zfail ? GL_KEEP : GL_DECR_WRAP);
