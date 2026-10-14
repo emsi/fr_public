@@ -24,6 +24,7 @@ struct AnimationProgram {
   std::vector<std::uint8_t> code;
   std::size_t source_nodes{},used_nodes{};
   std::uint32_t read_variables{},written_variables{};
+  bool release_profile{}; // final 1.01 uses nearest-even animated integer/byte stores
 };
 AnimationProgram compile_animation(const Operator&,const SplineLibrary&);
 

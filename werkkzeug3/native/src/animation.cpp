@@ -104,7 +104,7 @@ namespace {
 AnimationProgram runtime_animation(const Operator& op,const SplineLibrary& splines) {
   require(op.animations.empty(),"operator mixes editor animation and runtime bytecode");
   require(op.animation_code.size()<=4096,"runtime animation bytecode limit");
-  AnimationProgram program;program.code=op.animation_code;Reader r{program.code};
+  AnimationProgram program;program.code=op.animation_code;program.release_profile=true;Reader r{program.code};
   unsigned stack=0,stores=0;
   const auto push=[&](){require(stack<255,"runtime animation stack overflow");++stack;};
   const auto pop=[&](){require(stack>0,"runtime animation stack underflow");--stack;};
@@ -222,6 +222,9 @@ AnimationScope::AnimationScope(const AnimationProgram& program,const SplineLibra
   auto initial=previous.empty() ? original : previous;parameters.assign(initial.begin(),initial.end());
   require(program.code.size()<=4096,"animation bytecode limit");
   Reader reader{program.code};std::vector<AnimationVector> stack;stack.reserve(256);
+  // The final executable emits FISTP under its nearest-even control word.
+  // The newer archived interpreter uses C++ conversions, which truncate.
+  const auto integer=[&](float v){return truncate(program.release_profile ? std::nearbyint(v) : v);};
   const auto push=[&](AnimationVector v){require(stack.size()<255,"animation stack overflow");stack.push_back(v);};
   const auto take=[&](){require(!stack.empty(),"animation stack underflow");auto v=stack.back();stack.pop_back();return v;};
   try {
@@ -238,13 +241,13 @@ AnimationScope::AnimationScope(const AnimationProgram& program,const SplineLibra
           require(index<parameters.size(),"animation parameter store index");bool cp=false;
           for(unsigned c=0;c<4;++c)if(cmd&(1u<<c)) {
             if(group==0xb0 || group==0xf0) {
-              const auto v=unsigned(std::clamp(truncate(value[c]*255),0,255)),shift=8*c;
+              const auto v=unsigned(std::clamp(integer(value[c]*255),0,255)),shift=8*c;
               cp|=((parameters[index]>>shift)&255)!=v;
               parameters[index]=(parameters[index]&~(255u<<shift))|(v<<shift);
             }else {
               require(index+c<parameters.size(),"animation parameter store overrun");
               if(group==0x90 || group==0xd0) {cp|=as_float(parameters[index+c])!=value[c];parameters[index+c]=std::bit_cast<std::uint32_t>(value[c]);}
-              else {cp|=float(signed_word(parameters[index+c]))!=value[c];parameters[index+c]=std::uint32_t(truncate(value[c]));}
+              else {cp|=float(signed_word(parameters[index+c]))!=value[c];parameters[index+c]=std::uint32_t(integer(value[c]));}
             }
           }
           if(group>=0xd0)changed|=cp;

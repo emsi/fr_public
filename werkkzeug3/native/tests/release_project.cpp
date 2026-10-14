@@ -3,6 +3,7 @@
 #include "wz3/graph.hpp"
 #include "wz3/animation.hpp"
 #include <bit>
+#include <cfenv>
 #include <iostream>
 #include <stdexcept>
 
@@ -86,8 +87,34 @@ void test_bytecode() {
   for(const auto& code:invalid) {op.animation_code=code;rejects([&]{wz3::compile_animation(op,splines);});}
   op.animation_code={1};op.animations.resize(1);rejects([&]{wz3::compile_animation(op,splines);});
 }
+void test_release_rounding() {
+  const wz3::SplineLibrary splines(wz3::Project{});
+  wz3::Operator op;op.parameters.resize(29);op.animation_code={2,0,0xbf,28,1};
+  const auto program=wz3::compile_animation(op,splines);
+  check(program.release_profile,"released bytecode lost its arithmetic profile");
+  // Actual title material program from final 1.01: all four bytes follow time.
+  const auto old=std::fegetround();std::fesetround(FE_DOWNWARD);
+  for(const auto& [time,expected]:std::vector<std::pair<float,unsigned>>{
+      {-.25f,0},{.25f,0x40404040},{.5f,0x80808080},{.75f,0xbfbfbfbf},{1.25f,0xffffffff}}) {
+    auto env=wz3::frame_environment(0);env.variables[0].fill(time);
+    const wz3::AnimationScope result(program,splines,op.parameters,env);
+    check(result.parameters[28]==expected,"release fade must round to nearest even");
+    check(std::fegetround()==FE_DOWNWARD,"release animation changed caller rounding");
+  }
+  std::fesetround(old);
+  op.animation_code={2,0,0xe1,0,1};op.parameters[0]=2;
+  for(const auto& [value,expected]:std::vector<std::pair<float,int>>{{2.5f,2},{3.5f,4},{-2.5f,-2},{-3.5f,-4}}) {
+    auto env=wz3::frame_environment(0);env.variables[0].fill(value);
+    const wz3::AnimationScope result(wz3::compile_animation(op,splines),splines,op.parameters,env);
+    check(result.parameters[0]==std::uint32_t(expected) && result.changed,"release integer conversion/change flag");
+  }
+  op.animation_code={2,0,0xf5,0,1};op.parameters[0]=0xaabbccdd;
+  auto env=wz3::frame_environment(32768);const std::vector<std::uint32_t> previous(29,0xaa80cc80);
+  const wz3::AnimationScope masked(wz3::compile_animation(op,splines),splines,op.parameters,env,previous);
+  check(masked.parameters[0]==0xaa80cc80 && !masked.changed,"release byte mask/previous-state comparison");
+}
 }
 int main() {
-  try{test_project();test_bytecode();std::cout<<"Runtime graph, packed values, event/spline execution and malformed-input checks passed\n";}
+  try{test_project();test_bytecode();test_release_rounding();std::cout<<"Runtime graph, packed values, event/spline execution and malformed-input checks passed\n";}
   catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
 }

@@ -1208,6 +1208,15 @@ direct ordered inputs/links, bytecode, event order, quantized splines and blobs.
 Generated operator/spline names only connect the existing native interfaces;
 they do not reconstruct an editor layout or recompile animation. Compiled
 programs are checked for bounded operands, stack balance and valid references.
+
+Released animation uses nearest-even conversion for integer and packed color
+stores. This follows the original interpreter's `FISTP` instructions under
+control word `0x103f`; the newer editor interpreter truncates instead. For
+example, the released title fade at time 0.5 writes `0x80808080`, not
+`0x7f7f7f7f`. The runtime profile preserves this distinction, including masked
+stores and comparisons against previous animated values. Local tests cover
+signed halfway values, color saturation and restoration of caller rounding.
+
 The release's extra zero word on Multiply is retained in the project and ignored
 by its existing 17-argument handler; nonzero padding is rejected. Timing flag
 bit 0 selects Buzz arithmetic; bit 1 selects the verified release profile and
