@@ -32,14 +32,59 @@ functions in `../_types.cpp`. It uses explicit little-endian decoding and bounde
 reads instead of pointer casts. Files above 64 MiB and invalid record counts are
 rejected before large allocations.
 
+## Native texture previews
+
+`wz3-texture` evaluates Flat, Gradient and GlowRect using the saved project
+parameters, with Load/Store/Nop graph traversal. It preserves the original
+15-bit channel representation and MMX interpolation rounding in portable C++.
+The scalar interpolation is checked against an independent SSE2 instruction
+oracle for all 65,536 normal fade values on x86. Texture generation uses the
+original default size offset of zero and a bounded 256 MiB intermediate cache.
+Unimplemented operators, animated textures and cyclic graphs fail explicitly.
+
+```sh
+build/native/wz3-texture werkkzeug3/data/theta/theta_final.k tex.BWCircle /tmp/circle.ppm
+```
+
+For a native GPU preview, install the EGL and GLES development libraries
+(`libegl-dev libgles-dev pkg-config` on Ubuntu), then enable the optional target:
+
+```sh
+cmake -S werkkzeug3/native -B build/native -G Ninja -DWZ3_BUILD_RENDERER=ON -DWZ3_TEST_GRAPHICS=ON
+cmake --build build/native
+ctest --test-dir build/native --output-on-failure
+build/native/wz3-render werkkzeug3/data/theta/theta_final.k tex.BWCircle /tmp/circle-gpu.ppm
+```
+
+This uses Mesa's surfaceless EGL platform and OpenGL ES 3, requiring no X server,
+Wayland compositor, SDL or Windows components. It uploads the CPU-generated
+texture, draws it with a shader and compares every RGBA readback byte against the
+CPU image before saving RGB PPM output. It prints the actual driver/renderer;
+device availability alone is not counted as hardware-rendering evidence.
+The headless backend is an initial validation path; a desktop window and audio
+will be added with the player. GLES 3 is this new backend's requirement, not the
+historical demo's minimum GPU requirement.
+
+Hardware validation on an AMD Radeon RX 7900 XT with Mesa 25.2.8 passed for the
+saved 512x512 gradient, `tex.BWCircle` at 1024x1024, and `tex.Sparkles` at 512x512.
+This checks native texture generation and graphics transport. It does **not**
+establish pixel equality with the original Windows renderer or full demo playback.
+PPM drops alpha; the in-memory RGBA comparison includes it. Derived Theta previews
+retain the project's CC-BY-SA 3.0 attribution requirements.
+
+To exercise the same path on a machine without a GPU:
+
+```sh
+LIBGL_ALWAYS_SOFTWARE=1 ctest --test-dir build/native -L graphics --output-on-failure
+```
+
 ## Next steps
 
-1. Reconstruct the active graph from editor coordinates and named links; identify
-   dependencies reachable from roots and enabled timeline events.
-2. Port procedural operators behind typed native interfaces, preserving the
-   original integer/color arithmetic. Replace the x86 stack dispatcher.
-3. Add native graphics and verify texture generation, shader behavior and frame
-   output against the reference.
+1. Add the remaining reachable texture and mesh operators behind typed native
+   interfaces, preserving integer/color arithmetic and replacing x86 dispatch.
+2. Reproduce the editor's operator type checking and version migrations.
+3. Implement materials and postprocessing shaders, checking output against the
+   reference rather than treating a successful graphics upload as visual fidelity.
 4. Implement scene/material/effect evaluation, spline and animation execution,
    and Ogg playback driven by a sample-based clock.
 5. Compare the whole demo's output and timing; extend editor support separately.
