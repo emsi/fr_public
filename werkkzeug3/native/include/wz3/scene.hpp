@@ -2,6 +2,7 @@
 #pragma once
 #include "wz3/animation.hpp"
 #include "wz3/mesh.hpp"
+#include "wz3/timeline.hpp"
 
 namespace wz3 {
 // Column-major matrices. combine(parent,local) applies local first.
@@ -48,7 +49,10 @@ public:
   ScenePlayer(const ScenePlayer&)=delete;
   ScenePlayer& operator=(const ScenePlayer&)=delete;
   SceneFrame viewport(std::size_t id,AnimationEnvironment environment,float aspect,
-                      const SceneMatrix& world=scene_identity());
+                      const SceneMatrix& world=scene_identity(),EventTimeline* timeline=nullptr);
+  // Dispatch a named Event/Time branch through its aliases to viewports. This
+  // evaluates nested scene events too; IPP compositing is not bypassed.
+  std::vector<SceneFrame> event_viewports(std::size_t id,EventTimeline&,float aspect);
 };
 Bounds scene_bounds(const SceneFrame&);
 void write_scene(const std::filesystem::path&,const SceneFrame&);

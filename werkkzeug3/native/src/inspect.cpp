@@ -79,6 +79,17 @@ int main(int argc, char** argv) {
         std::cout << (j ? ", " : "") << quote(op.strings[j]);
       std::cout << "]}";
     }
+    std::cout << "\n  ],\n  \"events\": [\n";
+    for (std::size_t i=0;i<project.events.size();++i) {
+      const auto& event=project.events[i];const auto found=graph.names.find(event.name);
+      std::cout << (i ? ",\n" : "") << "    {\"id\": " << i << ", \"name\": " << quote(event.name)
+        << ", \"operator\": " << (found==graph.names.end() ? "null" : std::to_string(found->second)) << ", \"fields\": [";
+      for (std::size_t j=0;j<event.fields.size();++j)std::cout << (j ? ", " : "") << event.fields[j];
+      std::cout << "], \"transform\": [";
+      for (std::size_t j=0;j<event.transform.size();++j)std::cout << (j ? ", " : "") << event.transform[j];
+      std::cout << "], \"interval\": [" << event.interval[0] << ", " << event.interval[1]
+        << "], \"flags\": " << event.flags << ", \"spline\": " << quote(event.spline) << "}";
+    }
     std::cout << "\n  ]\n}\n";
     return 0;
   } catch (const std::exception& error) {

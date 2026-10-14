@@ -69,10 +69,14 @@ struct ScenePlayer::Impl {
   std::size_t alias(std::size_t id) const {
     valid(id);const auto cmd=project.operators[id].command;const auto& node=graph.nodes[id];
     if(cmd==1) {require(node.links.size()==1 && node.links[0].has_value(),"unresolved scene Load");return *node.links[0];}
-    require((cmd==2 || cmd==3) && node.inputs.size()==1,"invalid scene alias");return node.inputs[0];
+    require((cmd==2 || cmd==3 || cmd==5 || cmd==6 || cmd==0x16 || cmd==0x180) && node.inputs.size()==1,"invalid scene alias");return node.inputs[0];
   }
   std::size_t concrete(std::size_t id) const {
-    for(unsigned depth=0;depth<512;++depth) {valid(id);const auto cmd=project.operators[id].command;if(cmd<1 || cmd>3)return id;id=alias(id);}
+    for(unsigned depth=0;depth<512;++depth) {
+      valid(id);const auto cmd=project.operators[id].command;
+      if((cmd<1 || cmd>3) && cmd!=5 && cmd!=6 && cmd!=0x16 && cmd!=0x180)return id;
+      id=alias(id);
+    }
     throw std::runtime_error("cycle or excessive depth in scene aliases");
   }
   const AnimationProgram& program(std::size_t id) {
@@ -87,7 +91,20 @@ struct ScenePlayer::Impl {
     }
     return meshes[id];
   }
-  void execute(std::size_t id,AnimationEnvironment& env,const SceneMatrix& world,SceneFrame& frame,unsigned depth=0,std::int32_t pass=0) {
+  template<class F> void dispatch(std::size_t id,std::span<const std::uint32_t> p,AnimationEnvironment& env,
+                                  const SceneMatrix& world,EventTimeline* timeline,F child) {
+    const auto cmd=project.operators[id].command;
+    require(timeline!=nullptr,"scene Event/Time needs a prepared timeline");
+    require(graph.nodes[id].inputs.size()==1,"event operator needs one input");
+    require((cmd==6 && p.size()==1) || (cmd==5 && p.empty()),"unsupported event layout");
+    for(auto event_id:timeline->active(id)) {
+      const auto& event=cmd==6 ? timeline->start(event_id,real(p,0)) : timeline->event(event_id);
+      const EventAnimationScope scope(event,timeline->beat(),splines,env);
+      child(graph.nodes[id].inputs[0],scene_combine(world,scene_srt(event.transform)));
+      if(cmd==5)break; // Time executes only FirstEvent; Event executes the list.
+    }
+  }
+  void execute(std::size_t id,AnimationEnvironment& env,const SceneMatrix& world,SceneFrame& frame,EventTimeline* timeline,unsigned depth=0,std::int32_t pass=0) {
     valid(id);require(depth<512 && ++frame.visited_operators<=1000000,"scene traversal limit");
     Visit visit(visiting,id);const auto target=concrete(id);
     if(operator_info(project.operators[target].command).category=="MESH") {
@@ -99,18 +116,20 @@ struct ScenePlayer::Impl {
     }
     const auto& op=project.operators[id];const auto& node=graph.nodes[id];
     const AnimationScope animation(program(id),splines,op.parameters,env);const auto& p=animation.parameters;
-    if(op.command>=1 && op.command<=3) {execute(alias(id),env,world,frame,depth+1,pass);return;}
+    if(op.command>=1 && op.command<=3) {execute(alias(id),env,world,frame,timeline,depth+1,pass);return;}
     const auto one=[&](){require(node.inputs.size()==1,"scene operator needs one input");return node.inputs[0];};
-    const auto children=[&](const SceneMatrix& transform,std::int32_t adjust) {for(auto input:node.inputs)execute(input,env,transform,frame,depth+1,adjust);};
+    const auto children=[&](const SceneMatrix& transform,std::int32_t adjust) {for(auto input:node.inputs)execute(input,env,transform,frame,timeline,depth+1,adjust);};
     switch(op.command) {
+    case 5:case 6:
+      dispatch(id,p,env,world,timeline,[&](auto input,const auto& transform){execute(input,env,transform,frame,timeline,depth+1,pass);});break;
     case 0xc0:case 0xc3:
       require(p.size()==(op.command==0xc0 ? 10u : 9u),"unsupported scene transform layout");
-      execute(one(),env,scene_combine(world,scene_srt(p)),frame,depth+1,pass);break;
+      execute(one(),env,scene_combine(world,scene_srt(p)),frame,timeline,depth+1,pass);break;
     case 0xc1:require(p.empty(),"unsupported scene Add layout");children(world,pass);break;
     case 0xc2: {
       require(p.size()==10 && p[9]<=4096,"unsupported scene Multiply layout/count");const auto input=one();const auto step=scene_srt(p);auto transform=world;
       const auto selection=env.variables[3];
-      try {for(unsigned i=0;i<p[9];++i) {env.variables[3].fill(float(i));execute(input,env,transform,frame,depth+1,pass);transform=scene_combine(transform,step);}}
+      try {for(unsigned i=0;i<p[9];++i) {env.variables[3].fill(float(i));execute(input,env,transform,frame,timeline,depth+1,pass);transform=scene_combine(transform,step);}}
       catch(...) {env.variables[3]=selection;throw;}
       env.variables[3]=selection;break;
     }
@@ -124,22 +143,22 @@ struct ScenePlayer::Impl {
     }
     case 0x180: {
       require(p.size()==1,"unsupported AdjustPass layout");const auto adjust=std::int64_t(pass)+std::bit_cast<std::int32_t>(p[0]);
-      require(adjust>=-2147483648LL && adjust<=2147483647LL,"scene pass overflow");execute(one(),env,world,frame,depth+1,std::int32_t(adjust));break;
+      require(adjust>=-2147483648LL && adjust<=2147483647LL,"scene pass overflow");execute(one(),env,world,frame,timeline,depth+1,std::int32_t(adjust));break;
     }
     case 0x184:require(p.size()==1 && node.inputs.empty(),"unsupported Ambient layout");frame.ambient=p[0];break;
     case 0x185: {
       require(p.size()==1,"unsupported scene Select layout");if(node.inputs.empty())break;
       const double value=std::nearbyint(real(p,0));require(value>=0 && value<=2147483647,"invalid scene selection");
-      execute(node.inputs[std::size_t(value)%node.inputs.size()],env,world,frame,depth+1,pass);break;
+      execute(node.inputs[std::size_t(value)%node.inputs.size()],env,world,frame,timeline,depth+1,pass);break;
     }
     default:throw std::runtime_error("scene operator "+std::to_string(id)+" ("+std::string(operator_info(op.command).name)+") is not ported");
     }
   }
-  SceneFrame viewport(std::size_t id,AnimationEnvironment& env,float aspect,const SceneMatrix& world,unsigned depth=0) {
+  SceneFrame viewport(std::size_t id,AnimationEnvironment& env,float aspect,const SceneMatrix& world,EventTimeline* timeline,unsigned depth=0) {
     valid(id);require(depth<512,"viewport alias depth limit");Visit visit(visiting,id);
     const auto& op=project.operators[id];const auto& node=graph.nodes[id];
     const AnimationScope animation(program(id),splines,op.parameters,env);const auto& p=animation.parameters;
-    if(op.command>=1 && op.command<=3)return viewport(alias(id),env,aspect,world,depth+1);
+    if(op.command>=1 && op.command<=3)return viewport(alias(id),env,aspect,world,timeline,depth+1);
     require(op.command==0xf0 && (p.size()==18 || p.size()==24),"expected a supported Viewport operator");
     require(node.inputs.size()==1,"viewport spline input is not ported");
     require(!(p[1]&~0x1033u),"viewport camera/stereo flags are not ported");
@@ -150,15 +169,31 @@ struct ScenePlayer::Impl {
     camera.center_x=real(p,11);camera.center_y=real(p,12);camera.zoom_x=real(p,13);camera.zoom_y=real(p,14)*((p[1]&0x1000) ? 1 : aspect);
     camera.fog_color=p[15];camera.fog_end=real(p,16);camera.fog_start=real(p,17);
     require(camera.near_clip>0 && camera.far_clip>camera.near_clip && camera.zoom_x>0 && camera.zoom_y>0,"invalid saved scene camera");
-    execute(node.inputs[0],env,world,frame);
+    execute(node.inputs[0],env,world,frame,timeline);
     if(frame.lights.empty())frame.lights.push_back({id,column(camera.world,3),{0,0,1},0,0x78787878,1,32});
     return frame;
+  }
+  void event_viewports(std::size_t id,AnimationEnvironment& env,const SceneMatrix& world,EventTimeline& timeline,
+                       float aspect,std::vector<SceneFrame>& frames,std::size_t& visits,unsigned depth=0) {
+    valid(id);require(depth<512 && frames.size()<4096 && ++visits<=1000000,"event viewport traversal limit");
+    const auto& op=project.operators[id];
+    if(op.command==0xf0) {frames.push_back(viewport(id,env,aspect,world,&timeline));return;}
+    Visit visit(visiting,id);const AnimationScope scope(program(id),splines,op.parameters,env);
+    if(op.command>=1 && op.command<=3)event_viewports(alias(id),env,world,timeline,aspect,frames,visits,depth+1);
+    else if(op.command==5 || op.command==6)
+      dispatch(id,scope.parameters,env,world,&timeline,[&](auto input,const auto& transform){event_viewports(input,env,transform,timeline,aspect,frames,visits,depth+1);});
+    else throw std::runtime_error("event viewport path contains unsupported operator "+std::to_string(id)+" ("+std::string(operator_info(op.command).name)+")");
   }
 };
 ScenePlayer::ScenePlayer(const Project& p,const Graph& g):impl(std::make_unique<Impl>(p,g)) {}
 ScenePlayer::~ScenePlayer()=default;
-SceneFrame ScenePlayer::viewport(std::size_t id,AnimationEnvironment env,float aspect,const SceneMatrix& world) {
-  require(std::isfinite(aspect) && aspect>0 && aspect<=16,"invalid scene aspect");validate(world);return impl->viewport(id,env,aspect,world);
+SceneFrame ScenePlayer::viewport(std::size_t id,AnimationEnvironment env,float aspect,const SceneMatrix& world,EventTimeline* timeline) {
+  require(std::isfinite(aspect) && aspect>0 && aspect<=16,"invalid scene aspect");validate(world);return impl->viewport(id,env,aspect,world,timeline);
+}
+std::vector<SceneFrame> ScenePlayer::event_viewports(std::size_t id,EventTimeline& timeline,float aspect) {
+  require(std::isfinite(aspect) && aspect>0 && aspect<=16,"invalid scene aspect");
+  auto env=frame_environment(timeline.beat());std::vector<SceneFrame> frames;std::size_t visits=0;
+  impl->event_viewports(id,env,scene_identity(),timeline,aspect,frames,visits);return frames;
 }
 Bounds scene_bounds(const SceneFrame& frame) {
   Bounds bounds{};bool first=true;

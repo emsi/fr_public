@@ -14,10 +14,10 @@ endif()
 
 add_library(wz3_project src/project.cpp src/graph.cpp src/texture.cpp src/bitmap_composite.cpp
   src/bitmap_filters.cpp src/bitmap_text.cpp src/font.cpp src/jpeg_decode.c src/mesh.cpp src/mesh_topology.cpp
-  src/mesh_kernel.cpp src/mesh_evaluate.cpp src/mesh_noise.cpp src/mesh_displace.cpp src/animation.cpp src/scene.cpp)
+  src/mesh_kernel.cpp src/mesh_evaluate.cpp src/mesh_noise.cpp src/mesh_displace.cpp src/animation.cpp src/timeline.cpp src/scene.cpp)
 # Mesh Perlin uses downward rounding; animation uses nearest-even. Preserve
 # their scalar operation boundaries and explicit floating-point environments.
-set_source_files_properties(src/mesh_kernel.cpp src/mesh_noise.cpp src/animation.cpp src/scene.cpp PROPERTIES
+set_source_files_properties(src/mesh_kernel.cpp src/mesh_noise.cpp src/animation.cpp src/timeline.cpp src/scene.cpp PROPERTIES
   COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
 target_link_libraries(wz3_project PRIVATE JPEG::JPEG Freetype::Freetype)
 target_include_directories(wz3_project PUBLIC include PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
@@ -111,6 +111,10 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta/theta_final.k" 590 56
       "${CMAKE_CURRENT_BINARY_DIR}/theta-scene.ppm" 1)
     set_tests_properties(gpu_scene_camera gpu_theta_scene PROPERTIES LABELS graphics)
+    add_test(NAME gpu_theta_event_scene COMMAND wz3-scene-render
+      "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta/theta_final.k" cp1 72
+      "${CMAKE_CURRENT_BINARY_DIR}/theta-event-scene.ppm" --event)
+    set_tests_properties(gpu_theta_event_scene PROPERTIES LABELS graphics)
   endif()
   add_executable(wz3-graph-tests tests/graph.cpp)
   target_link_libraries(wz3-graph-tests PRIVATE wz3_project)
@@ -122,6 +126,10 @@ if(BUILD_TESTING)
   add_executable(wz3-animation-tests tests/animation.cpp)
   target_link_libraries(wz3-animation-tests PRIVATE wz3_project)
   add_test(NAME animation_runtime COMMAND wz3-animation-tests
+    "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta/theta_final.k")
+  add_executable(wz3-timeline-tests tests/timeline.cpp)
+  target_link_libraries(wz3-timeline-tests PRIVATE wz3_project)
+  add_test(NAME timeline_events COMMAND wz3-timeline-tests
     "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta/theta_final.k")
   add_test(NAME theta_animation_audit COMMAND wz3-animate
     "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta/theta_final.k" --audit)

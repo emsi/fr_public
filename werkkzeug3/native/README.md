@@ -312,7 +312,8 @@ build/native/wz3-scene-render werkkzeug3/data/theta/theta_final.k 590 56 build/n
 
 The optional final argument selects a saved event; inactive event samples fail
 explicitly. Its transform applies to the scene, while the viewport retains its
-own animated camera. Without an event, the beat value is the animation time of
+own animated camera. Nested scene events use the global beat position. Without
+an event, the beat value is the animation time of
 the isolated viewport. These commands do not execute ancestor nodes or the full
 timeline/postprocessing graph. The current render size is 1024×768 at 4:3.
 
@@ -331,7 +332,8 @@ python3 werkkzeug3/native/tools/scene_audit.py \
 
 At the audit's default time of 0.5, **7 of 23 reachable viewports** evaluate in
 isolation: 590, 623, 719, 723, 857, 1111 and 1728. The other 16 report their first
-unimplemented dependency, including Particles, MatHack, Event and Print. They are
+unimplemented dependency, including Particles, MatHack and Print, or a missing
+timeline context required by Event. They are
 not silently omitted from successful frames. This sample coverage is not full
 timeline coverage. Reports retain scene snapshots, hashes and graphics driver
 output, and the optional HTML/PNG gallery uses only Python's standard library.
@@ -342,10 +344,51 @@ selection restoration, lights, cycles and recovery after failed traversal. GPU
 tests check near clipping, infinite-far behavior, positive-Z visibility, camera
 motion and depth independent of instance order; they also pass with llvmpipe.
 
+## Timeline events inside scenes
+
+Use `--event` to resolve a named Event branch at a global beat position and
+evaluate its active events, instead of selecting a viewport and event index by
+hand. Load/Store/Nop aliases on that branch retain their animation scopes.
+
+```sh
+build/native/wz3-scene werkkzeug3/data/theta/theta_final.k scene.generation2 56 build/native/event.json --event
+build/native/wz3-scene-render werkkzeug3/data/theta/theta_final.k cp1 72 build/native/cp1.ppm --event
+python3 werkkzeug3/native/tools/scene_audit.py --events \
+  --renderer build/native/wz3-scene-render --output build/native/theta-event-gallery \
+  --expect-supported 4 --expect-unsupported 53
+```
+
+`EventTimeline` resolves names afresh, ignores disabled or unresolved events,
+and builds active lists in reverse file order, as the original `FirstEvent`
+insertion does. Events run on `[start,end)`; zero-length events start their
+default duration on first dispatch. Runtime times are separate from the saved
+project and persist across frames until an explicit reset. Nested events compose
+their transforms and temporarily replace time, selection, velocity, modulation,
+SRT/color variables and spline context. Event executes all active entries; Time
+executes only the first. Cached mesh inputs keep the original behavior of
+bypassing execution, including an Event wrapper around a mesh.
+
+The `cp1` scene now emits nine mesh instances at beat 72, including its nested
+`roataiont1` event. Four of 57 enabled IPP event midpoint samples currently reach
+supported viewports: `generation2`, `generation7`, `cp1` and `cp3a`. All four have
+Radeon readbacks in the gallery. This count includes overlay events that still
+require Layer2D/material support; it is separate from the isolated viewport audit.
+The scene API returns every viewport execution for overlapping events. The
+single-image CLI requires exactly one and reports inactive or overlapping samples
+explicitly. Unsupported IPP operators are rejected rather than bypassed.
+
+Local checks cover event order, boundary times, duration rounding and overflow,
+backward static-event sampling, nested variable/matrix restoration, multiple
+viewport executions, and unchanged saved data. The new event scene also renders
+with llvmpipe. These are individual event branches; execution from the demo root,
+its global variables, output-target reuse, compositing, dynamic triggers and
+stateful EventTime remain to be connected.
+
 ## Next steps
 
-1. Extend scene execution to timeline events, particles, effects and material
-   updates; verify native font metrics against GDI.
+1. Execute the demo root and IPP graph using the event scheduler; extend scene
+   execution to particles, effects and material updates, and verify native font
+   metrics against GDI.
 2. Reproduce the editor's operator type checking and version migrations.
 3. Implement materials and postprocessing shaders, checking output against the
    reference rather than treating a successful graphics upload as visual fidelity.

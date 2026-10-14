@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Evaluate reachable Theta viewports in isolation and optionally render a gallery."""
+"""Audit isolated Theta viewports or event-driven viewport branches and render a gallery."""
 import argparse
 import hashlib
 import html
@@ -17,23 +17,52 @@ def main():
     parser.add_argument("--renderer", type=Path)
     parser.add_argument("--project", type=Path, default=root / "werkkzeug3/data/theta/theta_final.k")
     parser.add_argument("--beat", type=float, default=0.5)
+    parser.add_argument("--events", action="store_true", help="sample enabled IPP event branches at their saved midpoint")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--expect-supported", type=int)
     parser.add_argument("--expect-unsupported", type=int)
     args = parser.parse_args()
     project = json.loads(subprocess.check_output([args.inspect, args.project], text=True, timeout=60))
     selected = [op for op in project["operators"] if op["reachable"] and op["command"] == 0xf0]
+    if args.events:
+        categories = {op["command"]: op["category"] for op in project["inventory"]}
+
+        def result_category(index):
+            seen = set()
+            while index not in seen:
+                seen.add(index)
+                op = project["operators"][index]
+                if op["command"] == 1 and op["links"] and op["links"][0] is not None:
+                    index = op["links"][0]
+                elif op["command"] in (2, 3, 5, 6, 0x16) and len(op["inputs"]) == 1:
+                    index = op["inputs"][0]
+                else:
+                    return categories[op["command"]]
+            return None
+
+        def signed(word):
+            return word if word < 0x80000000 else word - 0x100000000
+
+        selected = [dict(event, beat=(signed(event["fields"][1]) + signed(event["fields"][2])) / 131072)
+                    for event in project["events"] if not event["fields"][10] and event["operator"] is not None
+                    and project["operators"][event["operator"]]["reachable"] and result_category(event["operator"]) == "IPP"]
     args.output.mkdir(parents=True, exist_ok=True)
     records, cards, failures = [], [], []
     for op in selected:
-        base = f'{op["id"]:04d}'
+        base = ("event-" if args.events else "") + f'{op["id"]:04d}'
+        selector = op["operator"] if args.events else op["id"]
+        beat = op["beat"] if args.events else args.beat
+        options = ["--event"] if args.events else []
+        label = f'Event {op["id"]}: {op["name"]} at beat {beat:g}' if args.events else f'Viewport {op["id"]}'
         snapshot, ppm, png = [args.output / (base + suffix) for suffix in (".json", ".ppm", ".png")]
         for artifact in (snapshot, ppm, png):
             artifact.unlink(missing_ok=True)
-        run = subprocess.run([args.exporter, args.project, str(op["id"]), str(args.beat), snapshot],
+        run = subprocess.run([args.exporter, args.project, str(selector), str(beat), snapshot, *options],
                              capture_output=True, text=True, timeout=180)
         record = {"id": op["id"], "supported": run.returncode == 0,
                   "exit_code": run.returncode, "stdout": run.stdout, "stderr": run.stderr}
+        if args.events:
+            record.update(name=op["name"], operator=selector, beat=beat)
         content = f'<pre>{html.escape(run.stdout if record["supported"] else run.stderr)}</pre>'
         if record["supported"]:
             frame = json.loads(snapshot.read_text())
@@ -41,35 +70,36 @@ def main():
                           instances=len(frame["instances"]), lights=len(frame["lights"]))
             content += f'<a href="{snapshot.name}">Scene snapshot</a>'
             if args.renderer:
-                render = subprocess.run([args.renderer, args.project, str(op["id"]), str(args.beat), ppm],
+                render = subprocess.run([args.renderer, args.project, str(selector), str(beat), ppm, *options],
                                         capture_output=True, text=True, timeout=180)
                 record["render"] = {"exit_code": render.returncode, "stdout": render.stdout, "stderr": render.stderr}
                 if render.returncode == 0:
                     width, height = write_png(ppm.read_bytes(), png)
                     record.update(image=png.name, width=width, height=height,
                                   ppm_sha256=hashlib.sha256(ppm.read_bytes()).hexdigest())
-                    content = f'<a href="{png.name}"><img src="{png.name}" alt="Viewport {op["id"]}"></a>' + content
+                    content = f'<a href="{png.name}"><img src="{png.name}" alt="{html.escape(label, quote=True)}"></a>' + content
                 else:
                     failures.append(op["id"])
                     content += f'<pre>{html.escape(render.stderr)}</pre>'
         records.append(record)
-        cards.append(f'<article><h2>Viewport {op["id"]}</h2>{content}</article>')
-        print(f'{"OK" if record["supported"] else "UNSUPPORTED"}: viewport {op["id"]}', flush=True)
+        cards.append(f'<article><h2>{html.escape(label)}</h2>{content}</article>')
+        print(f'{"OK" if record["supported"] else "UNSUPPORTED"}: {label}', flush=True)
     supported = sum(r["supported"] for r in records)
     unsupported = len(records) - supported
     report = {"project": str(args.project.resolve()), "project_sha256": hashlib.sha256(args.project.read_bytes()).hexdigest(),
-              "scope": "isolated viewports without timeline event context", "beat": args.beat,
+              "scope": "individual IPP event branches at their midpoint, including nested scene events" if args.events else "isolated viewports without timeline event context",
+              "beat": None if args.events else args.beat,
               "supported": supported, "unsupported": unsupported, "render_failures": failures, "viewports": records}
     (args.output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     (args.output / "index.html").write_text(
         '<!doctype html><meta charset="utf-8"><title>Native Theta scene geometry</title>'
         '<style>body{background:#111;color:#ddd;font:16px sans-serif;margin:2rem}main{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:1rem}'
         'article{background:#222;padding:1rem}img{width:100%}pre{white-space:pre-wrap}a{color:#8cf}</style>'
-        f'<h1>Native Theta scene geometry: {supported}/{len(records)} viewports</h1>'
+        f'<h1>Native Theta scene geometry: {supported}/{len(records)} {"event samples" if args.events else "viewports"}</h1>'
         '<p>Saved cameras and scene animation, using diagnostic shading. Materials, effects, fog, postprocessing and full timeline traversal are pending.</p>'
         '<p>fr-038: Theta by Farbrausch. Derived project previews: CC-BY-SA 3.0; see werkkzeug3/data/theta/LICENSE and readme.txt.</p>'
         '<main>' + "\n".join(cards) + '</main>\n')
-    print(f"Theta isolated viewports: {supported}/{len(records)} evaluated")
+    print(f"Theta {'event samples' if args.events else 'isolated viewports'}: {supported}/{len(records)} evaluated")
     if failures or (args.expect_supported is not None and supported != args.expect_supported) or (
             args.expect_unsupported is not None and unsupported != args.expect_unsupported):
         raise SystemExit(1)
