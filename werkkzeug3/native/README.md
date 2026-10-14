@@ -78,11 +78,11 @@ To exercise the same path on a machine without a GPU:
 LIBGL_ALWAYS_SOFTWARE=1 ctest --test-dir build/native -L graphics --output-on-failure
 ```
 
-The `Native Linux` GitHub Actions workflow builds an optimized GCC configuration
-with Mesa software graphics tests and a Clang debug configuration with address
-and undefined-behavior sanitizers. Both test the actual archived Theta projects;
-the sanitizer job does not load third-party graphics drivers. CPU-only developer
-builds remain independent of EGL/GLES development packages.
+Validation is local; this port does not use GitHub Actions workflows. The test
+suite exercises the actual archived Theta projects. Use `-DWZ3_SANITIZE=ON` with
+Clang for address and undefined-behavior checks. Keep graphics testing in a
+separate build to avoid loading third-party drivers into sanitizer checks.
+CPU-only builds remain independent of EGL/GLES development packages.
 
 ## Next steps
 
