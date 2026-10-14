@@ -161,10 +161,40 @@ file hash. This path passed ASan/UBSan and Radeon GPU readback; all 69 requested
 glyphs have valid metrics and coverage. `WZ3_TEST_FONT_FILE` selects the font for
 CTest; these tests are skipped explicitly if no test font is installed.
 
+## Native mesh geometry
+
+`wz3-mesh` evaluates static mesh recipes and exports polygons plus UVs as OBJ:
+
+```sh
+build/native/wz3-mesh werkkzeug3/data/theta/theta_final.k mesh.flatfractal build/native/fractal.obj
+```
+
+The initial port supports Cube, Cylinder (full circumference, one radial layer),
+closed Torus, Select Cube (vertex/face masks), Transform, position/UV TransEx,
+Add, deterministic Multiply without normal extrusion, MatLink, Invert,
+UVProject, and unmasked Center, plus Load/Store/Nop. MatLink retains the actual
+material operator ID and pass as metadata/OBJ groups; it does not run shaders.
+Thirteen of the 32 reachable named mesh outputs in `theta_final.k` evaluate,
+including the flat fractal, city blocks/bridge and base tube sections.
+
+Tests check primitive volumes/winding, subdivision counts, UV seams and cube
+wraparound, transform order, selected transforms, copy/index offsets, material
+bindings, explicit failure paths and all 13 supported real recipes. The same
+checks pass under Clang ASan/UBSan. Meshes are limited to 1,048,576 vertices and
+polygons each, with a 256 MiB cache per evaluation.
+
+This is a native polygon/UV representation, not the original half-edge index
+layout. Original crease/smoothing groups, normals, skinning and animation are
+not yet reproduced. Operators that depend on the missing topology or normals
+(including Subdivide, Extrude, SmAngle and SelectFace) fail explicitly. Sphere
+and Grid also remain pending. Portable trigonometry replaces the old SSE
+approximation, so geometry/UV fidelity still needs reference comparisons. This
+exporter establishes procedural geometry execution, not full scene playback.
+
 ## Next steps
 
-1. Add mesh operators behind typed native interfaces, preserving the saved
-   recipes and replacing x86 dispatch; verify native font metrics against GDI.
+1. Extend mesh topology, normals and selection operations; add remaining
+   primitives and deformations, and verify native font metrics against GDI.
 2. Reproduce the editor's operator type checking and version migrations.
 3. Implement materials and postprocessing shaders, checking output against the
    reference rather than treating a successful graphics upload as visual fidelity.
