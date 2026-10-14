@@ -44,6 +44,23 @@ rejected before large allocations.
    and Ogg playback driven by a sample-based clock.
 5. Compare the whole demo's output and timing; extend editor support separately.
 
+## Graph reconstruction
+
+The inspector reconstructs inputs from overlapping operators in the preceding
+editor row, orders them left to right, follows bypasses and named links, selects
+the active scratch/original list, and traverses roots and enabled timeline events.
+It follows `WerkPage::Connect1/2` and `WerkDoc::Connect/FindRoot`. `reachable` is a
+structural dependency result, not proof that an operator or scene can execute.
+Full operator type checking and the original editor's error propagation remain
+to be implemented.
+
+For `theta_final.k`, the native reader finds 2,017 operators, 105 events,
+1,044 animation nodes, 74 splines with 917 keys, and 1,015,157 blob bytes. The
+graph traversal reaches 1,657 operators from 40 root/event entry points. Two
+unknown historical command IDs occur outside this reachable set. Five named
+links are unresolved in the saved project; diagnostics retain their owners so
+they can be assessed rather than silently repaired.
+
 Code is distributed under `../LICENSE.txt`. Theta's projects and music retain
 their separate CC-BY-SA 3.0 license in `../data/theta/LICENSE`. The original authors
 and credits are recorded in `../data/theta/readme.txt`.

@@ -1,5 +1,6 @@
 // Distributed under the BSD license in werkkzeug3/LICENSE.txt.
 #include "wz3/project.hpp"
+#include "wz3/graph.hpp"
 
 #include <cmath>
 #include <iostream>
@@ -10,8 +11,14 @@ int main(int argc, char** argv) {
   if (argc != 2) { std::cerr << "Usage: wz3-inspect PROJECT.k\n"; return 2; }
   try {
     const auto project = wz3::read_project(argv[1]);
+    const auto graph = wz3::connect(project);
     const auto quote = wz3::json_string;
-    std::map<std::uint32_t, unsigned> counts;
+    std::map<std::uint32_t, unsigned> counts, reachable_counts;
+    std::size_t active_count = 0, reachable_count = 0;
+    for (std::size_t i = 0; i < graph.nodes.size(); ++i) {
+      active_count += graph.nodes[i].active;
+      if (graph.nodes[i].reachable) { ++reachable_count; ++reachable_counts[project.operators[i].command]; }
+    }
     std::size_t animations = 0, spline_keys = 0;
     for (const auto& op : project.operators) { ++counts[op.command]; animations += op.animations.size(); }
     for (const auto& spline : project.splines)
@@ -28,7 +35,15 @@ int main(int argc, char** argv) {
       << ",\n  \"animation_node_count\": " << animations
       << ",\n  \"spline_count\": " << project.splines.size()
       << ",\n  \"spline_key_count\": " << spline_keys
-      << ",\n  \"blob_bytes\": " << project.blob_bytes << ",\n  \"pages\": [";
+      << ",\n  \"blob_bytes\": " << project.blob_bytes
+      << ",\n  \"active_operator_count\": " << active_count
+      << ",\n  \"reachable_operator_count\": " << reachable_count << ",\n  \"entry_points\": [";
+    for (std::size_t i = 0; i < graph.entry_points.size(); ++i)
+      std::cout << (i ? ", " : "") << graph.entry_points[i];
+    std::cout << "],\n  \"graph_warnings\": [";
+    for (std::size_t i = 0; i < graph.warnings.size(); ++i)
+      std::cout << (i ? ", " : "") << quote(graph.warnings[i]);
+    std::cout << "],\n  \"pages\": [";
     for (std::size_t i = 0; i < project.pages.size(); ++i)
       std::cout << (i ? ", " : "") << quote(project.pages[i].name);
     std::cout << "],\n  \"inventory\": [\n";
@@ -37,16 +52,26 @@ int main(int argc, char** argv) {
       const auto info = wz3::operator_info(command);
       std::cout << (first ? "" : ",\n") << "    {\"command\": " << command
         << ", \"name\": " << quote(info.name) << ", \"category\": " << quote(info.category)
-        << ", \"count\": " << count << "}";
+        << ", \"count\": " << count << ", \"reachable\": " << reachable_counts[command] << "}";
       first = false;
     }
     std::cout << "\n  ],\n  \"operators\": [\n";
     for (std::size_t i = 0; i < project.operators.size(); ++i) {
       const auto& op = project.operators[i];
+      const auto& node = graph.nodes[i];
       std::cout << (i ? ",\n" : "") << "    {\"id\": " << i << ", \"command\": " << op.command
         << ", \"name\": " << quote(op.name) << ", \"page\": " << op.page
         << ", \"file_offset\": " << op.file_offset << ", \"blob_offset\": " << op.blob_offset
-        << ", \"blob_size\": " << op.blob_size << ", \"parameters\": [";
+        << ", \"blob_size\": " << op.blob_size
+        << ", \"active\": " << (node.active ? "true" : "false")
+        << ", \"reachable\": " << (node.reachable ? "true" : "false")
+        << ", \"inputs\": [";
+      for (std::size_t j = 0; j < node.inputs.size(); ++j)
+        std::cout << (j ? ", " : "") << node.inputs[j];
+      std::cout << "], \"links\": [";
+      for (std::size_t j = 0; j < node.links.size(); ++j)
+        std::cout << (j ? ", " : "") << (node.links[j] ? std::to_string(*node.links[j]) : "null");
+      std::cout << "], \"parameters\": [";
       for (std::size_t j = 0; j < op.parameters.size(); ++j)
         std::cout << (j ? ", " : "") << op.parameters[j];
       std::cout << "], \"strings\": [";

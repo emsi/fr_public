@@ -27,6 +27,11 @@ for filename, operators in (("theta_final.k", 2017), ("theta_party.k", 2007)):
     assert result["song"].endswith("theta.ogg")
     assert result["blob_bytes"] > 0
     assert any(op["name"] in ("root", "root_0") for op in result["operators"])
+    assert sum(op["reachable"] for op in result["operators"]) == result["reachable_operator_count"]
+    assert all(item["reachable"] == 0 for item in result["inventory"] if item["category"] == "UNKNOWN")
+    if filename == "theta_final.k":
+        assert result["reachable_operator_count"] == 1657
+        assert len(result["entry_points"]) == 40
 
 original = (data_dir / "theta_final.k").read_bytes()
 with tempfile.TemporaryDirectory() as directory:

@@ -5,7 +5,7 @@ include(CTest)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 option(WZ3_SANITIZE "Enable address and undefined-behavior sanitizers" OFF)
 
-add_library(wz3_project src/project.cpp)
+add_library(wz3_project src/project.cpp src/graph.cpp)
 target_include_directories(wz3_project PUBLIC include PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_compile_features(wz3_project PUBLIC cxx_std_20)
 target_compile_options(wz3_project PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -28,6 +28,9 @@ target_link_libraries(wz3-inspect PRIVATE wz3_project)
 target_compile_options(wz3-inspect PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 if(BUILD_TESTING)
+  add_executable(wz3-graph-tests tests/graph.cpp)
+  target_link_libraries(wz3-graph-tests PRIVATE wz3_project)
+  add_test(NAME graph_connections COMMAND wz3-graph-tests)
   add_test(NAME theta_projects COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/projects.py" "$<TARGET_FILE:wz3-inspect>"
     "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta")
