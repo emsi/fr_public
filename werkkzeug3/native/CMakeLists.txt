@@ -113,7 +113,10 @@ if(WZ3_BUILD_PLAYER)
     add_test(NAME theta_audio COMMAND wz3-audio-tests
       "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta/theta_final.k"
       "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta/theta.ogg")
-    set_tests_properties(theta_audio PROPERTIES ENVIRONMENT "SDL_AUDIODRIVER=dummy" TIMEOUT 60)
+    # Dummy audio needs no session bus. Prevent SDL/libdbus autolaunch from
+    # forking a missing dbus-launch helper under LeakSanitizer in containers.
+    set_tests_properties(theta_audio PROPERTIES
+      ENVIRONMENT "SDL_AUDIODRIVER=dummy;DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent" TIMEOUT 60)
   endif()
 endif()
 

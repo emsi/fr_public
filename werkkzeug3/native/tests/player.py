@@ -13,6 +13,7 @@ player, project, font = sys.argv[1:]
 with tempfile.TemporaryDirectory(prefix="wz3-player-") as directory:
     path = Path(directory)
     env = dict(os.environ, SDL_VIDEODRIVER="offscreen", SDL_AUDIODRIVER="disk",
+               DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent",
                SDL_DISKAUDIOFILE=str(path / "audio.f32"))
     result = subprocess.run([player, project, "--font-file", font, "--width", "160",
                              "--height", "120", "--duration", "2", "--capture", str(path / "frame.ppm")],

@@ -74,6 +74,34 @@ no desktop or speaker. Separate audio tests cover sample interpolation/stalls,
 EOF padding, stereo ordering, mute, Buzz timing, and the saved endpoint. These
 checks do not establish audible synchronization or original-output fidelity.
 
+Local validation on the Radeon RX 7900 XT completed the whole SDL/X11 run at
+1024×768: **16,550 rendered frames, 15,489 presentations, 11,406 audio callbacks,
+and beat 609**. The SDL disk output matched every one of the 11,450,185 decoded
+stereo frames exactly, followed by silence. The largest observed draw took
+1.78 seconds and required 1.80 seconds of catch-up; first-use generation still
+needs preloading. This run used a disk backend, whose callback pacing is synthetic
+(263.31 wall seconds for 264.78 seconds of sample time), not a hardware sound clock.
+X11 window resize/close passed separately. The container exposes the GPU and X11
+display but no ALSA sound card or PulseAudio socket; opening normal audio failed
+explicitly, so audible playback has not been verified here.
+
+The 39-test release suite passed, as did the presentation/player checks with
+Mesa software rendering. The 22 existing CPU sanitizer checks and the added audio
+sanitizer check passed. Audio tests disable session-bus autolaunch in their own
+environment: without that isolation, a missing `dbus-launch` helper hung under
+LeakSanitizer in this container. Leak detection remains enabled.
+
+To repeat the complete disk-audio check (writes about 90 MiB of float PCM):
+
+```sh
+SDL_AUDIODRIVER=disk SDL_DISKAUDIOFILE=build/native/theta-audio.f32 \
+  build/native/wz3-player werkkzeug3/data/theta/theta_final.k \
+  --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+SDL_AUDIODRIVER=dummy DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent \
+  build/native/wz3-audio-tests werkkzeug3/data/theta/theta_final.k \
+  werkkzeug3/data/theta/theta.ogg build/native/theta-audio.f32
+```
+
 The first target, `wz3-inspect`, reads the complete version-13 Theta projects
 directly, including operator parameters, animation records, timeline events,
 splines, embedded blobs and demo settings. It also accepts version 14's additional
