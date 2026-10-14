@@ -1,6 +1,7 @@
 // Distributed under the BSD license in werkkzeug3/LICENSE.txt.
 // sInitPerlin from _types.cpp and GenMesh::Perlin from genmesh.cpp.
 #include "mesh_kernel.hpp"
+#include "noise.hpp"
 #include <cfenv>
 
 namespace wz3::legacy {
@@ -50,5 +51,6 @@ struct NoiseData {
 };
 const NoiseData& noise_data() {static const NoiseData data;return data;}
 }
+const std::array<std::uint8_t,512>& perlin_permutation() {return noise_data().permutation;}
 #include "mesh_noise.inc"
 } // namespace wz3::legacy

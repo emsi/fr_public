@@ -14,10 +14,10 @@ endif()
 
 add_library(wz3_project src/project.cpp src/graph.cpp src/texture.cpp src/bitmap_composite.cpp
   src/bitmap_filters.cpp src/bitmap_text.cpp src/font.cpp src/jpeg_decode.c src/mesh.cpp src/mesh_topology.cpp
-  src/mesh_kernel.cpp src/mesh_evaluate.cpp src/mesh_noise.cpp src/mesh_displace.cpp)
-# GenMesh::Perlin explicitly uses single precision, downward rounding. Keep the
-# compiler from contracting operations or assuming the default rounding mode.
-set_source_files_properties(src/mesh_kernel.cpp src/mesh_noise.cpp PROPERTIES
+  src/mesh_kernel.cpp src/mesh_evaluate.cpp src/mesh_noise.cpp src/mesh_displace.cpp src/animation.cpp)
+# Mesh Perlin uses downward rounding; animation uses nearest-even. Preserve
+# their scalar operation boundaries and explicit floating-point environments.
+set_source_files_properties(src/mesh_kernel.cpp src/mesh_noise.cpp src/animation.cpp PROPERTIES
   COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
 target_link_libraries(wz3_project PRIVATE JPEG::JPEG Freetype::Freetype)
 target_include_directories(wz3_project PUBLIC include PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
@@ -47,6 +47,9 @@ target_sources(wz3_project PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated/mesh_k
 add_executable(wz3-inspect src/inspect.cpp)
 target_link_libraries(wz3-inspect PRIVATE wz3_project)
 target_compile_options(wz3-inspect PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_executable(wz3-animate src/animate.cpp)
+target_link_libraries(wz3-animate PRIVATE wz3_project)
+target_compile_options(wz3-animate PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 add_executable(wz3-texture src/preview.cpp)
 target_link_libraries(wz3-texture PRIVATE wz3_project)
@@ -98,6 +101,12 @@ if(BUILD_TESTING)
   add_executable(wz3-graph-tests tests/graph.cpp)
   target_link_libraries(wz3-graph-tests PRIVATE wz3_project)
   add_test(NAME graph_connections COMMAND wz3-graph-tests)
+  add_executable(wz3-animation-tests tests/animation.cpp)
+  target_link_libraries(wz3-animation-tests PRIVATE wz3_project)
+  add_test(NAME animation_runtime COMMAND wz3-animation-tests
+    "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta/theta_final.k")
+  add_test(NAME theta_animation_audit COMMAND wz3-animate
+    "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta/theta_final.k" --audit)
   add_executable(wz3-mesh-tests tests/mesh.cpp)
   target_link_libraries(wz3-mesh-tests PRIVATE wz3_project)
   add_test(NAME mesh_geometry COMMAND wz3-mesh-tests

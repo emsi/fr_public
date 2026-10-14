@@ -188,8 +188,8 @@ All 32 reachable named Theta meshes evaluate, including the subdivided
 star geometry, layered fireballs, bridges, city components and long tube
 assemblies and displaced band. All **752 of 752** reachable MESH operators in
 `theta_final.k` evaluate and export under Release and Clang ASan/UBSan builds.
-This completes coverage of Theta's static mesh recipes; animation, materials,
-scene rendering and full playback remain pending. To reproduce the broader CPU audit:
+This completes coverage of Theta's static mesh recipes; material rendering,
+animated scene execution and full playback remain pending. To reproduce the broader CPU audit:
 
 ```sh
 python3 werkkzeug3/native/tools/mesh_audit.py --all-operators \
@@ -247,6 +247,51 @@ and nonempty readback; a separate occlusion test reverses polygon submission
 order and requires identical output. These checks establish native 3D drawing,
 not equality with Theta's original camera, materials or shading.
 
+## Native animation runtime
+
+`wz3-animate` compiles the saved animation node layouts into the original `KA_*`
+bytecode and executes it in portable C++20. It reconstructs row overlaps, input
+order, store order and the automatic arithmetic used when a constant or variable
+has an input. Variable stores remain active while an operator's children execute;
+an RAII scope restores them on return or failure. Parameter loads always read the
+saved values, while writes update a separate animated parameter block. Optional
+previous values retain the original change-detection behavior for future caches.
+
+```sh
+build/native/wz3-animate werkkzeug3/data/theta/theta_final.k --audit
+# Inspect the first animated viewport's camera at normalized time 0.5:
+build/native/wz3-animate werkkzeug3/data/theta/theta_final.k 590 0.5
+# Add a saved event context using its file-order event index:
+build/native/wz3-animate werkkzeug3/data/theta/theta_final.k 590 56 1
+```
+
+The inspection command takes a global beat position, truncates it to 16.16 beats,
+and optionally applies an event's interval, velocity, modulation, selection,
+transform/color variables and event spline. It emits raw parameter words, their
+float interpretation and scoped variables as JSON. Event samples also report
+whether that event is active; inspection can sample outside its active interval.
+Integer/color words are not
+necessarily meaningful as floats. This command evaluates one operator's parameters;
+it does not traverse a scene or render an animated frame.
+
+All **141** saved animation layouts compile, including all **133 reachable**
+ones. They contain 1,044 nodes; 981 enter executable programs, while 63 are
+disconnected editor nodes. The audit evaluates each program at five time positions
+and samples all **74 splines** at 257 positions. Cubic interpolation preserves the
+source's nonuniform-time tangents, endpoint clamps and duplicate-key behavior;
+duplicate spline names resolve to the first saved match. Event activation uses a
+half-open beat interval, with the original always-active zero-length event rule.
+
+Tests cover bytecode goldens, arithmetic and automatic operand order, scoped
+variables, exception restoration, original-versus-animated parameter reads,
+BGRA byte stores, masks, event contexts, cubic/step curves and a real Theta camera
+midpoint. Release and Clang ASan/UBSan checks pass. Bytecode buffers, stacks,
+indices and conversions have explicit bounds. Transcendentals use the native math
+library, so bit equality with the old SSE approximations is not claimed. Evaluation
+uses the saved `.k` precision; the exported player's F16/F24 value and 8-bit spline
+time quantization are not yet reproduced. Scene execution, audio synchronization
+and original-frame comparison remain necessary for full playback fidelity.
+
 ## Next steps
 
 1. Build scene and material evaluation on the completed static mesh coverage;
@@ -254,7 +299,7 @@ not equality with Theta's original camera, materials or shading.
 2. Reproduce the editor's operator type checking and version migrations.
 3. Implement materials and postprocessing shaders, checking output against the
    reference rather than treating a successful graphics upload as visual fidelity.
-4. Implement scene/material/effect evaluation, spline and animation execution,
+4. Integrate the native animation runtime with scene/material/effect execution
    and Ogg playback driven by a sample-based clock.
 5. Compare the whole demo's output and timing; extend editor support separately.
 
