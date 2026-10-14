@@ -48,7 +48,7 @@ void sSetRndSeed(sU32 seed) {
   for(unsigned i=0;i<4;++i) {if(i)random_state^=mixed;sGetRnd();}
 }
 }
-GenMesh::GenMesh(const GenMesh& m):Vert(m.Vert),Edge(m.Edge),Face(m.Face),Coll(m.Coll),Parts(m.Parts),
+GenMesh::GenMesh(const GenMesh& m):Vert(m.Vert),Edge(m.Edge),Face(m.Face),Coll(m.Coll),Parts(m.Parts),Lgts(m.Lgts),
   buffer(m.buffer),VertBuf(buffer.data()),GotNormals(m.GotNormals) {}
 void GenMesh::Init(sU32 mask,int estimate) {
   if(mask!=sGMF_DEFAULT) throw std::runtime_error("unsupported indexed mesh vertex format");
@@ -94,6 +94,7 @@ void GenMesh::append(const GenMesh& other) {
   }
   for(int i=0;i<other.Face.Count;++i) {auto a=other.Face[i];a.Edge+=2*e;*Face.Add()=a;}
   for(int i=0;i<other.Parts.Count;++i) *Parts.Add()=other.Parts[i]+f;
+  for(int i=0;i<other.Lgts.Count;++i) *Lgts.Add()=other.Lgts[i]+v;
   GotNormals=false;
 }
 void GenMesh::validate() const {
@@ -124,12 +125,13 @@ void GenMesh::validate() const {
 }
 std::size_t GenMesh::bytes() const {
   return Vert.storage.capacity()*sizeof(GenMeshVert)+Edge.storage.capacity()*sizeof(GenMeshEdge)+
-    Face.storage.capacity()*sizeof(GenMeshFace)+buffer.capacity()*sizeof(sVector)+Parts.storage.capacity()*sizeof(int);
+    Face.storage.capacity()*sizeof(GenMeshFace)+buffer.capacity()*sizeof(sVector)+(Parts.storage.capacity()+Lgts.storage.capacity())*sizeof(int);
 }
 
 #define sVERIFY(condition) do {if(!(condition)) throw std::runtime_error("mesh kernel invariant: " #condition);} while(false)
 #define sPLAYER 1
 #define sLINK_KKRIEGER 0
+#define sINTRO 1 // Fixed vertex format; pivot/bone operators are not enabled.
 // These warnings belong to the unchanged archive bodies; the host layer still
 // builds with the project's full warnings-as-errors policy.
 #pragma GCC diagnostic push
@@ -143,4 +145,5 @@ std::size_t GenMesh::bytes() const {
 #undef sVERIFY
 #undef sPLAYER
 #undef sLINK_KKRIEGER
+#undef sINTRO
 } // namespace wz3::legacy

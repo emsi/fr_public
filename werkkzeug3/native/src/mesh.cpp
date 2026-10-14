@@ -24,7 +24,8 @@ Bounds mesh_bounds(const Mesh& mesh) {
 void validate_mesh(const Mesh& mesh) {
   if (mesh.vertices.size() > element_limit || mesh.faces.size() > element_limit) throw std::runtime_error("mesh resource limit exceeded");
   for (const auto& v : mesh.vertices) for (unsigned c = 0; c < 3; ++c)
-    if (!std::isfinite(v.position[c]) || !std::isfinite(v.uv[c])) throw std::runtime_error("non-finite mesh geometry");
+    if (!std::isfinite(v.position[c]) || !std::isfinite(v.uv[c]) || !std::isfinite(v.tangent[c])) throw std::runtime_error("non-finite mesh geometry");
+  for(const auto& v:mesh.vertices)for(auto c:v.color)if(!std::isfinite(c))throw std::runtime_error("non-finite mesh color");
   for (const auto& v:mesh.vertices) if (v.point!=mesh_no_point && v.point>=mesh.vertices.size())
     throw std::runtime_error("mesh topological point out of bounds");
   for (const auto& f : mesh.faces) {
@@ -42,16 +43,22 @@ void write_obj(const std::filesystem::path& path, const Mesh& mesh) {
   if (!out) throw std::runtime_error("cannot open mesh output");
   out << "# Native Theta geometry preview; material operator IDs are metadata.\n" << std::setprecision(9);
   for (const auto& v : mesh.vertices) out << "v " << v.position[0] << ' ' << v.position[1] << ' ' << v.position[2] << '\n';
+  // OBJ has no standard HDR vertex-color channel. Preserve linear RGBA as
+  // metadata without imposing a vertex-color extension on geometry viewers.
+  for(std::size_t i=0;i<mesh.vertices.size();++i) {
+    const auto& c=mesh.vertices[i].color;
+    if(c!=std::array<float,4>{})out << "# vertex_color " << i+1 << ' ' << c[0] << ' ' << c[1] << ' ' << c[2] << ' ' << c[3] << '\n';
+  }
   for (const auto& v : mesh.vertices) out << "vt " << v.uv[0] << ' ' << v.uv[1] << ' ' << v.uv[2] << '\n';
   for (std::size_t f=0;f<mesh.faces.size();++f) for (unsigned c=0;c<mesh.faces[f].count;++c) {
     const auto& n=normals[f][c]; out << "vn " << n[0] << ' ' << n[1] << ' ' << n[2] << '\n';
   }
-  std::optional<std::size_t> previous; std::int32_t pass = 0; bool first = true;
+  std::optional<std::size_t> previous; std::int32_t pass = 0; bool first = true,shadow=true;
   std::size_t normal_index=1;
   for (const auto& f : mesh.faces) {
-    if (first || previous != f.material || pass != f.pass) {
-      out << "g material_" << (f.material ? std::to_string(*f.material) : "default") << "_pass_" << f.pass << '\n';
-      first = false; previous = f.material; pass = f.pass;
+    if (first || previous != f.material || pass != f.pass || shadow != f.casts_shadow) {
+      out << "g material_" << (f.material ? std::to_string(*f.material) : "default") << "_pass_" << f.pass << "_shadow_" << f.casts_shadow << '\n';
+      first = false; previous = f.material; pass = f.pass;shadow=f.casts_shadow;
     }
     out << 'f';
     for (unsigned i = 0; i < f.count; ++i) out << ' ' << f.vertices[i]+1 << '/' << f.vertices[i]+1 << '/' << normal_index++;

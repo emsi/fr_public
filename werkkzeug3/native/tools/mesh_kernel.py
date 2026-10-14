@@ -18,7 +18,7 @@ CalcBBox CopyVert TransVert SelectCube SelectSphere Ring Extrude Subdivide
 FixVertCycle Crease UnCrease CalcNormals NeedAllNormals Triangulate DeleteFaces
 CubicProjection""".split()
 COMMANDS = """Cube Cylinder Torus Sphere SelectCube SelectSphere SelectFace SelectRandom
-Subdivide Extrude SmoothAngle Bend2""".split()
+Subdivide Extrude SmoothAngle Bend2 Grid SelectLogic Triangulate Color ShadowEnable Bend""".split()
 
 
 def extract(source, name):
@@ -45,13 +45,13 @@ def main():
     # MakeSubdMask is needed before Subdivide.
     names.remove("MakeSubdMask")
     names.insert(names.index("GenMesh::Subdivide"), "MakeSubdMask")
-    names += ["Mesh_" + x for x in COMMANDS]
+    names += ["MultiSplit", "QuadSplit"] + ["Mesh_" + x for x in COMMANDS]
     bodies = []
     for name in names:
         body = extract(source, name).replace("register ", "").replace("__stdcall ", "")
         # Attribute lanes are named members in the portable host, not arrays
         # reached by pointer arithmetic from the first float.
-        for item in ("vs", "vc", "mat.l", "matuv.l"):
+        for item in ("vs", "vc", "mat.l", "matuv.l", "t"):
             body = body.replace(f"(&{item}.x)[", f"{item}[")
         body = body.replace("(&vt->x)[j]", "(*vt)[j]")
         body = body.replace("(&VertBuf[GetVertId(PrevFaceEdge(i))*VertSize()+j].x)[uvs]",
@@ -59,7 +59,7 @@ def main():
         for item in ("r", "rotate"):
             body = body.replace(f"InitEulerPI2(&{item}.x)", f"InitEulerPI2({item})")
         body = body.replace("(sVector&)center.x", "center").replace("(sVector&)size.x", "size")
-        if name in ("Mesh_Cube", "Mesh_Cylinder", "Mesh_Torus", "Mesh_Sphere"):
+        if name in ("Mesh_Cube", "Mesh_Cylinder", "Mesh_Torus", "Mesh_Sphere", "Mesh_Grid"):
             body = body.replace("mesh = new GenMesh;", "auto owner = std::make_unique<GenMesh>(); mesh = owner.get();")
             body = body.replace("return mesh;", "return owner.release();")
         if name == "Mesh_Cube":

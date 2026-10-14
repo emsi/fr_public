@@ -40,6 +40,9 @@ struct sVector {
   void Init(float a=0,float b=0,float c=0,float d=1) {x=a;y=b;z=c;w=d;}
   void Init3(float a,float b,float c) {x=a;y=b;z=c;}
   void Init4(float a,float b,float c,float d) {Init(a,b,c,d);}
+  void InitColor(sU32 c) {Init(((c>>16)&255)/255.0f,((c>>8)&255)/255.0f,(c&255)/255.0f,(c>>24)/255.0f);}
+  void Lin3(const sVector& a,const sVector& b,float t) {x=a.x+(b.x-a.x)*t;y=a.y+(b.y-a.y)*t;z=a.z+(b.z-a.z)*t;}
+  void Lin4(const sVector& a,const sVector& b,float t) {Lin3(a,b,t);w=a.w+(b.w-a.w)*t;}
   void Add3(const sVector& a) {x+=a.x;y+=a.y;z+=a.z;}
   void Add4(const sVector& a) {Add3(a);w+=a.w;}
   void Add4(const sVector& a,const sVector& b) {x=a.x+b.x;y=a.y+b.y;z=a.z+b.z;w=a.w+b.w;}
@@ -73,6 +76,7 @@ struct sMatrix {
   void TransR();
 };
 using sF323=sVector;
+using sF322=sVector;
 struct sFSRT {sVector s,r,t;float v[9];};
 struct sAABox {sVector Min,Max;};
 
@@ -120,6 +124,7 @@ public:
   Storage<GenMeshFace> Face;
   Storage<Collision> Coll;
   Storage<int> Parts;
+  Storage<int> Lgts;
   std::vector<sVector> buffer;
   sVector* VertBuf{};
   bool GotNormals{};
@@ -169,6 +174,12 @@ GenMesh* Mesh_Subdivide(KOp*,GenMesh*,int,float,int);
 GenMesh* Mesh_Extrude(KOp*,GenMesh*,int,int,int,int,sF323,sF323,sF323);
 GenMesh* Mesh_SmoothAngle(GenMesh*,float);
 GenMesh* Mesh_Bend2(GenMesh*,sF323,sF323,float,float);
+GenMesh* Mesh_Grid(int,int,int);
+GenMesh* Mesh_SelectLogic(GenMesh*,sU32,sU32,sU32,int);
+GenMesh* Mesh_Triangulate(GenMesh*,int,int,int);
+GenMesh* Mesh_Color(GenMesh*,sF323,sF322,sU32,float,float,int);
+GenMesh* Mesh_ShadowEnable(GenMesh*,bool);
+GenMesh* Mesh_Bend(KOp*,GenMesh*,int,sFSRT,sFSRT,sF322,sF322,int);
 Mesh export_mesh(std::shared_ptr<GenMesh>);
 std::shared_ptr<const Mesh> evaluate_kernel(const Project&,const Graph&,std::size_t);
 } // namespace wz3::legacy

@@ -287,21 +287,76 @@ void indexed_operations() {
   }
   rejects([&]{p.get(p.add(0x9a,{0,0,4,0,0,f(1),0,f(1),f(1),f(1),0,0,0},{base}));});
 }
+void attributes_and_grids() {
+  Fixture p;
+  const auto grid=p.get(p.add(0x9d,{3,3,3}));
+  check(grid->faces.size()==18,"two-sided grid tessellation");
+  auto n=wz3::mesh_normals(*grid);
+  unsigned interior=0;
+  for(std::size_t i=0;i<grid->faces.size();++i) {
+    const auto& face=grid->faces[i];wz3::Vec3 center{};
+    for(unsigned c=0;c<4;++c)for(unsigned k=0;k<3;++k)center[k]+=grid->vertices[face.vertices[c]].position[k]*.25f;
+    const auto side=face.mask&3;
+    check(side==1 || side==2,"grid side masks");
+    const bool outer_x=std::abs(center[0])>.2f,outer_z=std::abs(center[2])>.2f;
+    check(face.mask==(side|(outer_z ? 4 : 8)|(outer_x ? 16 : 32)|((outer_x||outer_z) ? 64 : 128)),"grid boundary masks");
+    interior+=!outer_x && !outer_z;
+    for(unsigned c=0;c<4;++c) {near(n[i][c][1],side==1 ? -1 : 1,"grid normal side");near(center[1],0,"grid XZ plane");}
+  }
+  check(interior==2,"grid interior faces");
+  const auto single=p.get(p.add(0x9d,{0,3,3}));
+  check(single->faces.size()==9,"single-sided grid face deletion");
+  for(const auto& face:single->faces)check((face.mask&3)==1,"single-sided grid must keep negative Y side");
+  const auto base=p.add(0x81,cube(1,1,1,1));
+  const auto ambient=p.get(p.add(0xad,{0,0,0,0,0,0xff804020,f(2),f(8),3},{base}));
+  for(const auto& v:ambient->vertices) {
+    near(v.color[0],256.0f/255,"HDR ambient red");near(v.color[1],128.0f/255,"ambient green");
+    near(v.color[2],64.0f/255,"ambient blue");near(v.color[3],0,"lighting must preserve stored alpha");
+  }
+  const auto directional=p.get(p.add(0xad,{0,0,0,0,0,0xffffffff,f(1),f(8),0},{base}));
+  for(const auto& v:directional->vertices)near(v.color[0],v.mask&8 ? 1 : 0,"directional vertex lighting");
+  const auto point=p.get(p.add(0xad,{0,f(2),0,0,0,0xffffffff,f(1),f(10),1},{base}));
+  for(const auto& v:point->vertices)near(v.color[0],v.mask&8 ? 1.5f*(1/std::sqrt(2.75f)-.1f) : 0,"point-light falloff");
+  const auto shadows=p.get(p.add(0xb0,{0},{base}));
+  for(const auto& face:shadows->faces)check(!face.casts_shadow,"ShadowEnable metadata");
+  const auto normal=wz3::mesh_normals(*ambient);
+  for(std::size_t f=0;f<ambient->faces.size();++f)for(unsigned c=0;c<4;++c) {
+    const auto& t=ambient->vertices[ambient->faces[f].vertices[c]].tangent;
+    float dot=0,len=0;for(unsigned k=0;k<3;++k) {dot+=normal[f][c][k]*t[k];len+=t[k]*t[k];}
+    near(dot,0,"tangent must be perpendicular to normal");near(len,1,"unit tangent");
+  }
+  const auto logic=p.get(p.add(0xa1,{0x010100,0x010100,0x404000,19},{base}));
+  for(const auto& face:logic->faces)check(bool(face.mask&64)==!(face.mask&1),"Select Logic inversion");
+  const auto triangulated=p.get(p.add(0x8c,{0,4,0},{base}));
+  check(triangulated->faces.size()==24,"fan triangulation of six cube quads");near(volume(*triangulated),1,"triangulation volume");
+
+  const auto bend_base=p.add(0x81,cube(1,4,1));const auto original=p.get(bend_base);
+  for(unsigned mode:{0u,1u,4u,5u}) {
+    const auto bent=p.get(p.add(0xa0,{0,f(1),f(1),f(1),0,0,0,0,0,0,f(1),f(1),f(1),0,0,0,f(2),0,0,0,0,f(-.5f),f(.5f),mode},{bend_base}));
+    for(std::size_t i=0;i<bent->vertices.size();++i) {
+      float t=std::clamp(original->vertices[i].position[1]+.5f,0.0f,1.0f);
+      if(mode==1)t=t*t*(3-2*t);
+      else if(mode==4)t=1-std::abs(t-.5f)*2;
+      else if(mode==5)t=t*t*(16+t*(16*t-32));
+      near(bent->vertices[i].position[0],original->vertices[i].position[0]+2*t,"Bend interpolation mode");
+    }
+  }
+}
 }
 int main(int argc,char** argv) {
   try {
-    check(argc==2,"expected Theta project");primitives();operators();normals();bends();indexed_operations();
+    check(argc==2,"expected Theta project");primitives();operators();normals();bends();indexed_operations();attributes_and_grids();
     const auto project=wz3::read_project(argv[1]);const auto graph=wz3::connect(project);
     for (const auto* name : {"mesh.cube","mesh.bwflattorus","mesh.LineCircle","mesh.FireGradientCircle",
         "mesh.bwflattorus8","mesh.bwflattorus4","mesh.flatfractal","mesh.g4flat","mesh.citybridge",
         "mesh.cityblock","mesh.rohrcylin120","mesh.rohrcylin32","msh.wfl1","mesh.tetra","mesh.tetra2","mesh.Arrow",
         "mesh.fireball","mesh.fireball2","mesh.highway1","mesh.highway2","mesh.stars","mesh.fireballBlackBody",
-        "mesh.bridge2","mesh.citycomp","mesh.5roehrenstart","mesh.rohr160_1","mesh.rohr160_2","mesh.rohr160_3","mesh.rohr160_4","mesh.rohr160_5"}) {
+        "mesh.bridge2","mesh.citycomp","mesh.5roehrenstart","mesh.rohr160_1","mesh.rohr160_2","mesh.rohr160_3","mesh.rohr160_4","mesh.rohr160_5","mesh.g10walls"}) {
       const auto mesh=wz3::evaluate_mesh(project,graph,graph.names.at(name));
       wz3::validate_mesh(*mesh);check(!mesh->faces.empty(),"empty Theta mesh");
       wz3::mesh_normals(*mesh);
     }
     rejects([&]{wz3::evaluate_mesh(project,graph,graph.names.at("mesh.band"));});
-    std::cout << "indexed mesh geometry, selection, extrusion, subdivision and 30 real Theta recipes passed\n";
+    std::cout << "indexed mesh geometry, attributes and 31 real Theta recipes passed\n";
   } catch(const std::exception& error) {std::cerr<<error.what()<<'\n';return 1;}
 }

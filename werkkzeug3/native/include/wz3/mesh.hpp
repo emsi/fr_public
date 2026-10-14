@@ -10,7 +10,13 @@ using Vec3 = std::array<float, 3>;
 constexpr std::uint32_t mesh_no_point = std::numeric_limits<std::uint32_t>::max();
 // Wedges can have different UVs/masks while belonging to the same topological
 // point. Unspecified points use their vertex index (useful for hand-built meshes).
-struct MeshVertex { Vec3 position{}, uv{}; std::uint8_t mask{}; std::uint32_t point = mesh_no_point; };
+struct MeshVertex {
+  Vec3 position{}, uv{};
+  std::uint8_t mask{};
+  std::uint32_t point = mesh_no_point;
+  Vec3 tangent{};
+  std::array<float,4> color{};
+};
 struct MeshFace {
   std::array<std::uint32_t, 4> vertices{};
   unsigned count = 4;
@@ -19,6 +25,7 @@ struct MeshFace {
   std::int32_t pass{};
   // Attribute crease bits on the outgoing edge of each corner, as in GenMesh.
   std::array<std::uint8_t, 4> crease{};
+  bool casts_shadow=true;
 };
 // Polygon view of the immutable indexed core used by the evaluator. Hand-built
 // diagnostics can omit the core. Never infer connectivity from coordinates.

@@ -18,6 +18,7 @@ unsigned integer(const Operator& op,unsigned i,unsigned max=255,unsigned min=0) 
   return v;
 }
 sVector vector(const Operator& op,unsigned i) {return {real(op,i),real(op,i+1),real(op,i+2),0};}
+sVector pair(const Operator& op,unsigned i) {return {real(op,i),real(op,i+1),0,0};}
 sFSRT srt(const Operator& op,unsigned i) {
   sFSRT value{};value.s=vector(op,i);value.r=vector(op,i+3);value.t=vector(op,i+6);
   for(unsigned c=0;c<9;++c)value.v[c]=real(op,i+c);
@@ -69,6 +70,9 @@ public:
           if(arc<=0 || arc>1)throw std::runtime_error("Torus arc outside (0,1]");
           mesh.reset(Mesh_Torus(integer(op,0,256,3),integer(op,1,256,3),real(op,2),real(op,3),real(op,4),arc,integer(op,6,3)));
         }else {require(op,2);mesh.reset(Mesh_Sphere(integer(op,0,256,4),integer(op,1,256,1)));}
+      }else if(op.command==0x9d) {
+        require(op,3);if(!node.inputs.empty())throw std::runtime_error("Grid has unexpected inputs");
+        mesh.reset(Mesh_Grid(integer(op,0,3),integer(op,1,256,1),integer(op,2,256,1)));
       }else if(op.command==0x92) {
         require(op,0);if(node.inputs.empty())throw std::runtime_error("mesh Add requires inputs");
         mesh=std::make_shared<GenMesh>();mesh->Init(sGMF_DEFAULT,0);
@@ -90,6 +94,10 @@ public:
           require(op,4);Mesh_SelectRandom(mesh.get(),integer(op,0,0xffffff),integer(op,1,3),integer(op,2),std::bit_cast<std::int32_t>(op.parameters[3]));break;
         case 0x87:
           require(op,3);Mesh_Subdivide(nullptr,mesh.get(),integer(op,0),real(op,1),integer(op,2,8,1));break;
+        case 0x8c:
+          require(op,3);Mesh_Triangulate(mesh.get(),integer(op,0),integer(op,1,256,3),integer(op,2,2));break;
+        case 0xa1:
+          require(op,4);Mesh_SelectLogic(mesh.get(),integer(op,0,0xffffff),integer(op,1,0xffffff),integer(op,2,0xffffff),integer(op,3,63));break;
         case 0x9a:
           require(op,13);Mesh_Extrude(nullptr,mesh.get(),integer(op,0),integer(op,1,65535),integer(op,2,63),integer(op,3,4096,1),vector(op,4),vector(op,7),vector(op,10));break;
         case 0x88: case 0x89: {
@@ -122,6 +130,16 @@ public:
         case 0xab:
           require(op,8);if(real(op,6)<=0)throw std::runtime_error("Bend 2 requires positive length");
           Mesh_Bend2(mesh.get(),vector(op,0),vector(op,3),real(op,6),real(op,7));break;
+        case 0xa0: {
+          require(op,24);const auto mode=integer(op,23,7);
+          if(!(mode&2) && real(op,21)==real(op,22))throw std::runtime_error("Bend requires a nonzero range");
+          Mesh_Bend(nullptr,mesh.get(),integer(op,0),srt(op,1),srt(op,10),pair(op,19),pair(op,21),mode);break;
+        }
+        case 0xad:
+          require(op,9);if(op.parameters[8]==1 && real(op,7)<=0)throw std::runtime_error("point color light requires positive range");
+          Mesh_Color(mesh.get(),vector(op,0),pair(op,3),op.parameters[5],real(op,6),real(op,7),integer(op,8,3));break;
+        case 0xb0:
+          require(op,1);Mesh_ShadowEnable(mesh.get(),integer(op,0,1));break;
         case 0xa5: {
           require(op,11);const auto mask=integer(op,0),type=integer(op,10,3);
           sMatrix m;const auto value=srt(op,1);m.InitSRT(value.v);
@@ -173,13 +191,15 @@ Mesh export_mesh(std::shared_ptr<GenMesh> mesh) {
   Mesh out;out.vertices.reserve(mesh->Vert.Count);
   for(int v=0;v<mesh->Vert.Count;++v) {
     const auto& p=mesh->buffer[v*5];const auto& uv=mesh->buffer[v*5+4];
-    out.vertices.push_back({{p.x,p.y,p.z},{uv.x,uv.y,uv.z},mesh->Vert[v].Mask,std::uint32_t(mesh->Vert[v].First)});
+    const auto& tangent=mesh->buffer[v*5+2];const auto& color=mesh->buffer[v*5+3];
+    out.vertices.push_back({{p.x,p.y,p.z},{uv.x,uv.y,uv.z},mesh->Vert[v].Mask,std::uint32_t(mesh->Vert[v].First),
+                            {tangent.x,tangent.y,tangent.z},{color.x,color.y,color.z,color.w}});
   }
   for(int i=0;i<mesh->Face.Count;++i)if(mesh->Face[i].Material) {
     std::vector<std::uint32_t> corners;std::vector<std::uint8_t> creases;
     auto e=mesh->Face[i].Edge;const auto start=e;
     do {corners.push_back(mesh->GetVertId(e));creases.push_back(mesh->Edge[e/2].Crease);e=mesh->NextFaceEdge(e);}while(e!=start);
-    MeshFace f;f.mask=mesh->Face[i].Mask;f.material=mesh->Face[i].binding;f.pass=mesh->Face[i].pass;
+    MeshFace f;f.mask=mesh->Face[i].Mask;f.material=mesh->Face[i].binding;f.pass=mesh->Face[i].pass;f.casts_shadow=mesh->Face[i].Used;
     if(corners.size()<=4) {
       f.count=corners.size();std::copy(corners.begin(),corners.end(),f.vertices.begin());std::copy(creases.begin(),creases.end(),f.crease.begin());out.faces.push_back(f);
     }else for(std::size_t c=1;c+1<corners.size();++c) {

@@ -177,23 +177,23 @@ subdivision rules, extrusion groups, and normal/tangent calculations. That order
 matters: SelectFace addresses saved face indices, and Select Random consumes
 edge and vertex PRNG draws before selecting faces.
 
-Supported operations include Cube, Cylinder (including radial subdivisions and
+Supported operations include Cube, Grid, Cylinder (including radial subdivisions and
 arcs), Torus, Sphere (at least four sides), Select Cube/Sphere/Face/Random,
-Subdivide, Extrude, Transform, TransEx, Add, deterministic Multiply with normal
-extrusion, MatLink, Invert, UVProject, SmAngle, Bend 2, Center and Load/Store/Nop.
+Select Logic, Subdivide, Triangulate, Extrude, Transform, TransEx, Add, deterministic Multiply with normal
+extrusion, MatLink, Invert, UVProject, SmAngle, both Bend operators, Color,
+ShadowEnable, Center and Load/Store/Nop.
 MatLink retains operator IDs and passes; it does not execute material shaders.
-Thirty of the 32 reachable named Theta meshes evaluate, including the subdivided
+Thirty-one of the 32 reachable named Theta meshes evaluate, including the subdivided
 star geometry, layered fireballs, bridges, city components and long tube
-assemblies. The remaining named recipes need Color/ShadowEnable and Displace.
+assemblies. The remaining named recipe needs Displace.
 Other unnamed operators, animation and full scene playback remain pending.
-An audit of all 752 reachable MESH operators currently evaluates 657; remaining
-dependencies include Grid, Color, ShadowEnable, Displace, Perlin Displace, Select
-Logic and the older Bend operator. Named-output coverage alone is not full demo
+An audit of all 752 reachable MESH operators currently evaluates 731; remaining
+dependencies are Displace and Perlin Displace. Named-output coverage alone is not full demo
 coverage. To reproduce the broader CPU audit:
 
 ```sh
 python3 werkkzeug3/native/tools/mesh_audit.py --all-operators \
-  --output build/native/theta-mesh-operators --expect-supported 657 --expect-unsupported 95
+  --output build/native/theta-mesh-operators --expect-supported 731 --expect-unsupported 21
 ```
 
 The compatibility layer replaces Win32 argument-stack assumptions with explicit
@@ -207,11 +207,14 @@ export/preview representation; their original topology remains in the core.
 
 Tests check analytical primitive volumes, winding, UV wedges, source cube face
 indices, signed-seed selection goldens, region/individual extrusion, subdivision
-weights and boundaries, transform order, normals, material bindings and all 30
+weights and boundaries, transform order, normals, material bindings and all 31
 supported named recipes. These pass with Clang ASan/UBSan. All exported normals
 come from the original `CalcNormals` algorithm, including its unusual inverse
 squared-edge-product weights and degenerate `(1,0,0)` fallback. The OBJ exporter
-writes per-corner `vn` indices. Portable scalar trigonometry replaces the old
+writes per-corner `vn` indices. Linear HDR vertex colors and tangent vectors are
+retained for material rendering; OBJ color comments and shadow group flags
+preserve that metadata without changing the diagnostic shader. Color tests check
+directional, point and ambient lighting; Grid tests check side/boundary masks. Portable scalar trigonometry replaces the old
 SSE approximation; frame-level comparison with the original player is still
 needed to establish visual fidelity.
 
@@ -222,12 +225,12 @@ EGL/GLES using an orthographic inspection camera, interpolated native normals an
 build/native/wz3-mesh-render werkkzeug3/data/theta/theta_final.k mesh.flatfractal build/native/fractal.ppm
 python3 werkkzeug3/native/tools/mesh_audit.py \
   --renderer build/native/wz3-mesh-render --output build/native/theta-mesh-gallery \
-  --expect-supported 30 --expect-unsupported 2
+  --expect-supported 31 --expect-unsupported 1
 ```
 
 The audit writes an HTML/PNG gallery, OBJ downloads, hashes and a JSON report
 with each unsupported dependency and graphics driver output. Omit `--renderer`
-for an export-only audit without a GPU. All 30 supported outputs were exported
+for an export-only audit without a GPU. All 31 supported outputs were exported
 under ASan/UBSan and rendered on the Radeon RX 7900 XT. The graphics tests also
 pass with llvmpipe. The renderer checks framebuffer/depth availability, GL errors
 and nonempty readback; a separate occlusion test reverses polygon submission
