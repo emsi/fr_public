@@ -75,6 +75,14 @@ constexpr const char* light_vertex=R"(#version 300 es
     halfway_vector=vec3(dot(H,normal),dot(H,B),dot(H,tangent));
     attenuation_uv=position*attenuation_parameters.w+attenuation_parameters.xyz;
   })";
+constexpr const char* shadow_vertex=R"(#version 300 es
+  layout(location=0) in vec4 position;
+  uniform mat4 view_projection;
+  uniform vec3 light_position;
+  void main() {
+    // material11.vsh: finite vertex w=1; extruded direction w=0.
+    gl_Position=view_projection*vec4(position.xyz+light_position*(position.w-1.0),position.w);
+  })";
 void clear(FrameClear c) {
   glDepthMask(GL_TRUE);glClearDepthf(1);glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
   glClearColor(((c.color>>16)&255)/255.0f,((c.color>>8)&255)/255.0f,(c.color&255)/255.0f,(c.color>>24)/255.0f);
@@ -96,6 +104,12 @@ struct FrameRenderer::Impl {
   struct MeshVertex {SceneEffectVertex vertex;Vec3 normal,tangent;};
   struct MeshDraw {GLuint buffer;GLint first;GLsizei count;};
   struct LightDraw {Vec3 position,eye;std::array<float,4> attenuation,color;std::array<float,2> specular;bool directional;};
+  struct ShadowGeometry {
+    std::shared_ptr<const Mesh> owner;std::vector<std::uint8_t> mask;
+    ShadowMesh mesh;GLuint buffer{};std::size_t bytes{};
+  };
+  std::map<const Mesh*,ShadowGeometry> shadows;
+  GLuint shadow_program{},shadow_index_buffer{};
   GLuint normal_cube{},attenuation_volume{};
   std::map<const Mesh*,MeshGeometry> geometry;
   std::size_t geometry_bytes{};
@@ -104,6 +118,7 @@ struct FrameRenderer::Impl {
   Impl(const Project& p,const Graph& g,const TextureOptions& options):project(p),graph(g),texture_options(options) {
     std::cerr<<"GL vendor: "<<glGetString(GL_VENDOR)<<"\nGL renderer: "<<glGetString(GL_RENDERER)<<"\nGL version: "<<glGetString(GL_VERSION)<<'\n';
     glGenBuffers(1,&particle_buffer);glGenVertexArrays(1,&vao);glGenSamplers(4,samplers.data());
+    glGenBuffers(1,&shadow_index_buffer);
   }
   ~Impl() {
     eglMakeCurrent(context.display,context.surface,context.surface,context.context);
@@ -111,6 +126,8 @@ struct FrameRenderer::Impl {
     for(const auto& [id,t]:bitmaps) {static_cast<void>(id);glDeleteTextures(1,&t);}
     for(const auto& [source,p]:programs) {static_cast<void>(source);glDeleteProgram(p);}
     for(const auto& [id,g]:geometry) {static_cast<void>(id);glDeleteBuffers(1,&g.buffer);}
+    for(const auto& [id,g]:shadows) {static_cast<void>(id);glDeleteBuffers(1,&g.buffer);}
+    glDeleteProgram(shadow_program);glDeleteBuffers(1,&shadow_index_buffer);
     glDeleteTextures(1,&normal_cube);glDeleteTextures(1,&attenuation_volume);
     glDeleteBuffers(1,&particle_buffer);glDeleteSamplers(4,samplers.data());glDeleteVertexArrays(1,&vao);
   }
@@ -283,6 +300,39 @@ struct FrameRenderer::Impl {
     glGenBuffers(1,&data.buffer);glBindBuffer(GL_ARRAY_BUFFER,data.buffer);glBufferData(GL_ARRAY_BUFFER,bytes,triangles.data(),GL_STATIC_DRAW);
     geometry_bytes+=bytes;return geometry.emplace(mesh.get(),std::move(data)).first->second;
   }
+  const ShadowGeometry& shadow_geometry(const std::shared_ptr<const Mesh>& mesh,const SceneFrame& scene) {
+    auto mask=shadow_face_mask(*mesh,scene.materials);auto found=shadows.find(mesh.get());
+    if(found!=shadows.end() && found->second.mask==mask)return found->second;
+    ShadowGeometry data;data.owner=mesh;data.mask=std::move(mask);data.mesh=prepare_shadow_mesh(*mesh,data.mask);
+    const auto previous=found==shadows.end() ? 0 : found->second.bytes;
+    data.bytes=data.mask.size()+data.mesh.vertices.size()*(sizeof(Vec3)+2*sizeof(std::array<float,4>))+data.mesh.planes.size()*sizeof(ShadowPlane)+data.mesh.edges.size()*sizeof(ShadowEdge)+(data.mesh.triangles.size()+data.mesh.triangle_planes.size())*sizeof(std::uint32_t);
+    require(data.bytes<=512u*1024*1024-(geometry_bytes-previous),"scene shadow geometry budget exceeded");
+    std::vector<std::array<float,4>> vertices;vertices.reserve(data.mesh.vertices.size()*2);
+    for(const auto& v:data.mesh.vertices)for(float w:{1.f,0.f})vertices.push_back({v[0],v[1],v[2],w});
+    glGenBuffers(1,&data.buffer);glBindBuffer(GL_ARRAY_BUFFER,data.buffer);glBufferData(GL_ARRAY_BUFFER,vertices.size()*sizeof(vertices[0]),vertices.data(),GL_STATIC_DRAW);
+    geometry_bytes=geometry_bytes-previous+data.bytes;
+    if(found!=shadows.end()){glDeleteBuffers(1,&found->second.buffer);found->second=std::move(data);return found->second;}
+    return shadows.emplace(mesh.get(),std::move(data)).first->second;
+  }
+  void shadow(const SceneInstance& instance,const SceneFrame& scene,const MaterialShader& shader,const SceneMatrix& projection,const SceneLight& light,bool zfail) {
+    require(shader.words[0]==0x70220 && !(shader.words[2]&7),"unsupported shadow material state");
+    const auto& data=shadow_geometry(instance.mesh,scene);const auto position=light_model_vector(instance.world,light.position,true);
+    const auto indices=shadow_indices(data.mesh,position);const auto count=zfail ? indices.indices.size() : indices.silhouette_count;if(!count)return;
+    if(!shadow_program) {
+      const auto v=gles::shader(GL_VERTEX_SHADER,shadow_vertex),f=gles::shader(GL_FRAGMENT_SHADER,"#version 300 es\nprecision highp float;out vec4 color;void main(){color=vec4(0.0);}");
+      const auto p=glCreateProgram();glAttachShader(p,v);glAttachShader(p,f);glLinkProgram(p);glDeleteShader(v);glDeleteShader(f);
+      GLint ok=0;glGetProgramiv(p,GL_LINK_STATUS,&ok);if(!ok){glDeleteProgram(p);throw std::runtime_error("shadow shader link failed");}shadow_program=p;
+    }
+    glUseProgram(shadow_program);glBindVertexArray(vao);glBindBuffer(GL_ARRAY_BUFFER,data.buffer);glVertexAttribPointer(0,4,GL_FLOAT,GL_FALSE,4*sizeof(float),nullptr);glEnableVertexAttribArray(0);
+    for(unsigned i=1;i<5;++i)glDisableVertexAttribArray(i);
+    const auto matrix=scene_combine(projection,instance.world);glUniformMatrix4fv(glGetUniformLocation(shadow_program,"view_projection"),1,GL_FALSE,matrix.data());glUniform3fv(glGetUniformLocation(shadow_program,"light_position"),1,position.data());
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,shadow_index_buffer);glBufferData(GL_ELEMENT_ARRAY_BUFFER,count*sizeof(std::uint32_t),indices.indices.data(),GL_STREAM_DRAW);
+    glColorMask(GL_FALSE,GL_FALSE,GL_FALSE,GL_FALSE);glDepthMask(GL_FALSE);glEnable(GL_DEPTH_TEST);glDepthFunc(GL_LEQUAL);glDisable(GL_BLEND);glDisable(GL_CULL_FACE);glFrontFace(GL_CW);
+    glEnable(GL_STENCIL_TEST);glStencilMask(255);glStencilFunc(GL_ALWAYS,0,255);
+    glStencilOpSeparate(GL_FRONT,GL_KEEP,zfail ? GL_DECR_WRAP : GL_KEEP,zfail ? GL_KEEP : GL_INCR_WRAP);
+    glStencilOpSeparate(GL_BACK,GL_KEEP,zfail ? GL_INCR_WRAP : GL_KEEP,zfail ? GL_KEEP : GL_DECR_WRAP);
+    glDrawElements(GL_TRIANGLES,GLsizei(count),GL_UNSIGNED_INT,nullptr);
+  }
   void scene_materials(const SceneFrame& scene,const FrameTarget& target) {
     const auto draws=scene_draw_jobs(scene,target.width,target.height);const auto projection=scene_view_projection(scene.camera,target.width,target.height);
     const auto restore_scissor=[&]{glScissor(0,surfaces.at(target.surface).height-target.height,target.width,target.height);};
@@ -290,6 +340,7 @@ struct FrameRenderer::Impl {
       restore_scissor();if(!draws.inserts[pass])return;
       if(usage==0 || usage==5){FrameQuad q;auto& w=q.shader.words;w[0]=0x30002|(usage==0 ? 0x3000 : 0x8000);w[9]=0x10;w[28]=0x00ffffff;w[23]=8;quad(q,target.surface);}
       if(usage==4){glStencilMask(255);glClearStencil(0);glClear(GL_STENCIL_BUFFER_BIT);}
+      if(usage==3)glDisable(GL_STENCIL_TEST);
     };
     std::optional<std::tuple<unsigned,unsigned,std::optional<std::size_t>>> current;
     for(const auto& job:draws.jobs) {
@@ -303,6 +354,9 @@ struct FrameRenderer::Impl {
       const auto& instance=scene.instances[job.instance];const auto& batches=draws.meshes.at(instance.mesh.get());
       const auto material=batches[job.batch].material;const auto& pass=(material ? scene.materials.at(*material) : scene_default_material()).passes[job.material_pass];
       try {
+        if(pass.program==MaterialProgram::shadow) {
+          require(job.light.has_value(),"shadow job needs a light");shadow(instance,scene,pass.shader,projection,draws.lights[*job.light].light,job.shadow_zfail);continue;
+        }
         const auto& data=mesh_geometry(instance.mesh,batches);const auto [first,count]=data.batches[job.batch];
         const auto matrix=scene_combine(projection,instance.world);const MeshDraw mesh{data.buffer,first,count};
         std::optional<LightDraw> setup;

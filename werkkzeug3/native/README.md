@@ -8,8 +8,8 @@ The native frame runner now executes the demo root's animation, events and image
 compositing. All 54 sampled timeline positions render with diagnostic scene
 geometry and saved particle, text, overlay and image effects when an explicit
 font file is supplied. A 2,601-frame CPU run also traverses the timeline through
-the credits. Saved mesh materials and lighting now render 22 of the 54 samples
-without checker shading. Shadow volumes, fog, audio synchronization and
+the credits. Saved mesh materials, lighting and shadows now render 46 of the 54
+samples without checker shading. Fog, timeline history for isolated samples, audio synchronization and
 comparison with original output remain unfinished.
 
 The first target, `wz3-inspect`, reads the complete version-13 Theta projects
@@ -402,8 +402,8 @@ explicitly unsupported; neither occurs in Theta's nine operators. Seeded mesh
 clouds and emitters now share a runtime RNG, with cloud state stored per event
 instance and execution occurrence. Startup/precalculation RNG consumption still
 differs from the original executable. Counts, random rejection, phase ranges and cache memory
-are bounded. Final scene materials, lights and shadows still require their
-rendering pipeline.
+are bounded. The frame compositor below now applies saved scene materials,
+lights and shadow volumes to these instances.
 
 ## Walking scenes and limb animation
 
@@ -482,7 +482,7 @@ same slot more than once in a frame.
 The GLES compositor draws these billboards using their saved unlit texture
 combiners, vertex colors, blend/depth/cull state and UV transforms. Particle jobs
 now interleave with ordinary mesh passes in strict material mode. Theta scenes
-need diagnostic shading when their shadow/fog paths are not yet ported. The scene-only geometry renderer rejects effect scenes instead of omitting
+need diagnostic shading when they use unported fog paths. The scene-only geometry renderer rejects effect scenes instead of omitting
 their particles.
 
 For a preview with accumulated motion and retained GPU targets, replay from zero:
@@ -657,7 +657,7 @@ they also pass with llvmpipe. CPU initialization/update tests pass with ASan/UBS
 The swatches use RGBA8 uploads and native mipmap generation; legacy pixel-format,
 mipmap-count and alpha-threshold rules still need reproduction for ordinary color
 textures. The frame compositor supports signed normal textures and bump lighting.
-Shadow volumes, environment mapping and fog remain pending.
+Environment mapping and fog remain pending.
 `wz3-scene-render` continues to use diagnostic shading. Individual
 swatches do not execute the demo root's global-variable or compositing scopes,
 and comparison against original Windows frames is still required.
@@ -680,8 +680,8 @@ deterministic material binding/pass IDs. Transparent ties between different
 materials therefore still need comparison with original output. Five-plane
 frustum culling and per-light sphere/batch intersection now filter draw jobs.
 
-The renderer supports lighting inserts and per-light/default materials. It rejects
-required shadow volumes, specialized mesh finalizers, fog, depth bias and
+The renderer supports lighting inserts, per-light/default materials and shadow
+volumes. It rejects other specialized mesh finalizers, fog, depth bias and
 unsupported texture projections. It does not skip those passes or replace them with checker shading. The existing diagnostic
 option remains available for full-root traversal.
 
@@ -724,8 +724,8 @@ parameters and three squaring steps; its contribution accumulates in destination
 alpha. Material inserts clear destination alpha after the base phase, multiply
 in the texture phase, and add destination alpha back into RGB after post-light.
 This preserves the separate diffuse-texture and specular stages. Stencil-zero
-light tests and per-light stencil clearing use depth24/stencil8 targets; required
-shadow-volume drawing still fails explicitly.
+light tests and per-light stencil clearing use depth24/stencil8 targets. Shadow
+volumes now populate that stencil, as described below.
 
 Light selection retains the range/distance importance ordering, stable ties,
 sphere/frustum culling, source projected scissor rectangle and 16-light limit.
@@ -743,16 +743,50 @@ earlier RGBA8/native-mipmap path; their legacy format rules remain separate work
 `lighting_math` compiles the two unmodified archived lookup generators and signed
 normal conversion in a portable test host. All 24,576 cube texels, 32,768 volume
 texels and 4,096 sampled normal conversions match. Independent checks cover mip
-filtering, light selection, frustum rejection, pass duplication, shadow rejection
+filtering, light selection, frustum rejection, pass duplication, shadow scheduling
 and transposed-model transforms. GPU tests cover directional/point diffuse light,
 range, amplification, alpha testing, additive lights, signed bump maps, specular
 inserts and repeated frames. Six real root positions render on Radeon and llvmpipe.
 These checks do not replace an original-executable image comparison: old GPU
 arithmetic, cube seam sampling and transparent material ties remain fidelity risks.
 
-The strict root audit now renders **22/54 samples** with saved materials and
-lighting. The other 32 report their first remaining requirement: 26 need shadow
-volumes and six need fog. The diagnostic gallery still covers all 54.
+## Native shadow volumes
+
+The original indexed mesh is retained for shadow preparation, including n-gons,
+edge adjacency, material bindings and `ShadowEnable` flags. One shared volume
+includes all casting faces in a mesh; it belongs to the first material batch with
+a shadow finalizer. Its bounds cover the whole mesh, so a batch outside the view
+can still cast a visible shadow. Face planes, fan triangulation, silhouette
+winding and finite/infinite cap selection follow `EngMesh::PrepareJob` and
+`UpdateShadowCacheJob`. Original face numbering is preserved; a dangling legacy
+plane reference fails explicitly instead of reading uninitialized memory.
+
+Each point has finite (`w=1`) and infinite (`w=0`) vertex copies. The GLES shader
+subtracts the model-space light position from the infinite copy and projects it
+with the existing infinite-far camera matrix. Ordinary volumes count depth-passing
+front/back faces in an 8-bit wrapping stencil. If the caster intersects the
+light-to-near-plane volume, the renderer includes caps and counts depth failures
+instead. The source's light-expanded frustum culling, near-plane test, light
+scissor and transposed-model light position are preserved. Lighting then tests
+stencil zero, and the material insert clears stencil before the next light.
+Geometry is retained across frames; silhouette indices are regenerated per light,
+as in the archive's unconditional shadow-cache update.
+
+`shadow_volumes` compiles the unmodified archived preparation, silhouette/cap and
+near-volume routines in a portable test host. It compares 26 distinct Theta meshes
+at five light positions each, plus 60 transformed near-volume cases. Scene tests
+exercise both stencil algorithms, whole-mesh bounds, first-material selection and
+disabled casting faces. GPU checks compare a receiver against independent
+ray/box occlusion, with the camera outside and inside the shadow, overlapping
+volumes, a second light and repeated frames. Ten real root samples also run on
+Radeon and llvmpipe, including the retained-target sequence described below.
+Original-executable visual comparison is still required.
+
+The strict root audit now renders **46/54 samples** with saved materials, lighting
+and shadows. Six samples stop on fog. Two more, beats 480 and 511.5, sample
+`rt.g10finale`, which the demo writes at beat 448.5. Those frames render when the
+renderer retains that earlier target; starting each audit sample from scratch
+still fails explicitly. The diagnostic gallery covers all 54 independently.
 
 ```sh
 build/native/wz3-frame-render werkkzeug3/data/theta/theta_final.k root 384 \
@@ -760,8 +794,8 @@ build/native/wz3-frame-render werkkzeug3/data/theta/theta_final.k root 384 \
 python3 werkkzeug3/native/tools/frame_audit.py \
   --renderer build/native/wz3-frame-render --strict-materials \
   --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf \
-  --output build/native/theta-light-frames \
-  --expect-evaluated 54 --expect-rendered 22
+  --output build/native/theta-shadow-frames \
+  --expect-evaluated 54 --expect-rendered 46
 ```
 
 ## Demo root and native image compositor
@@ -809,8 +843,9 @@ python3 werkkzeug3/native/tools/frame_audit.py \
 ```
 
 The graphics command uses saved materials by default and rejects unsupported
-scene shading. **32 of the 54 Theta samples still need `--diagnostic-geometry`** because their
-scenes require shadow volumes or fog. That option draws checker mesh geometry
+scene shading. **Eight of the 54 independent Theta samples still need
+`--diagnostic-geometry`** because they require fog or a previously written render
+target. That option draws checker mesh geometry
 and saved particle/text materials, followed by the saved postprocessing and overlays. This is a compositor milestone, not complete Theta
 playback or a claim of original visual fidelity.
 
@@ -827,9 +862,9 @@ nested master restoration, the three-slot capacity, zero-duration events and
 failure recovery. GPU tests check overlay alpha blending, target orientation,
 resolution changes, blur rounding, Merge/Crashzoom and explicit diagnostic opt-in.
 Twelve geometry samples and three credits samples also run repeatedly in native
-players/renderers. The 32-test
+players/renderers. The 34-test
 Release suite passes on Radeon RX 7900 XT; mesh material and compositor tests pass
-on llvmpipe. All 20 CPU tests, including lighting math and draw-order checks, pass under
+on llvmpipe. All 21 CPU tests, including lighting, shadows and draw-order checks, pass under
 Clang ASan/UBSan. Small driver-dependent
 rounding differences are possible; bit-identical original output is unverified.
 
@@ -840,7 +875,7 @@ currently have separate depth/stencil attachments. Imported/procedural textures 
 use RGBA8 and native mipmaps rather than all legacy format rules. Saved-material mesh
 uploads are retained across frames; the diagnostic checker still rebuilds them
 for each viewport draw.
-Shadow volumes, fog, original font metrics, dynamic events, audio
+Fog, original font metrics, dynamic events, audio
 timing and original-frame comparison remain.
 
 ## Next steps
@@ -848,7 +883,7 @@ timing and original-frame comparison remain.
 1. Verify inferred Print alignment migration and native font metrics against
    the original executable/GDI.
 2. Reproduce the editor's operator type checking and version migrations.
-3. Implement shadow volumes, fog and remaining material shaders on the mesh
+3. Implement fog and remaining material shaders on the mesh
    draw queue, checking output against the
    reference rather than treating a successful graphics upload as visual fidelity.
 4. Integrate the native animation runtime with scene/material/effect execution

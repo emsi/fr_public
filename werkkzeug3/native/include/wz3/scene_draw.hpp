@@ -1,6 +1,7 @@
 // Distributed under the BSD license in werkkzeug3/LICENSE.txt.
 #pragma once
 #include "wz3/scene.hpp"
+#include "wz3/shadow.hpp"
 namespace wz3 {
 struct SceneMeshBatch {
   std::optional<std::size_t> material;
@@ -13,8 +14,13 @@ struct SceneDrawJob {
   std::uint32_t sort_key{};
   std::size_t instance{},batch{},material_pass{};
   std::optional<std::size_t> effect,light;
+  bool shadow_zfail{};
 };
-struct ScenePaintLight {SceneLight light;std::array<float,4> rectangle;};
+struct ScenePaintLight {
+  SceneLight light;std::array<float,4> rectangle;
+  std::array<ShadowPlane,5> shadow_frustum{};
+  std::vector<ShadowPlane> near_volume{};
+};
 std::vector<ScenePaintLight> scene_lights(const SceneFrame&,unsigned width,unsigned height);
 const Material& scene_default_material();
 struct SceneDrawList {
@@ -23,7 +29,6 @@ struct SceneDrawList {
   std::vector<ScenePaintLight> lights;
   std::array<bool,256> inserts{};
 };
-// Engine_::BuildPaintJobs/SortPaintJobs. Shadow volumes remain explicit failures
-// when a shadow-casting light actually needs them.
+// Engine_::BuildPaintJobs/SortPaintJobs, including shared mesh shadow jobs.
 SceneDrawList scene_draw_jobs(const SceneFrame&,unsigned width=1024,unsigned height=768);
 } // namespace wz3

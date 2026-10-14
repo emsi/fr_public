@@ -78,7 +78,7 @@ def main():
     unsupported = len(records) - supported
     scope = "reachable mesh operators" if args.all_operators else "named meshes"
     rendered = sum("image" in record for record in records)
-    rendering = ("Saved mesh materials at beat zero, the fallback light and a fitted inspection camera. Unsupported shadow/fog shading fails explicitly. Scene animation and compositing are not applied." if args.materials else
+    rendering = ("Saved mesh materials at beat zero, the fallback light and a fitted inspection camera. Unsupported shading fails explicitly. Scene animation and compositing are not applied." if args.materials else
                  "Diagnostic UV checker and crease-aware weighted normals. Original material shaders, camera and animation are not applied.")
     title = f"Theta geometry: {supported}/{len(records)} {scope} exported, {rendered} rendered"
     report = {"project": str(args.project.resolve()), "project_sha256": hashlib.sha256(args.project.read_bytes()).hexdigest(),

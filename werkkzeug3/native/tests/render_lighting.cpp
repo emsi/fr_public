@@ -63,7 +63,6 @@ void theta(const char* path) {
     for(std::size_t i=0;i<pixels.size();i+=4)visible+=pixels[i] || pixels[i+1] || pixels[i+2];check(visible>(beat==4 ? 50u : 1000u),"strict Theta lighting frame is empty");
     std::cout<<"Theta beat "<<beat<<": "<<visible<<" visible pixels with saved lighting/materials\n";
   }
-  bool shadow=false;try{renderer.render(player.frame(g.names.at("root"),56*65536,320,240));}catch(const std::runtime_error& e){shadow=std::string_view(e.what()).find("shadow volumes")!=std::string_view::npos;}check(shadow,"required Theta shadows silently omitted");
 }
 }
 int main(int argc,char** argv){try{diffuse_and_range();signed_bump();insert_specular();if(argc>1)theta(argv[1]);}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

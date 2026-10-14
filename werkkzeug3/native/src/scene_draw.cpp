@@ -28,10 +28,11 @@ std::uint32_t mesh_vertex_color(const std::array<float,4>& color) {
 }
 namespace {
 using Plane=std::array<float,4>;
-std::array<Plane,5> frustum(const SceneCamera& camera,unsigned width,unsigned height) {
+std::array<Plane,5> frustum(const SceneCamera& camera,unsigned width,unsigned height,std::array<float,4> rect={-1,-1,1,1},bool normalize=true) {
   const auto m=scene_view_projection(camera,width,height);std::array<Plane,5> planes{};
-  for(unsigned c=0;c<4;++c) {planes[0][c]=m[c*4+3]+m[c*4];planes[1][c]=m[c*4+3]-m[c*4];planes[2][c]=m[c*4+3]+m[c*4+1];planes[3][c]=m[c*4+3]-m[c*4+1];planes[4][c]=(m[c*4+3]+m[c*4+2])*.5f;}
-  for(auto& p:planes){const auto n=std::sqrt(p[0]*p[0]+p[1]*p[1]+p[2]*p[2]);for(auto& c:p)c/=n;}return planes;
+  for(unsigned c=0;c<4;++c) {planes[0][c]=-rect[0]*m[c*4+3]+m[c*4];planes[1][c]=rect[2]*m[c*4+3]-m[c*4];planes[2][c]=-rect[1]*m[c*4+3]+m[c*4+1];planes[3][c]=rect[3]*m[c*4+3]-m[c*4+1];planes[4][c]=(m[c*4+3]+m[c*4+2])*.5f;}
+  if(normalize)for(auto& p:planes){const auto n=std::sqrt(p[0]*p[0]+p[1]*p[1]+p[2]*p[2]);for(auto& c:p)c/=n;}
+  return planes;
 }
 float distance(const Plane& p,const Vec3& v){return p[0]*v[0]+p[1]*v[1]+p[2]*v[2]+p[3];}
 Bounds batch_bounds(const SceneInstance& instance,const SceneMeshBatch& batch) {
@@ -62,6 +63,11 @@ std::vector<ScenePaintLight> scene_lights(const SceneFrame& scene,unsigned width
     SceneLight fallback{scene.viewport_id,{scene.camera.world[12],scene.camera.world[13],scene.camera.world[14]},{0,0,1},0,0x78787878,1,32};
     if(std::none_of(planes.begin(),planes.end(),[&](const auto& p){return distance(p,fallback.position)<-fallback.range;}))result.push_back({fallback,{-1,-1,1,1}});
   }
+  for(auto& l:result) {
+    l.shadow_frustum=frustum(scene.camera,width,height,l.rectangle,false);
+    for(auto& p:l.shadow_frustum){const auto d=distance(p,l.light.position);if(d<0)p[3]-=d;}
+    l.near_volume=shadow_near_volume(scene.camera,l.light.position,l.rectangle);
+  }
   return result;
 }
 const Material& scene_default_material() {
@@ -80,30 +86,43 @@ SceneDrawList scene_draw_jobs(const SceneFrame& scene,unsigned width,unsigned he
     const auto& instance=scene.instances[i];if(!instance.mesh)throw std::runtime_error("missing scene geometry");
     auto found=result.meshes.find(instance.mesh.get());
     if(found==result.meshes.end())found=result.meshes.emplace(instance.mesh.get(),scene_mesh_batches(*instance.mesh)).first;
+    std::optional<std::size_t> first_shadow;
+    SceneMeshBatch whole;
+    for(std::size_t b=0;b<found->second.size();++b) {
+      const auto& batch=found->second[b];whole.faces.insert(whole.faces.end(),batch.faces.begin(),batch.faces.end());
+      if(batch.material && !scene.materials.contains(*batch.material))throw std::runtime_error("missing mesh material snapshot");
+      const auto& m=batch.material ? scene.materials.at(*batch.material) : scene_default_material();
+      if(!first_shadow && std::any_of(m.passes.begin(),m.passes.end(),[](const auto& p){return p.program==MaterialProgram::shadow;}))first_shadow=b;
+    }
     for(std::size_t b=0;b<found->second.size();++b) {
       const auto& batch=found->second[b];
       if(batch.material && !scene.materials.contains(*batch.material))throw std::runtime_error("missing mesh material snapshot");
-      const auto& material=batch.material ? scene.materials.at(*batch.material) : scene_default_material();const auto box=batch_bounds(instance,batch);
-      const bool culled=std::any_of(planes.begin(),planes.end(),[&](const auto& p){Vec3 positive;for(unsigned c=0;c<3;++c)positive[c]=p[c]>0 ? box.max[c] : box.min[c];return distance(p,positive)<0;});
+      const auto& material=batch.material ? scene.materials.at(*batch.material) : scene_default_material();const auto batch_box=batch_bounds(instance,batch);
       for(std::size_t p=0;p<material.passes.size();++p) {
         const auto& pass=material.passes[p];const auto usage=unsigned(pass.usage);
         if(usage>7)throw std::runtime_error("invalid mesh material usage");
         if(mode==1 && usage!=7)continue;
-        if(culled && usage!=3)continue;
+        const bool shadow=pass.program==MaterialProgram::shadow;
+        if(shadow && usage!=3)throw std::runtime_error("shadow finalizer requires shadow usage");
+        if(shadow && b!=first_shadow)continue;
+        const auto box=shadow ? batch_bounds(instance,whole) : batch_box;
+        if(usage!=3 && shadow_box_culled(box,planes))continue;
         const auto base=(std::int64_t(pass.render_pass)+batch.pass)&255;
         const auto index=std::clamp(base+instance.pass_adjust,std::int64_t(0),std::int64_t(255));
         if(material.material11_insert)result.inserts[index]=true;
-        const auto append=[&](unsigned slot,std::optional<std::size_t> light){
+        const auto append=[&](unsigned slot,std::optional<std::size_t> light,bool zfail=false){
           const auto key=(std::uint32_t(index)<<24)|(slot<<20)|(usage<<16)|(batch.material ? material_ids.at({*batch.material,p}) : 0);
           if(result.jobs.size()>=1000000)throw std::runtime_error("scene paint job limit");
-          result.jobs.push_back({key,i,b,p,{},light});
+          result.jobs.push_back({key,i,b,p,{},light,zfail});
         };
         if(usage==3 || usage==4) {
           for(std::size_t l=0;l<result.lights.size();++l) {
             const auto& light=result.lights[l].light;if(!intersects(box,light))continue;
-            if(usage==3) {if(light.flags&2)throw std::runtime_error("mesh shadow volumes are not ported");continue;}
-            if(pass.program!=MaterialProgram::static_mesh)throw std::runtime_error("mesh finalizer is not ported");
-            append(unsigned(l),l);
+            if(usage==3) {
+              if(!(light.flags&2) || shadow_box_culled(box,result.lights[l].shadow_frustum))continue;
+              if(!shadow)throw std::runtime_error("shadow usage requires the shadow finalizer");
+            }else if(pass.program!=MaterialProgram::static_mesh)throw std::runtime_error("mesh finalizer is not ported");
+            append(unsigned(l),l,shadow && !shadow_box_culled(box,result.lights[l].near_volume));
           }
         }else {if(pass.program!=MaterialProgram::static_mesh)throw std::runtime_error("mesh finalizer is not ported");append(usage<3 ? 0u : 15u,{});}
       }

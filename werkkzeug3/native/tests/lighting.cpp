@@ -76,7 +76,7 @@ void jobs() {
   scene.lights={{0,{0,0,0},{0,0,1},0,0xffffffff,1,10},{1,{1,0,0},{0,0,1},0,0xffffffff,1,8}};
   const auto draws=wz3::scene_draw_jobs(scene,64,64);check(draws.jobs.size()==4 && draws.inserts[0],"base/light/post jobs and material insert registration");
   check(!draws.jobs[0].light && draws.jobs[1].light==0 && draws.jobs[2].light==1 && !draws.jobs[3].light,"per-light duplication and phase ordering");
-  scene.lights[0].flags=2;bool rejected=false;try{wz3::scene_draw_jobs(scene,64,64);}catch(const std::runtime_error& e){rejected=std::string_view(e.what()).find("shadow volumes")!=std::string_view::npos;}check(rejected,"required shadow silently omitted");
+  scene.lights[0].flags=2;const auto shadowed=wz3::scene_draw_jobs(scene,64,64);check(shadowed.jobs.size()==5 && ((shadowed.jobs[1].sort_key>>16)&15)==3,"required shadow job missing");
   scene.lights[0].range=.25f;check(wz3::scene_draw_jobs(scene,64,64).jobs.size()==3,"distant light must not illuminate batch or require its shadow");
   scene.viewport_flags=0x10;check(wz3::scene_draw_jobs(scene,64,64).jobs.empty(),"simple paint mode must select only OTHER mesh usage");
   scene.viewport_flags=0;scene.instances[0].world[12]=1000;check(wz3::scene_draw_jobs(scene,64,64).jobs.empty(),"offscreen mesh batch culling");
