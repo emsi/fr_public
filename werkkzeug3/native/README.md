@@ -1446,6 +1446,17 @@ all improve, while the other 140 captures remain byte-identical. Median RGB MSE
 falls from 416.41 to 340.30. The largest remaining discrepancies are near 111.270
 and 146.042 seconds; full-demo visual acceptance is still pending.
 
+The committed shared-depth build also completes a full SDL/X11 run: 16,083
+simulation frames, 15,278 presentations and 11,085 audio callbacks, ending at
+257,311 ms / beat 592. Loading takes 23.67 seconds; playback creates **zero new
+static assets, GPU targets, uploads or shader programs**. Captures at 36, 120,
+195, 220 and 250 seconds, plus the black endpoint, are byte-identical to the
+final offline sweep. The standalone 36-second preview with 16 ms preroll also
+matches. The measured maximum draw is 7.43 ms and maximum catch-up batch 43.74 ms.
+Audio uses SDL's dummy driver; its 255.62-second wall duration is not a physical
+audio-device timing measurement. Negative controls fail when either cross-target
+depth sharing or the per-frame depth clear is removed.
+
 | Music time | RGB MSE before shared depth | After |
 | --- | ---: | ---: |
 | 36 s | 18327.10 | 214.73 |
