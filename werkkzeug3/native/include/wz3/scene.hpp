@@ -3,6 +3,7 @@
 #include "wz3/animation.hpp"
 #include "wz3/mesh.hpp"
 #include "wz3/timeline.hpp"
+#include "wz3/material.hpp"
 
 namespace wz3 {
 // Column-major matrices. combine(parent,local) applies local first.
@@ -37,6 +38,7 @@ struct SceneFrame {
   std::uint32_t viewport_flags{},background=0xff000000,ambient{};
   std::vector<SceneInstance> instances;
   std::vector<SceneLight> lights;
+  std::map<std::size_t,Material> materials;
 };
 // Reuse a player across samples: static geometry and animation programs stay
 // cached, while transforms/variables are evaluated for every instance and frame.
@@ -53,6 +55,7 @@ public:
   // Dispatch a named Event/Time branch through its aliases to viewports. This
   // evaluates nested scene events too; IPP compositing is not bypassed.
   std::vector<SceneFrame> event_viewports(std::size_t id,EventTimeline&,float aspect);
+  MaterialRuntime& materials();
 };
 Bounds scene_bounds(const SceneFrame&);
 void write_scene(const std::filesystem::path&,const SceneFrame&);

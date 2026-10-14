@@ -57,12 +57,12 @@ SceneMatrix scene_view_projection(const SceneCamera& camera,unsigned width,unsig
 }
 
 struct ScenePlayer::Impl {
-  const Project& project;const Graph& graph;SplineLibrary splines;
+  const Project& project;const Graph& graph;SplineLibrary splines;MaterialRuntime materials;
   std::vector<std::optional<AnimationProgram>> programs;
   std::vector<std::shared_ptr<const Mesh>> meshes;
   std::vector<bool> visiting;
   std::size_t mesh_bytes{};
-  Impl(const Project& p,const Graph& g):project(p),graph(g),splines(p),programs(p.operators.size()),meshes(programs.size()),visiting(programs.size()) {
+  Impl(const Project& p,const Graph& g):project(p),graph(g),splines(p),materials(p,g),programs(p.operators.size()),meshes(programs.size()),visiting(programs.size()) {
     require(graph.nodes.size()==project.operators.size(),"scene graph size mismatch");
   }
   void valid(std::size_t id) const {require(id<programs.size() && graph.nodes[id].active,"invalid or inactive scene operator");}
@@ -122,6 +122,10 @@ struct ScenePlayer::Impl {
     switch(op.command) {
     case 5:case 6:
       dispatch(id,p,env,world,timeline,[&](auto input,const auto& transform){execute(input,env,transform,frame,timeline,depth+1,pass);});break;
+    case 0xd2:
+      require(p.empty() && node.inputs.empty() && node.links.size()==1,"unsupported MatHack layout");
+      if(node.links[0])materials.execute(*node.links[0],env);
+      break;
     case 0xc0:case 0xc3:
       require(p.size()==(op.command==0xc0 ? 10u : 9u),"unsupported scene transform layout");
       execute(one(),env,scene_combine(world,scene_srt(p)),frame,timeline,depth+1,pass);break;
@@ -170,6 +174,10 @@ struct ScenePlayer::Impl {
     camera.fog_color=p[15];camera.fog_end=real(p,16);camera.fog_start=real(p,17);
     require(camera.near_clip>0 && camera.far_clip>camera.near_clip && camera.zoom_x>0 && camera.zoom_y>0,"invalid saved scene camera");
     execute(node.inputs[0],env,world,frame,timeline);
+    // Engine painting consumes material state after all scene jobs have been
+    // collected, including updates executed later in the same scene traversal.
+    for(const auto& instance:frame.instances)for(const auto& face:instance.mesh->faces)
+      if(face.material && !frame.materials.contains(*face.material))frame.materials.emplace(*face.material,materials.snapshot(*face.material));
     if(frame.lights.empty())frame.lights.push_back({id,column(camera.world,3),{0,0,1},0,0x78787878,1,32});
     return frame;
   }
@@ -187,6 +195,7 @@ struct ScenePlayer::Impl {
 };
 ScenePlayer::ScenePlayer(const Project& p,const Graph& g):impl(std::make_unique<Impl>(p,g)) {}
 ScenePlayer::~ScenePlayer()=default;
+MaterialRuntime& ScenePlayer::materials() {return impl->materials;}
 SceneFrame ScenePlayer::viewport(std::size_t id,AnimationEnvironment env,float aspect,const SceneMatrix& world,EventTimeline* timeline) {
   require(std::isfinite(aspect) && aspect>0 && aspect<=16,"invalid scene aspect");validate(world);return impl->viewport(id,env,aspect,world,timeline);
 }
@@ -224,6 +233,8 @@ void write_scene(const std::filesystem::path& path,const SceneFrame& frame) {
     const auto& v=frame.lights[i];out<<(i ? "," : "")<<"{\"operator\":"<<v.operator_id<<",\"position\":";array(v.position);
     out<<",\"direction\":";array(v.direction);out<<",\"flags\":"<<v.flags<<",\"color\":"<<v.color<<",\"amplify\":"<<v.amplify<<",\"range\":"<<v.range<<'}';
   }
-  out<<"]}\n";require(bool(out),"cannot write scene output");
+  out<<"],\"materials\":{";bool first_material=true;
+  for(const auto& [id,material]:frame.materials) {out<<(first_material ? "" : ",")<<'\"'<<id<<"\":";write_material(out,material);first_material=false;}
+  out<<"}}\n";require(bool(out),"cannot write scene output");
 }
 } // namespace wz3

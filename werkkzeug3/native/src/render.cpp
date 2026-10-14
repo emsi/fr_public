@@ -338,4 +338,83 @@ std::vector<std::uint8_t> render_scene(const SceneFrame& frame,unsigned width,un
   std::cerr<<"Scene GPU readback: "<<frame.instances.size()<<" instances, "<<geometry.size()<<" shared meshes, "<<triangles<<" triangles, "<<visible<<" visible pixels\n";
   return output;
 }
+std::vector<std::uint8_t> render_material_quad(const Material& material,
+    const std::map<std::size_t,std::shared_ptr<const Texture>>& textures,unsigned width,unsigned height,std::uint32_t background) {
+  if(!width || !height || width>4096 || height>4096)throw std::runtime_error("invalid material render size");
+  // Validate before creating a context or changing any render state.
+  std::vector<std::string> fragments;std::vector<std::array<float,36>> transforms;
+  for(const auto& pass:material.passes) {
+    if(pass.usage!=MaterialUsage::other || (pass.shader.words[0]&0xfc0078))throw std::runtime_error("material quad needs an unlit pass without fog, shadow or depth bias");
+    fragments.push_back(material_fragment_shader(pass.shader));std::array<float,36> matrices{};
+    for(unsigned i=0;i<4;++i) {const auto uv=material_uv_matrix(pass.shader,i);std::copy(uv.begin(),uv.end(),matrices.begin()+i*9);}
+    transforms.push_back(matrices);
+    for(auto id:pass.shader.textures)if(id && (!textures.contains(*id) || !textures.at(*id)))throw std::runtime_error("missing material texture");
+  }
+  Context context(width,height,true);
+  std::cerr<<"GL vendor: "<<glGetString(GL_VENDOR)<<"\nGL renderer: "<<glGetString(GL_RENDERER)<<"\nGL version: "<<glGetString(GL_VERSION)<<'\n';
+  glViewport(0,0,width,height);glDisable(GL_DITHER);glEnable(GL_DEPTH_TEST);glClearDepthf(1);
+  glClearColor(((background>>16)&255)/255.0f,((background>>8)&255)/255.0f,(background&255)/255.0f,(background>>24)/255.0f);
+  glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);glFrontFace(GL_CCW);
+  if(glCheckFramebufferStatus(GL_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE)throw std::runtime_error("incomplete material framebuffer");
+  GLuint vao=0;glGenVertexArrays(1,&vao);glBindVertexArray(vao);
+  std::map<std::size_t,GLuint> uploaded;std::size_t bytes=0;
+  const char* vertex_source=R"(#version 300 es
+    uniform mat3 uv_transform[4];
+    out vec2 material_uv[4];
+    out vec4 material_vertex_color;
+    void main() {
+      vec2 p=vec2(float((gl_VertexID<<1)&2),float(gl_VertexID&2));
+      gl_Position=vec4(p*2.0-1.0,0.0,1.0);
+      for(int i=0;i<4;++i)material_uv[i]=(uv_transform[i]*vec3(p.x,1.0-p.y,1.0)).xy;
+      material_vertex_color=vec4(1.0);
+    })";
+  for(std::size_t index=0;index<material.passes.size();++index) {
+    const auto& s=material.passes[index].shader;const auto flags=s.words[0];
+    const auto vertex=shader(GL_VERTEX_SHADER,vertex_source),fragment=shader(GL_FRAGMENT_SHADER,fragments[index].c_str());
+    const auto program=glCreateProgram();glAttachShader(program,vertex);glAttachShader(program,fragment);glLinkProgram(program);
+    glDeleteShader(vertex);glDeleteShader(fragment);GLint linked=0;glGetProgramiv(program,GL_LINK_STATUS,&linked);
+    if(!linked) {char log[4096]{};glGetProgramInfoLog(program,sizeof(log),nullptr,log);throw std::runtime_error(std::string("material shader link failed: ")+log);}
+    glUseProgram(program);glUniformMatrix3fv(glGetUniformLocation(program,"uv_transform[0]"),4,GL_FALSE,transforms[index].data());
+    std::array<float,16> colors{};
+    for(unsigned i=0;i<4;++i)for(unsigned c=0;c<4;++c)colors[i*4+c]=((s.words[28+i]>>(c==0 ? 16 : c==1 ? 8 : c==2 ? 0 : 24))&255)/255.0f;
+    glUniform4fv(glGetUniformLocation(program,"material_colors[0]"),4,colors.data());
+    std::array<GLuint,4> samplers{};glGenSamplers(4,samplers.data());
+    for(unsigned i=0;i<4;++i)if(s.textures[i]) {
+      const auto id=*s.textures[i];glActiveTexture(GL_TEXTURE0+i);auto [found,created]=uploaded.try_emplace(id);
+      if(created) {
+        const auto& source=*textures.at(id);const auto pixels=rgba8(source);bytes+=pixels.size();
+        if(bytes>256u*1024*1024)throw std::runtime_error("material texture upload budget exceeded");
+        glGenTextures(1,&found->second);glBindTexture(GL_TEXTURE_2D,found->second);
+        glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,source.width,source.height,0,GL_RGBA,GL_UNSIGNED_BYTE,pixels.data());glGenerateMipmap(GL_TEXTURE_2D);
+      } else glBindTexture(GL_TEXTURE_2D,found->second);
+      const auto tf=s.words[4+i];const auto filter=tf&7;const auto sampler=samplers[i];
+      constexpr GLint min_filter[]={GL_NEAREST,GL_LINEAR,GL_LINEAR_MIPMAP_LINEAR,GL_LINEAR_MIPMAP_LINEAR,GL_NEAREST_MIPMAP_NEAREST,GL_LINEAR_MIPMAP_NEAREST,GL_NEAREST,GL_NEAREST};
+      glSamplerParameteri(sampler,GL_TEXTURE_MIN_FILTER,min_filter[filter]);
+      glSamplerParameteri(sampler,GL_TEXTURE_MAG_FILTER,(filter==1 || filter==2 || filter==3 || filter==5) ? GL_LINEAR : GL_NEAREST);
+      glSamplerParameteri(sampler,GL_TEXTURE_WRAP_S,(tf&0x100) ? GL_CLAMP_TO_EDGE : GL_REPEAT);glSamplerParameteri(sampler,GL_TEXTURE_WRAP_T,(tf&0x100) ? GL_CLAMP_TO_EDGE : GL_REPEAT);
+      if(filter==3) {
+        const auto extensions=reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS));
+        if(!extensions || std::string_view(extensions).find("GL_EXT_texture_filter_anisotropic")==std::string_view::npos)throw std::runtime_error("material needs anisotropic texture filtering");
+        GLfloat maximum=1;glGetFloatv(0x84ff,&maximum);glSamplerParameterf(sampler,0x84fe,std::min(4.0f,maximum));
+      }
+      glBindSampler(i,sampler);glUniform1i(glGetUniformLocation(program,("material_tex"+std::to_string(i)).c_str()),GLint(i));
+    }
+    if(flags&2)glDisable(GL_CULL_FACE);else {glEnable(GL_CULL_FACE);glCullFace((flags&4) ? GL_FRONT : GL_BACK);}
+    glDepthMask((flags&0x100) ? GL_TRUE : GL_FALSE);glDepthFunc(!(flags&0x200) ? GL_ALWAYS : (flags&0x80) ? GL_EQUAL : GL_LEQUAL);
+    const auto blend=(flags>>12)&15;
+    if(!blend)glDisable(GL_BLEND);
+    else {
+      constexpr GLenum src[]={0,GL_SRC_ALPHA,GL_ONE,GL_ZERO,GL_DST_COLOR,GL_ONE,GL_ONE,GL_ONE_MINUS_DST_COLOR,GL_DST_ALPHA,GL_SRC_ALPHA};
+      constexpr GLenum dst[]={0,GL_ONE_MINUS_SRC_ALPHA,GL_ONE,GL_SRC_COLOR,GL_SRC_COLOR,GL_ONE_MINUS_SRC_COLOR,GL_ONE,GL_ONE_MINUS_SRC_COLOR,GL_ONE,GL_ONE};
+      if(blend>9)throw std::runtime_error("unsupported material blend mode");
+      glEnable(GL_BLEND);glBlendEquation(blend==6 ? GL_FUNC_REVERSE_SUBTRACT : GL_FUNC_ADD);glBlendFunc(src[blend],dst[blend]);
+    }
+    glDrawArrays(GL_TRIANGLES,0,3);glDeleteSamplers(4,samplers.data());glDeleteProgram(program);
+  }
+  std::vector<std::uint8_t> output(std::size_t(width)*height*4);glReadPixels(0,0,width,height,GL_RGBA,GL_UNSIGNED_BYTE,output.data());
+  const auto error=glGetError();for(const auto& [id,texture]:uploaded) {static_cast<void>(id);glDeleteTextures(1,&texture);}glDeleteVertexArrays(1,&vao);
+  if(error!=GL_NO_ERROR)throw std::runtime_error("material GPU error "+std::to_string(error));
+  for(unsigned y=0;y<height/2;++y)std::swap_ranges(output.begin()+std::size_t(y)*width*4,output.begin()+std::size_t(y+1)*width*4,output.begin()+std::size_t(height-y-1)*width*4);
+  std::cerr<<"Material GPU readback: "<<material.passes.size()<<" unlit passes, "<<uploaded.size()<<" textures\n";return output;
+}
 } // namespace wz3

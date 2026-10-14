@@ -332,7 +332,7 @@ python3 werkkzeug3/native/tools/scene_audit.py \
 
 At the audit's default time of 0.5, **7 of 23 reachable viewports** evaluate in
 isolation: 590, 623, 719, 723, 857, 1111 and 1728. The other 16 report their first
-unimplemented dependency, including Particles, MatHack and Print, or a missing
+unimplemented dependency, including Particles, PartSystem and Print, or a missing
 timeline context required by Event. They are
 not silently omitted from successful frames. This sample coverage is not full
 timeline coverage. Reports retain scene snapshots, hashes and graphics driver
@@ -384,13 +384,68 @@ with llvmpipe. These are individual event branches; execution from the demo root
 its global variables, output-target reuse, compositing, dynamic triggers and
 stateful EventTime remain to be connected.
 
+## Material state and native unlit shaders
+
+`MaterialRuntime` reproduces Material initialization and per-frame updates,
+including Load/Store/Nop and Add Material. All **65 reachable Theta materials**
+initialize to **120 passes**: 23 base, 13 shadow, 21 light, 21 post-light and 42
+single passes. The audit executes each material at five local times. Pass records
+retain usage, ordering, finalizer, texture bindings, render state, colors and UV
+transforms. Initialization and execution remain distinct: for example, the source
+keeps base ambient colors from initialization but updates light colors each frame.
+
+Material chains copy pass metadata while sharing mutable shader objects, as the
+original `Material_Add` does. Updating a parent therefore also changes shared
+child shader values. Exported snapshots copy those values and remain unchanged
+when later frames execute. Precalculation can inherit ancestor animation scopes;
+isolated lazy initialization uses beat zero. Runtime material regeneration through
+KA_CHANGEPARA is explicitly rejected until cache rebuilding is implemented.
+
+`MatHack` now executes its material link. Scene snapshots collect material state
+after all scene jobs have been emitted, so an update after a mesh in the traversal
+still affects that frame. Viewport 1156 at beat 384/event 0 now evaluates 14 mesh
+instances and 11 lights, including nested events and material updates. Viewports
+979/980 progress past MatHack and stop at their remaining PartSystem dependency.
+
+```sh
+build/native/wz3-material werkkzeug3/data/theta/theta_final.k --audit
+build/native/wz3-material werkkzeug3/data/theta/theta_final.k mat.FlashIn 47 build/native/flash.json 7
+build/native/wz3-material-render werkkzeug3/data/theta/theta_final.k mat.intro4 0.5 build/native/theta-title.ppm
+python3 werkkzeug3/native/tools/material_audit.py \
+  --renderer build/native/wz3-material-render --output build/native/theta-material-gallery \
+  --expect-evaluated 65 --expect-rendered 36
+```
+
+The GLES material target draws an unlit material on a 512×512 quad. It translates
+the original pixel combiner, including alpha fading, alpha tests, the source's
+LRP operand order, saturation and all ten blend modes. Sampler state includes
+wrap/clamp, filtering and independent settings for slots sharing a texture. UV
+scaling and both saved transforms are applied; SRT1 uses turns for rotation while
+SRT2 uses radians, matching the two original code paths.
+
+At local time 0.5, **36 of 42 unlit materials** render on Radeon. The other six
+depend on five render-target bindings or the uncached font atlas. All 23 materials
+with multiple rendering phases still require their lighting/shadow pipeline.
+The gallery retains CPU snapshots, readback hashes, failures and driver details.
+GPU tests check analytical pixel values for combiners, intermediate saturation,
+alpha, blending, texture orientation, transformed UVs and sampler independence;
+they also pass with llvmpipe. CPU initialization/update tests pass with ASan/UBSan.
+
+The swatches use RGBA8 uploads and native mipmap generation; legacy pixel-format,
+mipmap-count and alpha-threshold rules still need reproduction. Bump lighting,
+shadows, environment mapping, fog, render targets and final scene material drawing
+remain pending. `wz3-scene-render` continues to use diagnostic shading. Individual
+swatches do not execute the demo root's global-variable or compositing scopes,
+and comparison against original Windows frames is still required.
+
 ## Next steps
 
 1. Execute the demo root and IPP graph using the event scheduler; extend scene
-   execution to particles, effects and material updates, and verify native font
+   execution to particles and effects, and verify native font
    metrics against GDI.
 2. Reproduce the editor's operator type checking and version migrations.
-3. Implement materials and postprocessing shaders, checking output against the
+3. Connect material passes to scene drawing and implement lighting/shadow and
+   postprocessing shaders, checking output against the
    reference rather than treating a successful graphics upload as visual fidelity.
 4. Integrate the native animation runtime with scene/material/effect execution
    and Ogg playback driven by a sample-based clock.
