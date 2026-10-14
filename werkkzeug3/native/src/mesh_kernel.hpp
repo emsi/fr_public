@@ -44,6 +44,7 @@ struct sVector {
   void InitColor(sU32 c) {Init(((c>>16)&255)/255.0f,((c>>8)&255)/255.0f,(c&255)/255.0f,(c>>24)/255.0f);}
   void Lin3(const sVector& a,const sVector& b,float t) {x=a.x+(b.x-a.x)*t;y=a.y+(b.y-a.y)*t;z=a.z+(b.z-a.z)*t;}
   void Lin4(const sVector& a,const sVector& b,float t) {Lin3(a,b,t);w=a.w+(b.w-a.w)*t;}
+  void Add3(const sVector& a,const sVector& b) {x=a.x+b.x;y=a.y+b.y;z=a.z+b.z;}
   void Add3(const sVector& a) {x+=a.x;y+=a.y;z+=a.z;}
   void Add4(const sVector& a) {Add3(a);w+=a.w;}
   void Add4(const sVector& a,const sVector& b) {x=a.x+b.x;y=a.y+b.y;z=a.z+b.z;w=a.w+b.w;}
@@ -60,11 +61,14 @@ struct sVector {
   void Mul4(const sVector& a) {Mul3(a);w*=a.w;}
   float Dot3(const sVector& a) const {return x*a.x+y*a.y+z*a.z;}
   void Cross3(const sVector& a,const sVector& b) {const auto xx=a.y*b.z-a.z*b.y,yy=a.z*b.x-a.x*b.z,zz=a.x*b.y-a.y*b.x;x=xx;y=yy;z=zz;}
+  void Cross4(const sVector& a,const sVector& b) {Cross3(a,b);w=0;}
+  float Abs3() const {return std::sqrt(Dot3(*this));}
   void Unit3() {Scale3(sFInvSqrt(Dot3(*this)));}
   void UnitSafe3() {if(Dot3(*this)>1e-20f)Unit3();else Init3(1,0,0);}
   void Rotate3(const sMatrix& m,const sVector& v);
   void Rotate3(const sMatrix& m) {Rotate3(m,*this);}
   void Rotate34(const sMatrix& m,const sVector& v);
+  void Rotate34(const sMatrix& m) {Rotate34(m,*this); }
 };
 struct sMatrix {
   sVector i,j,k,l;

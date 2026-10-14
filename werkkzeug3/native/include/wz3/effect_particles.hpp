@@ -3,14 +3,6 @@
 #include "wz3/scene.hpp"
 namespace wz3 {
 class ParticleRandom;
-struct ParticleClock {
-  std::int32_t current{},delta{};
-  bool reset{};
-  void advance(std::int32_t milliseconds);
-};
-// Convenience for offline sampling. Actual playback can supply audio-derived
-// beat and wall-clock milliseconds independently, as the original player did.
-std::int32_t beat_milliseconds(std::int32_t beat,float bpm);
 struct EffectParticle {
   std::array<float,4> position{},speed{};
   std::int32_t age{},lifetime{};
@@ -23,11 +15,11 @@ public:
   ~EffectParticles();
   void initialize(unsigned slot,unsigned capacity);
   void emit(std::size_t instance,std::span<const std::uint32_t> parameters,
-            const SceneMatrix&,const ParticleClock&);
+            const SceneMatrix&,const FrameClock&);
   // Call only when the source material's first pass exists. Draw before update;
   // a slot may be advanced more than once by multiple effect jobs in a frame.
   std::vector<SceneEffectVertex> draw(std::span<const std::uint32_t> parameters,
-            const SceneCamera&,const SceneMatrix&,const ParticleClock&);
+            const SceneCamera&,const SceneMatrix&,const FrameClock&);
   std::span<const EffectParticle> particles(unsigned slot) const;
 };
 } // namespace wz3

@@ -16,13 +16,6 @@ std::int32_t integer(float v) {
 }
 std::int32_t fraction(std::int32_t a,std::int32_t b) {require(b>0,"invalid particle fade duration");return std::int32_t(std::int64_t(a)*65536/b);}
 }
-void ParticleClock::advance(std::int32_t milliseconds) {
-  require(milliseconds>=0,"negative particle clock");reset=milliseconds<current;delta=reset ? 0 : milliseconds-current;current=milliseconds;
-}
-std::int32_t beat_milliseconds(std::int32_t beat,float bpm) {
-  const Nearest rounding;require(beat>=0 && std::isfinite(bpm) && bpm>0,"beat clock requires nonnegative beat and positive BPM");
-  const auto ms=double(beat)*60000/(65536.0*bpm);require(ms<=2147483647,"beat clock overflow");return std::int32_t(ms);
-}
 struct EffectParticles::Impl {
   struct Slot {unsigned capacity{};std::vector<EffectParticle> particles;};
   struct Emitter {std::int64_t burst{};unsigned next{};};
@@ -38,7 +31,7 @@ void EffectParticles::initialize(unsigned slot,unsigned count) {
 std::span<const EffectParticle> EffectParticles::particles(unsigned slot) const {
   require(slot<16,"invalid particle slot");return impl->slots[slot].particles;
 }
-void EffectParticles::emit(std::size_t instance,std::span<const std::uint32_t> parameters,const SceneMatrix& world,const ParticleClock& clock) {
+void EffectParticles::emit(std::size_t instance,std::span<const std::uint32_t> parameters,const SceneMatrix& world,const FrameClock& clock) {
   const Nearest rounding;require(clock.delta>=0 && clock.current>=clock.delta,"invalid particle clock interval");
   // Saved v13/v14 prefixes are copied onto current editor defaults.
   require(parameters.size()>=17 && parameters.size()<=20,"unsupported PartEmitter layout");
@@ -69,7 +62,7 @@ void EffectParticles::emit(std::size_t instance,std::span<const std::uint32_t> p
     impl->slots[slot+mem.next].particles.push_back(v);mem.next=(mem.next+1)%slots;
   }
 }
-std::vector<SceneEffectVertex> EffectParticles::draw(std::span<const std::uint32_t> p,const SceneCamera& camera,const SceneMatrix& world,const ParticleClock& clock) {
+std::vector<SceneEffectVertex> EffectParticles::draw(std::span<const std::uint32_t> p,const SceneCamera& camera,const SceneMatrix& world,const FrameClock& clock) {
   const Nearest rounding;require(clock.delta>=0 && clock.current>=clock.delta,"invalid particle clock interval");require(p.size()==12 && p[0]<16 && !(p[11]&~1u),"unsupported PartSystem layout/flags");
   for(unsigned i=5;i<=10;++i)real(p,i);
   require(real(p,8)>=0 && real(p,8)<=1 && real(p,9)>=0 && real(p,9)<=.5f,"invalid particle middle/fade");

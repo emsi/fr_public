@@ -2,7 +2,6 @@
 // Ordered execution follows kdoc.cpp and genoverlay.cpp. The four-size target
 // pool belongs to the .k editor/Theta path, not the later Debris player hack.
 #include "wz3/frame.hpp"
-#include "wz3/effect_particles.hpp"
 #include <algorithm>
 #include <cmath>
 #include <iomanip>

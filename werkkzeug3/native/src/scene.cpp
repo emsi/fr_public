@@ -4,6 +4,7 @@
 #include "wz3/scene.hpp"
 #include "wz3/particles.hpp"
 #include "wz3/effect_particles.hpp"
+#include "wz3/walk.hpp"
 #include "particle_random.hpp"
 #include "mesh_kernel.hpp"
 #include <bit>
@@ -63,7 +64,7 @@ SceneMatrix scene_view_projection(const SceneCamera& camera,unsigned width,unsig
 struct ScenePlayer::Impl {
   const Project& project;const Graph& graph;SplineLibrary splines;MaterialRuntime materials;
   std::shared_ptr<ParticleRandom> random=std::make_shared<ParticleRandom>();
-  SceneParticles particles;EffectParticles effects;ParticleClock clock;
+  SceneParticles particles;EffectParticles effects;FrameClock clock;SceneWalk walker;
   struct EffectJob {std::size_t id;SceneMatrix world;std::array<AnimationVector,32> variables;std::uint32_t key;};
   std::vector<EffectJob> jobs;
   std::map<std::size_t,std::int32_t> effect_passes;
@@ -74,7 +75,7 @@ struct ScenePlayer::Impl {
   std::vector<std::shared_ptr<const Mesh>> meshes;
   std::vector<bool> visiting;
   std::size_t mesh_bytes{};
-  Impl(const Project& p,const Graph& g):project(p),graph(g),splines(p),materials(p,g),particles(splines,random),effects(random),prepared(p.operators.size()),programs(p.operators.size()),meshes(programs.size()),visiting(programs.size()) {
+  Impl(const Project& p,const Graph& g):project(p),graph(g),splines(p),materials(p,g),particles(splines,random),effects(random),walker(splines),prepared(p.operators.size()),programs(p.operators.size()),meshes(programs.size()),visiting(programs.size()) {
     require(graph.nodes.size()==project.operators.size(),"scene graph size mismatch");
   }
   void valid(std::size_t id) const {require(id<programs.size() && graph.nodes[id].active,"invalid or inactive scene operator");}
@@ -214,6 +215,24 @@ struct ScenePlayer::Impl {
       }}catch(...) {env.variables[3]=selection;env.variables[11]=fraction;throw;}
       env.variables[3]=selection;env.variables[11]=fraction;break;
     }
+    case 0xc7: {
+      require(node.inputs.size()==2,"Limb needs two scene inputs");const auto pose=scene_limb(p,world);
+      const std::array<AnimationVector,4> saved={env.variables[28],env.variables[29],env.variables[30],env.variables[31]};
+      try {for(unsigned i=0;i<2;++i) {for(unsigned c=0;c<4;++c)std::copy_n(pose.other[i].begin()+c*4,4,env.variables[28+c].begin());execute(node.inputs[i],env,pose.world[i],frame,timeline,depth+1,pass);}}
+      catch(...) {std::copy(saved.begin(),saved.end(),env.variables.begin()+28);throw;}
+      std::copy(saved.begin(),saved.end(),env.variables.begin()+28);break;
+    }
+    case 0xc8: {
+      require(node.inputs.size()==1 && op.splines.size()<=1,"unsupported Walk input/spline layout");std::optional<std::size_t> spline;
+      if(!op.splines.empty() && !op.splines[0].empty()) {spline=splines.find(op.splines[0]);require(spline.has_value(),"unresolved Walk step spline");}
+      const auto pose=walker.evaluate(instance(id,env),p,world,clock,spline);std::array<AnimationVector,8> saved;
+      std::copy_n(env.variables.begin()+16,8,saved.begin());const auto timing=env.variables[27];
+      std::copy_n(pose.feet.begin(),pose.count,env.variables.begin()+16);env.variables[27]=pose.timing;
+      try {execute(node.inputs[0],env,pose.body,frame,timeline,depth+1,pass);}
+      catch(...) {std::copy(saved.begin(),saved.end(),env.variables.begin()+16);env.variables[27]=timing;throw;}
+      std::copy(saved.begin(),saved.end(),env.variables.begin()+16);env.variables[27]=timing;break;
+    }
+    case 0xc9:execute(one(),env,scene_rotate(p,world,frame.camera),frame,timeline,depth+1,pass);break;
     case 0x180: {
       require(p.size()==1,"unsupported AdjustPass layout");const auto adjust=std::int64_t(pass)+std::bit_cast<std::int32_t>(p[0]);
       require(adjust>=-2147483648LL && adjust<=2147483647LL,"scene pass overflow");execute(one(),env,world,frame,timeline,depth+1,std::int32_t(adjust));break;

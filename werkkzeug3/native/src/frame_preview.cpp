@@ -1,6 +1,5 @@
 // Distributed under the BSD license in werkkzeug3/LICENSE.txt.
 #include "wz3/frame.hpp"
-#include "wz3/effect_particles.hpp"
 #include "wz3/texture.hpp"
 #include <charconv>
 #include <cmath>

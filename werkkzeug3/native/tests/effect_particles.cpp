@@ -45,7 +45,7 @@ System* sSystem=&system;
 #include "effect_particles_oracle.inc"
 #undef sVERIFY
 #undef __stdcall
-void compare(wz3::EffectParticles& native,const std::vector<std::uint32_t>& params,const wz3::SceneCamera& camera,const wz3::SceneMatrix& world,wz3::ParticleClock clock) {
+void compare(wz3::EffectParticles& native,const std::vector<std::uint32_t>& params,const wz3::SceneCamera& camera,const wz3::SceneMatrix& world,wz3::FrameClock clock) {
   std::vector<Particle> storage;
   for(const auto& v:native.particles(params[0])) {Particle p;p.Pos.Init(v.position[0],v.position[1],v.position[2],v.position[3]);p.Speed.Init(v.speed[0],v.speed[1],v.speed[2],v.speed[3]);p.Time=v.age;p.MaxTime=v.lifetime;storage.push_back(p);}
   ParticleSystems[params[0]]={storage.data(),int(storage.size()),int(storage.size())};
@@ -71,7 +71,7 @@ namespace {
 std::vector<std::uint32_t> emitter(unsigned slot=0) {return {slot,0,0,f(1),f(100),f(2),f(3),f(4),f(.2f),0,0,0,0,0,0,0,0};}
 std::vector<std::uint32_t> system(unsigned slot=0) {return {slot,64,0xff2080e0,0x80503070,0x10203040,f(1),f(2),f(3),f(.4f),f(.2f),f(1),0};}
 void clocks_and_emission() {
-  wz3::ParticleClock clock;clock.advance(25);check(clock.current==25 && clock.delta==25 && !clock.reset,"first clock interval");
+  wz3::FrameClock clock;clock.advance(25);check(clock.current==25 && clock.delta==25 && !clock.reset,"first clock interval");
   wz3::EffectParticles particles;particles.initialize(0,3);auto emit=emitter();auto world=wz3::scene_identity();world[12]=10;
   particles.emit(0,emit,world,clock);check(particles.particles(0).size()==2,"emission must truncate accumulated rate");
   near(particles.particles(0)[0].position[0],10,"world emitter position");near(particles.particles(0)[0].speed[0],.002f,"speed per millisecond");
@@ -94,7 +94,7 @@ void oracle() {
     auto p=system();p[8]=f(middle);p[9]=f(fade);p[11]=flags;
     auto world=wz3::scene_srt(std::array<std::uint32_t,9>{f(2),f(3),f(1),f(.1f),f(.2f),f(.3f),f(1),f(2),f(3)});
     wz3::SceneCamera camera;camera.world=wz3::scene_srt(std::array<std::uint32_t,9>{f(1),f(1),f(1),f(.2f),f(.1f),f(.4f),0,0,0});
-    wz3::ParticleClock clock;for(int t:{10,25,76,130,210,300,500}) {clock.advance(t);particles.emit(0,e,world,clock);source::compare(particles,p,camera,world,clock);}
+    wz3::FrameClock clock;for(int t:{10,25,76,130,210,300,500}) {clock.advance(t);particles.emit(0,e,world,clock);source::compare(particles,p,camera,world,clock);}
   }
 }
 void deferred_events() {

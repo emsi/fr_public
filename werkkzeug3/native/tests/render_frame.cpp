@@ -72,7 +72,7 @@ void particle_materials() {
 }
 void theta(const char* path) {
   const auto p=wz3::read_project(path);const auto g=wz3::connect(p);wz3::FramePlayer player(p,g);wz3::FrameRenderer renderer(p,g);
-  for(int beat:{56,72,96,120,144,184,216,256,384}) {
+  for(int beat:{56,72,96,120,144,184,216,256,384,448,480,511}) {
     const auto frame=player.frame(g.names.at("root"),beat*65536,320,240);const auto pixels=renderer.render(frame,true);
     unsigned visible=0;for(std::size_t i=0;i<pixels.size();i+=4)visible+=pixels[i] || pixels[i+1] || pixels[i+2];
     check(visible>1000,"Theta composed frame contains too little visible geometry");

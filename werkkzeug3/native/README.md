@@ -385,7 +385,7 @@ Windows executable capture.
 Four additional root midpoint scenes now emit 333 instances at beat 96, 185 at
 120, 645 at 184 and 754 at 256. They render through the native compositor on
 Radeon and llvmpipe using diagnostic geometry shading. A full audit renders
-48 of 54 root samples after the emitter port; remaining failures are Walk and Print.
+51 of 54 root samples after the emitter and gait ports; the remaining failures are Print.
 
 ```sh
 build/native/wz3-frame-render werkkzeug3/data/theta/theta_final.k root 96 \
@@ -400,6 +400,53 @@ instance and execution occurrence. Startup/precalculation RNG consumption still
 differs from the original executable. Counts, random rejection, phase ranges and cache memory
 are bounded. Final scene materials, lights and shadows still require their
 rendering pipeline.
+
+## Walking scenes and limb animation
+
+Theta's `Walk` operator (1906), four `Limb` operators and two `Rotate` operators
+now execute from the demo root. The walker retains planted foot positions,
+per-foot step clocks, walk/run state and the next leg group in the same event and
+instance memory chains as particle operators. `FrameClock` supplies the shared
+millisecond time; step durations use the archive's nearest-integer rounding.
+
+The gait first samples the current feet and body, then advances its scheduler.
+Distance thresholds control starting a step and changing between walk and run;
+groups allow overlapping steps, with a maximum reach per group. The initial
+settling steps, best-leg selection and editor cycle helpers are retained. A named
+step spline supplies signed foot offsets and interpolation progress; otherwise
+the original sine lift is used. The calculated body matrix replaces the incoming
+transform. Child animation receives world-space feet in variables 16..23 and gait
+phase in variable 27; these values are restored for siblings.
+
+`Limb` solves the two-bone bend in its supplied plane, including the original
+absolute/relative modes and unreachable-target behavior. Each child receives the
+other bone's local matrix in variables 28..31. `Rotate` aligns a selected axis to
+the supplied direction or copies the camera orientation while retaining the
+current translation. Zero-duration steps, invalid groups, changed foot counts
+without a reset, and degenerate orientation/IK inputs fail explicitly. The
+archived walker's collision code is commented out; this port does not invent a
+terrain collision system.
+
+`scene_walk` compares 83,456 gait poses against the extracted source across all
+512 flag combinations, including splines, changing motion, walk/run transitions,
+resets and backward time. Additional comparisons cover all one-to-eight-foot
+counts, limb modes and rotation axes. The test-only source host replaces the old
+`(&l0)[i]` argument-stack assumption with an explicit eight-element array for the
+SysV ABI; its algorithm is unchanged. Matrix/vector and spline primitives are
+shared, so this remains a source comparison, not an original executable capture.
+Tests also check knee continuity, scoped variables, separate event instances and
+a repeated-frame run through Theta's walking branch, which emits 279 instances.
+
+The root samples at beats 448.5, 480 and 511.5 now render with diagnostic mesh
+shading and saved postprocessing. The complete root audit reaches **51 of 54**
+samples; the remaining three stop at Print. Cold samples do not reconstruct prior
+steps; use `--preroll-ms` for accumulated animation from the start.
+
+```sh
+build/native/wz3-frame-render werkkzeug3/data/theta/theta_final.k root 480 \
+  build/native/theta-walk-480.ppm --diagnostic-geometry
+ctest --test-dir build/native -R 'scene_walk|gpu_frame_compositor' --output-on-failure
+```
 
 ## Stateful emitters and particle materials
 
@@ -598,8 +645,8 @@ build/native/wz3-frame werkkzeug3/data/theta/theta_final.k root 72 build/native/
 build/native/wz3-frame-render werkkzeug3/data/theta/theta_final.k root 72 \
   build/native/root-72.ppm --diagnostic-geometry
 python3 werkkzeug3/native/tools/frame_audit.py \
-  --renderer build/native/wz3-frame-render --output build/native/theta-emitter-gallery \
-  --expect-evaluated 48 --expect-rendered 48
+  --renderer build/native/wz3-frame-render --output build/native/theta-walk-gallery \
+  --expect-evaluated 51 --expect-rendered 51
 ```
 
 The graphics command **requires `--diagnostic-geometry` when a scene is present**.
@@ -609,8 +656,7 @@ substituting a scene shader. This is a compositor milestone, not complete Theta
 playback or a claim of original visual fidelity.
 
 The audit samples the full root at 54 distinct midpoints from 57 enabled IPP
-events. **48 samples execute and render**; six fail explicitly at Walk (three)
-or Print (three). Beats 56, 72, 144 and 216 each emit 14 draws with one viewport;
+events. **51 samples execute and render**; three fail explicitly at Print. Beats 56, 72, 144 and 216 each emit 14 draws with one viewport;
 beat 384 emits 17 draws with two viewports, including render-to-texture. Overlay
 transition samples emit additional draws. The gallery retains command snapshots,
 image hashes, exact failures and graphics driver details. Each gallery sample
@@ -621,9 +667,9 @@ CPU tests cover ordering, scoped global variables, shared target reuse, crop UVs
 nested master restoration, the three-slot capacity, zero-duration events and
 failure recovery. GPU tests check overlay alpha blending, target orientation,
 resolution changes, blur rounding, Merge/Crashzoom and explicit diagnostic opt-in.
-Nine root samples also run repeatedly in one native player/renderer. The 25-test
+Twelve root samples also run repeatedly in one native player/renderer. The 26-test
 Release suite passes on Radeon RX 7900 XT; compositor tests pass on llvmpipe and
-the 15-test CPU suite passes under Clang ASan/UBSan. Small driver-dependent
+the 16-test CPU suite passes under Clang ASan/UBSan. Small driver-dependent
 rounding differences are possible; bit-identical original output is unverified.
 
 Current limits: unsupported IPP commands/flags fail explicitly, including Merge's
@@ -637,7 +683,7 @@ metrics, dynamic events, audio timing and original-frame comparison remain.
 
 ## Next steps
 
-1. Extend root scene execution to Walk and Print, and verify native
+1. Extend root scene execution to Print, and verify native
    font metrics against GDI.
 2. Reproduce the editor's operator type checking and version migrations.
 3. Connect material passes to scene drawing and implement lighting/shadow and

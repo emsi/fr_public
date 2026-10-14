@@ -4,6 +4,17 @@
 #include "wz3/graph.hpp"
 
 namespace wz3 {
+// Millisecond state shared by gait and particle simulation. Backward time
+// signals a reset and suppresses this frame's elapsed update.
+struct FrameClock {
+  std::int32_t current{},delta{};
+  bool reset{};
+  void advance(std::int32_t milliseconds);
+};
+// Convenience for offline sampling. Actual playback can supply audio-derived
+// beat and wall-clock milliseconds independently, as the original player did.
+std::int32_t beat_milliseconds(std::int32_t beat,float bpm);
+
 // KEnvironment::AddStaticEvent and Exec_Misc_Event. A timeline owns its mutable
 // event times: starting a zero-length event must never modify the saved project.
 // Reuse it across frames; reset() restarts those events from their saved values.

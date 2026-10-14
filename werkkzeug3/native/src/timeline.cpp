@@ -9,6 +9,14 @@
 namespace wz3 {
 namespace {
 void require(bool value,const char* message) {if(!value)throw std::runtime_error(message);}
+struct Nearest {int previous=std::fegetround();Nearest(){std::fesetround(FE_TONEAREST);}~Nearest(){std::fesetround(previous);}};
+}
+void FrameClock::advance(std::int32_t milliseconds) {
+  require(milliseconds>=0,"negative frame clock");reset=milliseconds<current;delta=reset ? 0 : milliseconds-current;current=milliseconds;
+}
+std::int32_t beat_milliseconds(std::int32_t beat,float bpm) {
+  const Nearest rounding;require(beat>=0 && std::isfinite(bpm) && bpm>0,"beat clock requires nonnegative beat and positive BPM");
+  const auto ms=double(beat)*60000/(65536.0*bpm);require(ms<=2147483647,"beat clock overflow");return std::int32_t(ms);
 }
 EventTimeline::EventTimeline(const Project& p,const Graph& graph):project(p),events(p.events),targets(events.size()),active_events(p.operators.size()) {
   require(graph.nodes.size()==p.operators.size(),"timeline graph size mismatch");
