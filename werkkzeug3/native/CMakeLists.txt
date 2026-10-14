@@ -4,6 +4,7 @@ project(wz3_native LANGUAGES C CXX)
 include(CTest)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 find_package(JPEG REQUIRED)
+find_package(Freetype REQUIRED)
 option(WZ3_SANITIZE "Enable address and undefined-behavior sanitizers" OFF)
 option(WZ3_BUILD_RENDERER "Build the headless EGL/GLES3 texture preview" OFF)
 option(WZ3_TEST_GRAPHICS "Run EGL tests (requires a working graphics driver)" OFF)
@@ -12,8 +13,8 @@ if(WZ3_TEST_GRAPHICS AND NOT WZ3_BUILD_RENDERER)
 endif()
 
 add_library(wz3_project src/project.cpp src/graph.cpp src/texture.cpp src/bitmap_composite.cpp
-  src/bitmap_filters.cpp src/bitmap_text.cpp src/jpeg_decode.c)
-target_link_libraries(wz3_project PRIVATE JPEG::JPEG)
+  src/bitmap_filters.cpp src/bitmap_text.cpp src/font.cpp src/jpeg_decode.c)
+target_link_libraries(wz3_project PRIVATE JPEG::JPEG Freetype::Freetype)
 target_include_directories(wz3_project PUBLIC include PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_compile_features(wz3_project PUBLIC cxx_std_20)
 target_compile_options(wz3_project PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -49,6 +50,16 @@ if(WZ3_BUILD_RENDERER)
 endif()
 
 if(BUILD_TESTING)
+  find_file(WZ3_TEST_FONT_FILE NAMES DejaVuSans.ttf PATHS /usr/share/fonts/truetype/dejavu
+    DOC "Font used for native atlas tests (override with an explicit TTF path)")
+  if(WZ3_TEST_FONT_FILE)
+    add_executable(wz3-font-tests tests/font.cpp)
+    target_link_libraries(wz3-font-tests PRIVATE wz3_project)
+    add_test(NAME theta_font_atlas COMMAND wz3-font-tests
+      "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta/theta_final.k" "${WZ3_TEST_FONT_FILE}")
+  else()
+    message(STATUS "No test font found; set WZ3_TEST_FONT_FILE to enable font atlas tests")
+  endif()
   if(WZ3_TEST_GRAPHICS)
     add_test(NAME gpu_theta_gradient COMMAND wz3-render
       "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta/theta_final.k" 263

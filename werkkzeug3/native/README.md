@@ -13,10 +13,10 @@ bits and blob bytes are retained for the subsequent evaluator.
 ## Build and inspect
 
 Requirements: C and C++20 compilers, CMake 3.20+, Python 3, libjpeg development
-headers/library, and a build tool such as Ninja. On Ubuntu:
+headers/library, FreeType development files, and a build tool such as Ninja. On Ubuntu:
 
 ```sh
-sudo apt-get install build-essential cmake ninja-build python3 libjpeg-dev
+sudo apt-get install build-essential cmake ninja-build python3 libjpeg-dev libfreetype-dev
 ```
 
 ```sh
@@ -63,11 +63,30 @@ whole-texture fidelity.
 
 Text reuses the embedded v2/v3 masks, including Theta's original Droid and Arial
 glyphs; no substitute font is needed for the five cached intro compositions.
-Masks are validated for dimensions and 3-bit coverage before drawing. Text
-without a cached mask and font atlas metrics remain unsupported. Import reads
+Masks are validated for dimensions and 3-bit coverage before drawing. Uncached
+font atlas generation uses FreeType with an explicitly selected font file. Import reads
 the embedded JPEG, then crops its upper-left corner to lower powers of two as
 the original does. Libjpeg output has not been compared pixel-for-pixel with the
 historical image decoder. Missing blobs and other image formats fail explicitly.
+
+Theta's uncached font page can now be generated with 4× supersampling, the
+original range expansion/packing rules, and normalized UV/advance/spacing metrics:
+
+```sh
+build/native/wz3-texture werkkzeug3/data/theta/theta_final.k font_bitmap \
+  build/native/font-alpha.ppm --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf \
+  --font-metrics build/native/font-metrics.json --alpha
+```
+
+`font_bitmap` stores glyph coverage in alpha and white in RGB; `--alpha` exposes
+that coverage in the PPM preview. Metrics survive Merge/Load/Store and are emitted
+as JSON for later text effects. The selected path, family and FreeType version
+are reported. DejaVu Sans is an explicit substitute for the saved Arial request;
+its appearance and metrics are **not** claimed to match GDI. Supplying an Arial
+file still needs comparison against original captures. Cached intro text is
+unaffected by this option. Native atlas generation currently supports printable
+ASCII, unstretched scalable fonts and complete packing; missing glyphs, overflow,
+uncached paragraphs and cached atlas metrics fail explicitly.
 
 ```sh
 build/native/wz3-texture werkkzeug3/data/theta/theta_final.k tex.BWCircle /tmp/circle.ppm
@@ -129,16 +148,23 @@ only Python's standard library. It follows Load/Store/Nop to select reachable
 named bitmap outputs; this is a coverage check, not full graph type checking.
 
 Current coverage is **37 of 42** named bitmap outputs. The five explicit failures
-are `font_bitmap` (uncached font generation), and `rt.g5`, `rt.g5s`,
+without an explicit font file are `font_bitmap`, and `rt.g5`, `rt.g5s`,
 `rt.g10roehre`, `rt.g10finale` (render targets that need scene rendering).
 All 37 supported outputs have also been evaluated under Clang ASan/UBSan.
 The focused tests cover malformed/truncated image data, crop orientation, cached
 text coverage, integer arithmetic and representative real texture graphs.
 
+Add `--font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf` to the audit and
+use `--expect-supported 38 --expect-unsupported 4` to include the native font
+atlas. The gallery shows its alpha channel and saves glyph metrics plus the font
+file hash. This path passed ASan/UBSan and Radeon GPU readback; all 69 requested
+glyphs have valid metrics and coverage. `WZ3_TEST_FONT_FILE` selects the font for
+CTest; these tests are skipped explicitly if no test font is installed.
+
 ## Next steps
 
-1. Add native font atlas generation and glyph metrics, then mesh operators behind
-   typed native interfaces, preserving the saved recipes and replacing x86 dispatch.
+1. Add mesh operators behind typed native interfaces, preserving the saved
+   recipes and replacing x86 dispatch; verify native font metrics against GDI.
 2. Reproduce the editor's operator type checking and version migrations.
 3. Implement materials and postprocessing shaders, checking output against the
    reference rather than treating a successful graphics upload as visual fidelity.

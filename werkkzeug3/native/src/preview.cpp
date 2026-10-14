@@ -5,11 +5,21 @@
 #include <stdexcept>
 
 int main(int argc, char** argv) {
-  if (argc != 4) {
-    std::cerr << "Usage: " << argv[0] << " PROJECT.k OPERATOR_NAME_OR_ID OUTPUT.ppm\n";
+  if (argc < 4) {
+    std::cerr << "Usage: " << argv[0] << " PROJECT.k OPERATOR_NAME_OR_ID OUTPUT.ppm [--font-file FONT] [--font-metrics JSON] [--alpha]\n";
     return 2;
   }
   try {
+    wz3::TextureOptions options;
+    std::filesystem::path metrics;
+    bool alpha = false;
+    for (int i = 4; i < argc; ++i) {
+      const std::string_view flag(argv[i]);
+      if (flag == "--alpha") alpha = true;
+      else if (flag == "--font-file" && i + 1 < argc) options.font_file = argv[++i];
+      else if (flag == "--font-metrics" && i + 1 < argc) metrics = argv[++i];
+      else throw std::runtime_error("invalid or incomplete preview option: " + std::string(flag));
+    }
     const auto project = wz3::read_project(argv[1]);
     const auto graph = wz3::connect(project);
     const std::string_view selector(argv[2]);
@@ -20,13 +30,20 @@ int main(int argc, char** argv) {
       if (error != std::errc{} || end != selector.data() + selector.size())
         throw std::runtime_error("no operator named " + std::string(selector));
     }
-    const auto texture = wz3::evaluate_texture(project, graph, id);
+    const auto texture = wz3::evaluate_texture(project, graph, id, options);
+    for (const auto& font : texture->fonts) if (font)
+      std::cerr << "Font page " << font->page << ": requested " << font->requested_family
+                << ", using " << font->family << " from " << font->file << " (" << font->rasterizer << ")\n";
 #if WZ3_GPU_PREVIEW
-    const auto pixels = wz3::render_texture(*texture);
+    auto pixels = wz3::render_texture(*texture);
 #else
-    const auto pixels = wz3::rgba8(*texture);
+    auto pixels = wz3::rgba8(*texture);
 #endif
+    if (alpha) for (std::size_t i = 0; i < pixels.size(); i += 4) {
+      pixels[i] = pixels[i+1] = pixels[i+2] = pixels[i+3]; pixels[i+3] = 255;
+    }
     wz3::write_ppm(argv[3], texture->width, texture->height, pixels);
+    if (!metrics.empty()) wz3::write_font_metrics(metrics, *texture);
     std::cout << "Rendered operator " << id << " (" << project.operators[id].name << "), "
               << texture->width << 'x' << texture->height << " to " << argv[3] << '\n';
   } catch (const std::exception& error) {

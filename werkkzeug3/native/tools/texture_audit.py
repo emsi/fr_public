@@ -41,6 +41,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--expect-supported", type=int)
     parser.add_argument("--expect-unsupported", type=int)
+    parser.add_argument("--font-file", type=Path, help="Explicit font for uncached atlases; saved masks are unchanged")
     args = parser.parse_args()
     project = json.loads(subprocess.check_output([args.inspect, args.project], text=True, timeout=60))
     categories = {entry["command"]: entry["category"] for entry in project["inventory"]}
@@ -58,6 +59,12 @@ def main():
         return categories[op["command"]]
 
     selected = [op for op in operators if op["reachable"] and op["name"] and category(op["id"]) == "BITMAP"]
+    def has_font(index, seen=()):
+        if index is None or index in seen or len(seen) > 512:
+            return False
+        op = operators[index]
+        return ((op["command"] == 0x31 and bool(op["parameters"][5] & 0x70)) or
+                any(has_font(i, seen + (index,)) for i in op["inputs"] + op["links"]))
     args.output.mkdir(parents=True, exist_ok=True)
     records, cards = [], []
     for op in selected:
@@ -67,15 +74,24 @@ def main():
         # Remove stale success artifacts before retrying a previously supported op.
         ppm.unlink(missing_ok=True)
         png.unlink(missing_ok=True)
-        run = subprocess.run([args.renderer, args.project, str(op["id"]), ppm],
+        font_atlas = has_font(op["id"])
+        options = ["--font-file", args.font_file] if args.font_file else []
+        metrics = args.output / (basename + ".font.json")
+        metrics.unlink(missing_ok=True)
+        if font_atlas:
+            options += ["--alpha", "--font-metrics", metrics]
+        run = subprocess.run([args.renderer, args.project, str(op["id"]), ppm] + options,
                              capture_output=True, text=True, timeout=180)
         record = {"id": op["id"], "name": op["name"], "supported": run.returncode == 0,
-                  "exit_code": run.returncode, "stdout": run.stdout, "stderr": run.stderr}
+                  "exit_code": run.returncode, "stdout": run.stdout, "stderr": run.stderr,
+                  "channels": "alpha" if font_atlas else "RGB"}
         if run.returncode == 0:
             data = ppm.read_bytes()
             width, height = write_png(data, png)
             record.update(width=width, height=height, ppm_sha256=hashlib.sha256(data).hexdigest(), image=png.name)
-            content = f'<a href="{png.name}"><img src="{png.name}" alt="{html.escape(op["name"], quote=True)}"></a><p>{width} × {height}</p>'
+            if font_atlas:
+                record["font_metrics"] = metrics.name
+            content = f'<a href="{png.name}"><img src="{png.name}" alt="{html.escape(op["name"], quote=True)}"></a><p>{width} × {height}, {record["channels"]}</p>'
         else:
             content = f'<pre>{html.escape(run.stderr.strip())}</pre>'
         cards.append(f'<article><h2>{html.escape(op["name"])}</h2>{content}</article>')
@@ -89,6 +105,9 @@ def main():
               "project_sha256": hashlib.sha256(args.project.read_bytes()).hexdigest(),
               "renderer": str(args.renderer.resolve()),
               "supported": supported, "unsupported": unsupported, "textures": records}
+    if args.font_file:
+        report["font_file"] = str(args.font_file.resolve())
+        report["font_sha256"] = hashlib.sha256(args.font_file.read_bytes()).hexdigest()
     (args.output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     (args.output / "index.html").write_text(
         '<!doctype html><meta charset="utf-8"><title>' + title + '</title>' +

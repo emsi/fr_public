@@ -49,8 +49,8 @@ int clamp15(double value) {
 
 class Evaluator {
 public:
-  Evaluator(const Project& project, const Graph& graph)
-      : project_(project), graph_(graph), cache_(project.operators.size()), visiting_(cache_.size()) {}
+  Evaluator(const Project& project, const Graph& graph, const TextureOptions& options)
+      : project_(project), graph_(graph), options_(options), cache_(project.operators.size()), visiting_(cache_.size()) {}
 
   std::shared_ptr<const Texture> evaluate(std::size_t id, unsigned depth = 0) {
     if (id >= cache_.size() || !graph_.nodes.at(id).active) throw std::runtime_error("invalid or inactive texture operator");
@@ -88,6 +88,8 @@ public:
           throw std::runtime_error("Merge inputs have different dimensions");
         for (std::size_t p = 0; p < texture->pixels.size(); ++p)
           texture->pixels[p] = merge_pixel(texture->pixels[p], source->pixels[p], op.parameters[0]);
+        for (unsigned page = 1; page < source->fonts.size(); ++page)
+          if (source->fonts[page]) texture->fonts[page] = source->fonts[page];
       }
       cache_[id] = std::move(texture);
     } else if (op.command == 0x23 || op.command == 0x25 || op.command == 0x28) {
@@ -130,7 +132,15 @@ public:
       if (op.parameters.size() != 8 && op.parameters.size() != 9)
         throw std::runtime_error("unsupported Text parameter layout");
       auto texture = clone(*input());
-      draw_cached_text(*texture, blob(op), op.parameters[4], op.parameters[5]);
+      if ((op.parameters[5] & 0x80) && op.blob_size) {
+        draw_cached_text(*texture, blob(op), op.parameters[4], op.parameters[5]);
+      } else {
+        if (op.strings.size() != 2) throw std::runtime_error("invalid Text strings");
+        FontLayout layout{number(op, 0), number(op, 1), number(op, 2), number(op, 3), number(op, 7),
+                          std::bit_cast<std::int32_t>(op.parameters[6]), (op.parameters[5] & 0x70) >> 4,
+                          op.parameters[4], op.strings[0], op.strings[1].empty() ? "Arial" : op.strings[1]};
+        generate_font_atlas(*texture, layout, options_.font_file);
+      }
       cache_[id] = std::move(texture);
     } else if (op.command == 0x3a) {
       require(op, 0);
@@ -157,6 +167,7 @@ public:
 private:
   const Project& project_;
   const Graph& graph_;
+  const TextureOptions& options_;
   std::vector<std::shared_ptr<const Texture>> cache_;
   std::vector<bool> visiting_;
   std::shared_ptr<std::size_t> allocated_ = std::make_shared<std::size_t>(0);
@@ -188,6 +199,7 @@ private:
   }
   static void metadata(Texture& dest, const Texture& source) {
     dest.format = source.format; dest.mip_count = source.mip_count; dest.mip_threshold = source.mip_threshold;
+    dest.fonts = source.fonts;
   }
   std::span<const std::uint8_t> blob(const Operator& op) const {
     if (op.blob_offset > project_.bytes.size() || op.blob_size > project_.bytes.size() - op.blob_offset)
@@ -329,8 +341,8 @@ private:
 };
 }
 
-std::shared_ptr<const Texture> evaluate_texture(const Project& project, const Graph& graph, std::size_t id) {
-  return Evaluator(project, graph).evaluate(id);
+std::shared_ptr<const Texture> evaluate_texture(const Project& project, const Graph& graph, std::size_t id, const TextureOptions& options) {
+  return Evaluator(project, graph, options).evaluate(id);
 }
 
 std::vector<std::uint8_t> rgba8(const Texture& texture) {
