@@ -93,11 +93,12 @@ void theta(const char* file) {
   check(frame.instances[2].mesh==frame.instances[3].mesh && frame.instances[3].mesh==frame.instances[4].mesh,"Theta Multiply geometry sharing");
   near(frame.camera.world[12],-5.252972126f,"saved Theta camera X midpoint");near(frame.camera.world[14],-9.3050251f,"saved Theta camera Z midpoint");
   for(auto id:{590u,623u,719u,723u,857u,1111u,1728u})check(!player.viewport(id,wz3::frame_environment(32768),4.0f/3).instances.empty(),"supported Theta scene is empty");
-  rejects([&]{player.viewport(697,wz3::frame_environment(32768),1);});
+  const auto particles=player.viewport(697,wz3::frame_environment(32768),1);
+  check(particles.instances.size()==333,"Theta generation3 must include both 150-particle branches");
 }
 }
 int main(int argc,char** argv) {
   try {check(argc==2,"expected Theta project");composition();animation_and_instances();lights();selection_and_passes();theta(argv[1]);
-    std::cout<<"scene transforms, instancing, scoped animation, lights and seven Theta viewports passed\n";
+    std::cout<<"scene transforms, instancing, scoped animation, lights and Theta viewports passed\n";
   }catch(const std::exception& error) {std::cerr<<error.what()<<'\n';return 1;}
 }

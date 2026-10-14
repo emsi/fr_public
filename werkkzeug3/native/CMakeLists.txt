@@ -14,10 +14,10 @@ endif()
 
 add_library(wz3_project src/project.cpp src/graph.cpp src/texture.cpp src/bitmap_composite.cpp
   src/bitmap_filters.cpp src/bitmap_text.cpp src/font.cpp src/jpeg_decode.c src/mesh.cpp src/mesh_topology.cpp
-  src/mesh_kernel.cpp src/mesh_evaluate.cpp src/mesh_noise.cpp src/mesh_displace.cpp src/animation.cpp src/timeline.cpp src/material.cpp src/material_shader.cpp src/scene.cpp src/frame.cpp)
+  src/mesh_kernel.cpp src/mesh_evaluate.cpp src/mesh_noise.cpp src/mesh_displace.cpp src/animation.cpp src/timeline.cpp src/material.cpp src/material_shader.cpp src/scene.cpp src/frame.cpp src/particles.cpp)
 # Mesh Perlin uses downward rounding; animation uses nearest-even. Preserve
 # their scalar operation boundaries and explicit floating-point environments.
-set_source_files_properties(src/mesh_kernel.cpp src/mesh_noise.cpp src/animation.cpp src/timeline.cpp src/material_shader.cpp src/scene.cpp src/frame.cpp PROPERTIES
+set_source_files_properties(src/mesh_kernel.cpp src/mesh_noise.cpp src/animation.cpp src/timeline.cpp src/material_shader.cpp src/scene.cpp src/frame.cpp src/particles.cpp PROPERTIES
   COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
 target_link_libraries(wz3_project PRIVATE JPEG::JPEG Freetype::Freetype)
 target_include_directories(wz3_project PUBLIC include PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
@@ -93,6 +93,17 @@ if(WZ3_BUILD_RENDERER)
 endif()
 
 if(BUILD_TESTING)
+  add_custom_command(
+    OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/particles_oracle.inc"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/particles_oracle.py"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../genscene.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/../_types.cpp"
+            "${CMAKE_CURRENT_BINARY_DIR}/generated/particles_oracle.inc"
+    DEPENDS tools/particles_oracle.py ../genscene.cpp ../_types.cpp VERBATIM)
+  add_executable(wz3-particle-tests tests/particles.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/particles_oracle.inc")
+  target_include_directories(wz3-particle-tests PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_compile_options(wz3-particle-tests PRIVATE -frounding-math -ffp-contract=off)
+  target_link_libraries(wz3-particle-tests PRIVATE wz3_project)
+  add_test(NAME scene_particles COMMAND wz3-particle-tests "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta/theta_final.k")
   find_file(WZ3_TEST_FONT_FILE NAMES DejaVuSans.ttf PATHS /usr/share/fonts/truetype/dejavu
     DOC "Font used for native atlas tests (override with an explicit TTF path)")
   if(WZ3_TEST_FONT_FILE)

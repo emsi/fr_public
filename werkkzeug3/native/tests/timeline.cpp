@@ -90,14 +90,9 @@ void theta(const char* file) {
     for(const auto& event:p.events)if(event.name==name && !event.fields[10]) {
       const auto beat=std::int32_t((std::int64_t(std::bit_cast<std::int32_t>(event.fields[1]))+std::bit_cast<std::int32_t>(event.fields[2]))/2);
       timeline.begin_frame(beat);
-      if(std::string_view(name)=="cp2a") {
-        bool particles=false;
-        try {player.event_viewports(g.names.at(name),timeline,4.0f/3);}
-        catch(const std::runtime_error& error) {particles=std::string_view(error.what()).find("1597 (Particles)")!=std::string_view::npos;}
-        check(particles,"cp2a must stop at its remaining particle dependency");continue;
-      }
       const auto result=player.event_viewports(g.names.at(name),timeline,4.0f/3);
-      check(beat==72*65536 && result.size()==1 && result[0].viewport_id==1527 && result[0].instances.size()==9,"Theta cp1 nested events at beat 72");
+      if(std::string_view(name)=="cp2a")check(beat==120*65536 && result.size()==1 && result[0].viewport_id==1622 && result[0].instances.size()==185,"Theta cp2a particle event at beat 120");
+      else check(beat==72*65536 && result.size()==1 && result[0].viewport_id==1527 && result[0].instances.size()==9,"Theta cp1 nested events at beat 72");
       std::cout<<name<<" at beat "<<beat/65536.0f<<": "<<result[0].instances.size()<<" instances\n";
     }
   }

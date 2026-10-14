@@ -48,6 +48,7 @@ struct sVector {
   void Add4(const sVector& a) {Add3(a);w+=a.w;}
   void Add4(const sVector& a,const sVector& b) {x=a.x+b.x;y=a.y+b.y;z=a.z+b.z;w=a.w+b.w;}
   void Sub3(const sVector& a,const sVector& b) {x=a.x-b.x;y=a.y-b.y;z=a.z-b.z;}
+  void Sub3(const sVector& a) {x-=a.x;y-=a.y;z-=a.z;}
   void Scale3(float s) {x*=s;y*=s;z*=s;}
   void Scale4(float s) {Scale3(s);w*=s;}
   void Scale3(const sVector& a,float s) {x=a.x*s;y=a.y*s;z=a.z*s;}

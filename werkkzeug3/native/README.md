@@ -5,8 +5,8 @@ fr-038. It does not yet play the demo. The original Windows sources and Theta
 assets remain the reference; no Wine or Windows SDK is needed for these targets.
 
 The native frame runner now executes the demo root's animation, events and image
-compositing. Sixteen of 54 sampled timeline positions render with diagnostic
-scene geometry and the saved overlays/effects. Full scene materials, particles,
+compositing. Twenty-eight of 54 sampled timeline positions render with diagnostic
+scene geometry and the saved overlays/effects. Full scene materials, particle effects,
 audio synchronization and visual comparison remain unfinished.
 
 The first target, `wz3-inspect`, reads the complete version-13 Theta projects
@@ -332,22 +332,72 @@ are not applied. This is animated scene geometry, not a finished Theta frame.
 ```sh
 python3 werkkzeug3/native/tools/scene_audit.py \
   --renderer build/native/wz3-scene-render --output build/native/theta-scene-gallery \
-  --expect-supported 7 --expect-unsupported 16
+  --expect-supported 10 --expect-unsupported 13
 ```
 
-At the audit's default time of 0.5, **7 of 23 reachable viewports** evaluate in
-isolation: 590, 623, 719, 723, 857, 1111 and 1728. The other 16 report their first
-unimplemented dependency, including Particles, PartSystem and Print, or a missing
+At the audit's default time of 0.5, **10 of 23 reachable viewports** evaluate in
+isolation: 590, 623, 697, 719, 723, 827, 857, 924, 1111 and 1728. The other 13 report their first
+unimplemented dependency, including PartSystem and Print, or a missing
 timeline context required by Event. They are
 not silently omitted from successful frames. This sample coverage is not full
 timeline coverage. Reports retain scene snapshots, hashes and graphics driver
 output, and the optional HTML/PNG gallery uses only Python's standard library.
 
-All seven supported viewports pass CPU evaluation and Radeon rendering. Clang
-ASan/UBSan checks cover scene composition, shared geometry, per-instance animation,
+Clang ASan/UBSan checks cover scene composition, shared geometry, per-instance animation,
 selection restoration, lights, cycles and recovery after failed traversal. GPU
 tests check near clipping, infinite-far behavior, positive-Z visibility, camera
 motion and depth independent of instance order; they also pass with llvmpipe.
+
+## Mesh particle instancing
+
+All **nine reachable Scene Particles operators** (`0xc5`) now execute. These
+repeat child meshes/scenes along lines or named splines; the separate
+PartEmitter/PartSystem effects simulate particles over elapsed milliseconds and
+remain unported. The native operator supports seeded cube, normalized-surface
+and volume distributions, random/ordered phases, come-in gating, looping controls,
+gravity, pulse displacement, spline orientation and random/angular velocities.
+Children receive the original particle index in `KV_SELECT` and wrapped phase in
+`KV_FRACTION`; both variables are restored before sibling scene execution.
+Instances share cached mesh geometry across frames.
+
+Theta saves the older 16-word parameter layout. `WerkDoc::Read` copies this prefix
+over editor defaults; the later motion parameters all default to zero. The native
+evaluator applies that migration locally without changing saved project bytes.
+Seeded distributions are cached with the source's initialization conditions,
+while animation time, motion, gravity and spline evaluation update each call.
+
+The source has several significant quirks that affect the saved art: random
+speed uses its X component for all three axes; named-spline mode still adds the
+line displacement and adds the random position a second time; rotations use
+radians; and disabling animation looping does not disable the final per-particle
+phase wrap. These operations are preserved explicitly.
+
+`scene_particles` compiles the original `Exec_Scene_Particles` body and its RNG
+functions into a test-only compatibility host. The native evaluator matches that
+handler across all 256 non-optimized mode combinations, repeated time samples,
+cache-changing parameter updates, and all nine saved operators at five times.
+Analytical checks cover ordering, line/spline placement, rotation, variable
+restoration and shared geometry. The oracle shares portable matrix and spline
+primitives, so it is not a comparison with the original SSE trigonometry or a
+Windows executable capture.
+
+Four additional root midpoint scenes now emit 333 instances at beat 96, 185 at
+120, 645 at 184 and 754 at 256. They render through the native compositor on
+Radeon and llvmpipe using diagnostic geometry shading. A full audit renders
+28 of 54 root samples; remaining failures are PartSystem, Walk and Print.
+
+```sh
+build/native/wz3-frame-render werkkzeug3/data/theta/theta_final.k root 96 \
+  build/native/particles-96.ppm --diagnostic-geometry
+ctest --test-dir build/native -R scene_particles --output-on-failure
+```
+
+GenSpline operator inputs and the optimized `0x100` mesh-instance path are
+explicitly unsupported; neither occurs in Theta's nine operators. Their local
+seeded RNG does not yet model interactions with the global RNG used by the
+unported emitter effects. Counts, random rejection, phase ranges and cache memory
+are bounded. Final scene materials, lights and shadows still require their
+rendering pipeline.
 
 ## Timeline events inside scenes
 
@@ -360,7 +410,7 @@ build/native/wz3-scene werkkzeug3/data/theta/theta_final.k scene.generation2 56 
 build/native/wz3-scene-render werkkzeug3/data/theta/theta_final.k cp1 72 build/native/cp1.ppm --event
 python3 werkkzeug3/native/tools/scene_audit.py --events \
   --renderer build/native/wz3-scene-render --output build/native/theta-event-gallery \
-  --expect-supported 4 --expect-unsupported 53
+  --expect-supported 7 --expect-unsupported 50
 ```
 
 `EventTimeline` resolves names afresh, ignores disabled or unresolved events,
@@ -374,10 +424,10 @@ executes only the first. Cached mesh inputs keep the original behavior of
 bypassing execution, including an Event wrapper around a mesh.
 
 The `cp1` scene now emits nine mesh instances at beat 72, including its nested
-`roataiont1` event. Four of 57 enabled IPP event midpoint samples currently reach
-supported viewports: `generation2`, `generation7`, `cp1` and `cp3a`. All four have
-Radeon readbacks in the gallery. This count includes overlay events that still
-require Layer2D/material support; it is separate from the isolated viewport audit.
+`roataiont1` event. Seven of 57 enabled IPP event midpoint samples currently reach
+supported viewports: `generation2`, `generation4`, `generation6`, `generation7`,
+`cp1`, `cp2a` and `cp3a`. This count includes overlay events that require the
+frame compositor rather than the scene-only API; it is separate from the isolated viewport audit.
 The scene API returns every viewport execution for overlapping events. The
 single-image CLI requires exactly one and reports inactive or overlapping samples
 explicitly. Unsupported IPP operators are rejected rather than bypassed.
@@ -483,8 +533,8 @@ build/native/wz3-frame werkkzeug3/data/theta/theta_final.k root 72 build/native/
 build/native/wz3-frame-render werkkzeug3/data/theta/theta_final.k root 72 \
   build/native/root-72.ppm --diagnostic-geometry
 python3 werkkzeug3/native/tools/frame_audit.py \
-  --renderer build/native/wz3-frame-render --output build/native/theta-root-gallery \
-  --expect-evaluated 16 --expect-rendered 16
+  --renderer build/native/wz3-frame-render --output build/native/theta-particle-gallery \
+  --expect-evaluated 28 --expect-rendered 28
 ```
 
 The graphics command **requires `--diagnostic-geometry` when a scene is present**.
@@ -494,8 +544,8 @@ substituting a scene shader. This is a compositor milestone, not complete Theta
 playback or a claim of original visual fidelity.
 
 The audit samples the full root at 54 distinct midpoints from 57 enabled IPP
-events. **16 samples execute and render**; 38 fail explicitly at PartSystem,
-Particles or Walk. Beats 56, 72, 144 and 216 each emit 14 draws with one viewport;
+events. **28 samples execute and render**; 26 fail explicitly at PartSystem,
+Walk or Print. Beats 56, 72, 144 and 216 each emit 14 draws with one viewport;
 beat 384 emits 17 draws with two viewports, including render-to-texture. Overlay
 transition samples emit additional draws. The gallery retains command snapshots,
 image hashes, exact failures and graphics driver details. Each gallery sample
@@ -506,9 +556,9 @@ CPU tests cover ordering, scoped global variables, shared target reuse, crop UVs
 nested master restoration, the three-slot capacity, zero-duration events and
 failure recovery. GPU tests check overlay alpha blending, target orientation,
 resolution changes, blur rounding, Merge/Crashzoom and explicit diagnostic opt-in.
-Five root samples also run repeatedly in one native player/renderer. The 23-test
+Nine root samples also run repeatedly in one native player/renderer. The 24-test
 Release suite passes on Radeon RX 7900 XT; compositor tests pass on llvmpipe and
-the 13-test CPU suite passes under Clang ASan/UBSan. Small driver-dependent
+the 14-test CPU suite passes under Clang ASan/UBSan. Small driver-dependent
 rounding differences are possible; bit-identical original output is unverified.
 
 Current limits: unsupported IPP commands/flags fail explicitly, including Merge's
@@ -522,7 +572,7 @@ metrics, dynamic events, audio timing and original-frame comparison remain.
 
 ## Next steps
 
-1. Extend root scene execution to Particles, PartSystem and Walk, and verify native
+1. Extend root scene execution to PartEmitter/PartSystem, Walk and Print, and verify native
    font metrics against GDI.
 2. Reproduce the editor's operator type checking and version migrations.
 3. Connect material passes to scene drawing and implement lighting/shadow and

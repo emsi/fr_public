@@ -2,6 +2,7 @@
 // References: ExecSceneInputs, Exec_Scene_*, Exec_IPP_Viewport and
 // sMaterialEnv::MakeProjectionMatrix. No Win32 ABI or graphics API is used here.
 #include "wz3/scene.hpp"
+#include "wz3/particles.hpp"
 #include "mesh_kernel.hpp"
 #include <bit>
 #include <cmath>
@@ -57,12 +58,12 @@ SceneMatrix scene_view_projection(const SceneCamera& camera,unsigned width,unsig
 }
 
 struct ScenePlayer::Impl {
-  const Project& project;const Graph& graph;SplineLibrary splines;MaterialRuntime materials;
+  const Project& project;const Graph& graph;SplineLibrary splines;MaterialRuntime materials;SceneParticles particles;
   std::vector<std::optional<AnimationProgram>> programs;
   std::vector<std::shared_ptr<const Mesh>> meshes;
   std::vector<bool> visiting;
   std::size_t mesh_bytes{};
-  Impl(const Project& p,const Graph& g):project(p),graph(g),splines(p),materials(p,g),programs(p.operators.size()),meshes(programs.size()),visiting(programs.size()) {
+  Impl(const Project& p,const Graph& g):project(p),graph(g),splines(p),materials(p,g),particles(splines),programs(p.operators.size()),meshes(programs.size()),visiting(programs.size()) {
     require(graph.nodes.size()==project.operators.size(),"scene graph size mismatch");
   }
   void valid(std::size_t id) const {require(id<programs.size() && graph.nodes[id].active,"invalid or inactive scene operator");}
@@ -144,6 +145,17 @@ struct ScenePlayer::Impl {
       SceneLight light{id,column(transform,3),column(transform,2),p[6],p[8],real(p,9),range ? range : 1e15f};
       if(!range && (p[6]&4))for(unsigned c=0;c<3;++c)light.position[c]=light.direction[c]*1e6f;
       require(frame.lights.size()<4096,"scene light limit");frame.lights.push_back(light);break;
+    }
+    case 0xc5: {
+      require(node.inputs.size()==1,"Particles with a GenSpline input is not ported");
+      require(op.splines.size()<=1,"unsupported Particles spline layout");std::optional<std::size_t> spline;
+      if(!op.splines.empty() && !op.splines[0].empty()) {spline=splines.find(op.splines[0]);require(spline.has_value(),"unresolved particle spline");}
+      const auto instances=particles.evaluate(id,p,spline);const auto selection=env.variables[3],fraction=env.variables[11];
+      try {for(const auto& particle:instances) {
+        env.variables[3].fill(float(particle.index));env.variables[11].fill(particle.fraction);
+        execute(node.inputs[0],env,scene_combine(world,particle.transform),frame,timeline,depth+1,pass);
+      }}catch(...) {env.variables[3]=selection;env.variables[11]=fraction;throw;}
+      env.variables[3]=selection;env.variables[11]=fraction;break;
     }
     case 0x180: {
       require(p.size()==1,"unsupported AdjustPass layout");const auto adjust=std::int64_t(pass)+std::bit_cast<std::int32_t>(p[0]);

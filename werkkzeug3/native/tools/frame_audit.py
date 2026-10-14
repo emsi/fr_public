@@ -85,7 +85,7 @@ def main():
         '<style>body{background:#111;color:#ddd;font:16px sans-serif;margin:2rem}main{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:1rem}'
         'article{background:#222;padding:1rem}img{width:100%}pre{white-space:pre-wrap}a{color:#8cf}</style>'
         f'<h1>Native Theta root: {evaluated}/{len(records)} samples evaluated, {rendered} rendered</h1>'
-        '<p>Diagnostic scene geometry; saved compositing and overlays. Scene materials, lighting, shadows, particles and audio remain pending. '
+        '<p>Diagnostic scene geometry; saved compositing and overlays. Scene materials, lighting, shadows, stateful particle effects and audio remain pending. '
         'Each sample starts a fresh player; this is not a continuous-playback test.</p>'
         '<p>fr-038: Theta by Farbrausch. Derived previews: CC-BY-SA 3.0; see werkkzeug3/data/theta/LICENSE and readme.txt.</p>'
         '<main>' + "\n".join(cards) + '</main>\n')

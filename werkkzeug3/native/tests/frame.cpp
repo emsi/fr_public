@@ -78,6 +78,12 @@ void theta(const char* path) {
     std::ostringstream out;wz3::write_frame(out,frame);check(out.str().find("\"commands\":[")!=std::string::npos,"frame JSON export");
     std::cout<<"Theta beat "<<beat<<": "<<frame.commands.size()<<" commands, "<<scenes<<" viewports\n";
   }
+  for(const auto sample:std::array<std::array<unsigned,3>,4>{{{96,697,333},{120,1622,185},{184,827,645},{256,924,754}}}) {
+    const auto frame=player.frame(root,sample[0]*65536,1024,768);
+    check(frame.commands.size()==14 && frame.screen_fallbacks==0,"Theta particle scene compositor command count");
+    const auto& scene=std::get<wz3::SceneFrame>(frame.commands[0].draw);
+    check(scene.viewport_id==sample[1] && scene.instances.size()==sample[2],"Theta particle scene instance count");
+  }
   rejects([&]{player.frame(root,0,1024,768);},"1465 (PartSystem)");
 }
 }
