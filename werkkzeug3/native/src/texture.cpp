@@ -2,9 +2,11 @@
 // Arithmetic ported from NewBitmap, GetColor64, Fade64, Bitmap_Flat,
 // Bitmap_Gradient and Bitmap_GlowRect in ../genbitmap.cpp.
 #include "wz3/texture.hpp"
+#include "jpeg_decode.h"
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <cstdlib>
 #include <fstream>
 #include <numbers>
 #include <stdexcept>
@@ -124,6 +126,16 @@ public:
         adjust_hscb(*texture, number(op, 0), number(op, 1), number(op, 2), number(op, 3));
       } else normal_bitmap(*source, *texture, number(op, 0), op.parameters[1]);
       cache_[id] = std::move(texture);
+    } else if (op.command == 0x31) {
+      if (op.parameters.size() != 8 && op.parameters.size() != 9)
+        throw std::runtime_error("unsupported Text parameter layout");
+      auto texture = clone(*input());
+      draw_cached_text(*texture, blob(op), op.parameters[4], op.parameters[5]);
+      cache_[id] = std::move(texture);
+    } else if (op.command == 0x3a) {
+      require(op, 0);
+      if (!node.inputs.empty()) throw std::runtime_error("Import has unexpected inputs");
+      cache_[id] = import_bitmap(op);
     } else if (op.command == 0x36) {
       require(op, 10);
       cache_[id] = transform_mul(*input(), op);
@@ -176,6 +188,29 @@ private:
   }
   static void metadata(Texture& dest, const Texture& source) {
     dest.format = source.format; dest.mip_count = source.mip_count; dest.mip_threshold = source.mip_threshold;
+  }
+  std::span<const std::uint8_t> blob(const Operator& op) const {
+    if (op.blob_offset > project_.bytes.size() || op.blob_size > project_.bytes.size() - op.blob_offset)
+      throw std::runtime_error("texture blob lies outside project");
+    return std::span(project_.bytes).subspan(op.blob_offset, op.blob_size);
+  }
+  std::shared_ptr<Texture> import_bitmap(const Operator& op) {
+    const auto data = blob(op);
+    if (data.size() < 2 || data[0] != 0xff || data[1] != 0xd8)
+      throw std::runtime_error("Import currently requires an embedded JPEG");
+    wz3_jpeg_image image{};
+    char error[256]{};
+    if (!wz3_decode_jpeg(data.data(), data.size(), &image, error, sizeof(error)))
+      throw std::runtime_error("JPEG decode: " + std::string(error));
+    std::unique_ptr<unsigned char, decltype(&std::free)> pixels(image.rgb, &std::free);
+    // Bitmap_Import crops the top-left to lower powers of two; it does not resize.
+    auto texture = allocate(std::bit_floor(image.width), std::bit_floor(image.height));
+    for (unsigned y = 0; y < texture->height; ++y) for (unsigned x = 0; x < texture->width; ++x) {
+      const auto* rgb = pixels.get() + (std::size_t(y) * image.width + x) * 3;
+      texture->pixels[std::size_t(y) * texture->width + x] =
+          color64(0xff000000u | (std::uint32_t(rgb[0]) << 16) | (std::uint32_t(rgb[1]) << 8) | rgb[2]);
+    }
+    return texture;
   }
   std::shared_ptr<Texture> transform_mul(const Texture& source, const Operator& op) {
     auto angle = number(op, 0), sx = number(op, 1), sy = number(op, 2);

@@ -22,6 +22,7 @@ void transform_bitmap(const Texture&, Texture& destination, float angle, float s
 void blur_bitmap(Texture&, Texture& scratch, unsigned flags, float sx, float sy, float amplitude);
 void normal_bitmap(const Texture&, Texture& destination, float distance, unsigned mode);
 void adjust_hscb(Texture&, float hue, float saturation, float contrast, float brightness);
+void draw_cached_text(Texture&, std::span<const std::uint8_t> blob, std::uint32_t color, unsigned flags);
 std::shared_ptr<const Texture> evaluate_texture(const Project&, const Graph&, std::size_t id);
 std::vector<std::uint8_t> rgba8(const Texture& texture);
 void write_ppm(const std::filesystem::path&, unsigned width, unsigned height, std::span<const std::uint8_t> rgba);

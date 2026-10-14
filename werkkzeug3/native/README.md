@@ -12,7 +12,12 @@ bits and blob bytes are retained for the subsequent evaluator.
 
 ## Build and inspect
 
-Requirements: a C++20 compiler, CMake 3.20+, Python 3 and a build tool such as Ninja.
+Requirements: C and C++20 compilers, CMake 3.20+, Python 3, libjpeg development
+headers/library, and a build tool such as Ninja. On Ubuntu:
+
+```sh
+sudo apt-get install build-essential cmake ninja-build python3 libjpeg-dev
+```
 
 ```sh
 cmake -S werkkzeug3/native -B build/native -G Ninja -DCMAKE_BUILD_TYPE=Debug
@@ -35,7 +40,7 @@ rejected before large allocations.
 ## Native texture previews
 
 `wz3-texture` evaluates Flat, Gradient, GlowRect, Merge, Color, Dots, Transform,
-TransformMul, Blur, Normals and HSCB using the saved project
+TransformMul, Blur, Normals, HSCB, cached Text and JPEG Import using the saved project
 parameters, with Load/Store/Nop graph traversal. It preserves the original
 15-bit channel representation and MMX interpolation rounding in portable C++.
 The scalar interpolation is checked against an independent SSE2 instruction
@@ -43,8 +48,9 @@ oracle for all 65,536 normal fade values on x86. All eleven Merge modes are also
 checked against a separate SIMD translation of the original MMX instructions.
 Dots retains the original seeded random generator. Format records pixel format
 and mipmap metadata; actual signed normal-map GPU upload is still pending.
-Texture generation uses the
-original default size offset of zero and a bounded 256 MiB intermediate cache.
+Texture generation uses the original default size offset of zero and a bounded
+256 MiB intermediate cache. JPEG decoding uses a separate temporary RGB buffer
+and rejects images larger than 4096 pixels on either axis.
 Unimplemented operators, animated textures and cyclic graphs fail explicitly.
 
 Transform preserves fixed-point sampling, including the historical clamp/wrap
@@ -54,6 +60,14 @@ oracle. Normals derive from the blue channel and retain the original BGRA-to-RGB
 channel mapping and `0xffff` alpha. Floating-point/trigonometric results still
 need comparison with original captures; arithmetic tests alone do not establish
 whole-texture fidelity.
+
+Text reuses the embedded v2/v3 masks, including Theta's original Droid and Arial
+glyphs; no substitute font is needed for the five cached intro compositions.
+Masks are validated for dimensions and 3-bit coverage before drawing. Text
+without a cached mask and font atlas metrics remain unsupported. Import reads
+the embedded JPEG, then crops its upper-left corner to lower powers of two as
+the original does. Libjpeg output has not been compared pixel-for-pixel with the
+historical image decoder. Missing blobs and other image formats fail explicitly.
 
 ```sh
 build/native/wz3-texture werkkzeug3/data/theta/theta_final.k tex.BWCircle /tmp/circle.ppm
@@ -78,9 +92,8 @@ The headless backend is an initial validation path; a desktop window and audio
 will be added with the player. GLES 3 is this new backend's requirement, not the
 historical demo's minimum GPU requirement.
 
-Hardware validation on an AMD Radeon RX 7900 XT with Mesa 25.2.8 passed for the
-saved 512x512 gradient, `tex.BWCircle` and `stars.tex` at 1024x1024, and
-`tex.Sparkles` at 512x512.
+Hardware validation on an AMD Radeon RX 7900 XT with Mesa 25.2.8 passed for all
+37 currently supported reachable named bitmap outputs in `theta_final.k`.
 This checks native texture generation and graphics transport. It does **not**
 establish pixel equality with the original Windows renderer or full demo playback.
 PPM drops alpha; the in-memory RGBA comparison includes it. Derived Theta previews
@@ -98,10 +111,34 @@ Clang for address and undefined-behavior checks. Keep graphics testing in a
 separate build to avoid loading third-party drivers into sanitizer checks.
 CPU-only builds remain independent of EGL/GLES development packages.
 
+## Reproduce the texture coverage audit
+
+```sh
+python3 werkkzeug3/native/tools/texture_audit.py \
+  --output build/native/theta-gallery --expect-supported 37 --expect-unsupported 5
+# Optionally verify the same outputs through the GPU:
+python3 werkkzeug3/native/tools/texture_audit.py \
+  --renderer build/native/wz3-render --output build/native/theta-gallery-gpu \
+  --expect-supported 37 --expect-unsupported 5
+```
+
+Open the output directory's `index.html` for the gallery. `report.json` records
+operator IDs, dimensions, PPM hashes, the project hash, and per-process output;
+GPU runs retain the reported renderer and RGBA readback result. The audit uses
+only Python's standard library. It follows Load/Store/Nop to select reachable
+named bitmap outputs; this is a coverage check, not full graph type checking.
+
+Current coverage is **37 of 42** named bitmap outputs. The five explicit failures
+are `font_bitmap` (uncached font generation), and `rt.g5`, `rt.g5s`,
+`rt.g10roehre`, `rt.g10finale` (render targets that need scene rendering).
+All 37 supported outputs have also been evaluated under Clang ASan/UBSan.
+The focused tests cover malformed/truncated image data, crop orientation, cached
+text coverage, integer arithmetic and representative real texture graphs.
+
 ## Next steps
 
-1. Add the remaining reachable texture and mesh operators behind typed native
-   interfaces, preserving integer/color arithmetic and replacing x86 dispatch.
+1. Add native font atlas generation and glyph metrics, then mesh operators behind
+   typed native interfaces, preserving the saved recipes and replacing x86 dispatch.
 2. Reproduce the editor's operator type checking and version migrations.
 3. Implement materials and postprocessing shaders, checking output against the
    reference rather than treating a successful graphics upload as visual fidelity.
