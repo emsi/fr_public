@@ -14,10 +14,10 @@ endif()
 
 add_library(wz3_project src/project.cpp src/graph.cpp src/texture.cpp src/bitmap_composite.cpp
   src/bitmap_filters.cpp src/bitmap_text.cpp src/font.cpp src/jpeg_decode.c src/mesh.cpp src/mesh_topology.cpp
-  src/mesh_kernel.cpp src/mesh_evaluate.cpp src/mesh_noise.cpp src/mesh_displace.cpp src/animation.cpp)
+  src/mesh_kernel.cpp src/mesh_evaluate.cpp src/mesh_noise.cpp src/mesh_displace.cpp src/animation.cpp src/scene.cpp)
 # Mesh Perlin uses downward rounding; animation uses nearest-even. Preserve
 # their scalar operation boundaries and explicit floating-point environments.
-set_source_files_properties(src/mesh_kernel.cpp src/mesh_noise.cpp src/animation.cpp PROPERTIES
+set_source_files_properties(src/mesh_kernel.cpp src/mesh_noise.cpp src/animation.cpp src/scene.cpp PROPERTIES
   COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
 target_link_libraries(wz3_project PRIVATE JPEG::JPEG Freetype::Freetype)
 target_include_directories(wz3_project PUBLIC include PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
@@ -50,6 +50,9 @@ target_compile_options(wz3-inspect PRIVATE -Wall -Wextra -Wpedantic -Werror)
 add_executable(wz3-animate src/animate.cpp)
 target_link_libraries(wz3-animate PRIVATE wz3_project)
 target_compile_options(wz3-animate PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_executable(wz3-scene src/scene_preview.cpp)
+target_link_libraries(wz3-scene PRIVATE wz3_project)
+target_compile_options(wz3-scene PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 add_executable(wz3-texture src/preview.cpp)
 target_link_libraries(wz3-texture PRIVATE wz3_project)
@@ -69,6 +72,10 @@ if(WZ3_BUILD_RENDERER)
   target_compile_definitions(wz3-mesh-render PRIVATE WZ3_GPU_PREVIEW=1)
   target_link_libraries(wz3-mesh-render PRIVATE wz3_project PkgConfig::EGL PkgConfig::GLES)
   target_compile_options(wz3-mesh-render PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_executable(wz3-scene-render src/scene_preview.cpp src/render.cpp)
+  target_compile_definitions(wz3-scene-render PRIVATE WZ3_GPU_PREVIEW=1)
+  target_link_libraries(wz3-scene-render PRIVATE wz3_project PkgConfig::EGL PkgConfig::GLES)
+  target_compile_options(wz3-scene-render PRIVATE -Wall -Wextra -Wpedantic -Werror)
 endif()
 
 if(BUILD_TESTING)
@@ -97,10 +104,21 @@ if(BUILD_TESTING)
     target_link_libraries(wz3-mesh-render-tests PRIVATE wz3_project PkgConfig::EGL PkgConfig::GLES)
     add_test(NAME gpu_mesh_depth COMMAND wz3-mesh-render-tests)
     set_tests_properties(gpu_theta_mesh gpu_mesh_depth PROPERTIES LABELS graphics)
+    add_executable(wz3-scene-render-tests tests/render_scene.cpp src/render.cpp)
+    target_link_libraries(wz3-scene-render-tests PRIVATE wz3_project PkgConfig::EGL PkgConfig::GLES)
+    add_test(NAME gpu_scene_camera COMMAND wz3-scene-render-tests)
+    add_test(NAME gpu_theta_scene COMMAND wz3-scene-render
+      "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta/theta_final.k" 590 56
+      "${CMAKE_CURRENT_BINARY_DIR}/theta-scene.ppm" 1)
+    set_tests_properties(gpu_scene_camera gpu_theta_scene PROPERTIES LABELS graphics)
   endif()
   add_executable(wz3-graph-tests tests/graph.cpp)
   target_link_libraries(wz3-graph-tests PRIVATE wz3_project)
   add_test(NAME graph_connections COMMAND wz3-graph-tests)
+  add_executable(wz3-scene-tests tests/scene.cpp)
+  target_link_libraries(wz3-scene-tests PRIVATE wz3_project)
+  add_test(NAME scene_execution COMMAND wz3-scene-tests
+    "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta/theta_final.k")
   add_executable(wz3-animation-tests tests/animation.cpp)
   target_link_libraries(wz3-animation-tests PRIVATE wz3_project)
   add_test(NAME animation_runtime COMMAND wz3-animation-tests

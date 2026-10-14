@@ -1,0 +1,194 @@
+// Distributed under the BSD license in werkkzeug3/LICENSE.txt.
+// References: ExecSceneInputs, Exec_Scene_*, Exec_IPP_Viewport and
+// sMaterialEnv::MakeProjectionMatrix. No Win32 ABI or graphics API is used here.
+#include "wz3/scene.hpp"
+#include "mesh_kernel.hpp"
+#include <bit>
+#include <cmath>
+#include <fstream>
+#include <iomanip>
+#include <stdexcept>
+
+namespace wz3 {
+namespace {
+void require(bool ok,const char* message) {if(!ok)throw std::runtime_error(message);}
+float real(std::span<const std::uint32_t> p,unsigned i) {
+  require(i<p.size(),"scene parameter overrun");const auto v=as_float(p[i]);
+  require(std::isfinite(v) && std::abs(v)<=1e15f,"invalid scene numeric parameter");return v;
+}
+SceneMatrix matrix(const legacy::sMatrix& m) {
+  return {m.i.x,m.i.y,m.i.z,m.i.w,m.j.x,m.j.y,m.j.z,m.j.w,m.k.x,m.k.y,m.k.z,m.k.w,m.l.x,m.l.y,m.l.z,m.l.w};
+}
+Vec3 column(const SceneMatrix& m,unsigned c) {return {m[c*4],m[c*4+1],m[c*4+2]};}
+void validate(const SceneMatrix& m) {for(auto v:m)require(std::isfinite(v),"nonfinite scene matrix");}
+struct Visit {
+  std::vector<bool>& visiting;std::size_t id;
+  Visit(std::vector<bool>& v,std::size_t i):visiting(v),id(i) {require(!v[i],"cycle in scene graph");v[i]=true;}
+  ~Visit() {visiting[id]=false;}
+};
+}
+SceneMatrix scene_identity() {return {1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};}
+SceneMatrix scene_srt(std::span<const std::uint32_t> p) {
+  require(p.size()>=9,"scene SRT needs nine parameters");float values[9];
+  for(unsigned i=0;i<9;++i)values[i]=real(p,i);
+  legacy::sMatrix m;m.InitSRT(values);return matrix(m);
+}
+SceneMatrix scene_combine(const SceneMatrix& parent,const SceneMatrix& local) {
+  SceneMatrix out{};
+  for(unsigned c=0;c<4;++c)for(unsigned r=0;r<4;++r)
+    out[c*4+r]=parent[r]*local[c*4]+parent[4+r]*local[c*4+1]+parent[8+r]*local[c*4+2]+parent[12+r]*local[c*4+3];
+  validate(out);return out;
+}
+Vec3 scene_point(const SceneMatrix& m,const Vec3& p) {
+  Vec3 out{};for(unsigned c=0;c<3;++c)out[c]=m[c]*p[0]+m[4+c]*p[1]+m[8+c]*p[2]+m[12+c];return out;
+}
+SceneMatrix scene_view_projection(const SceneCamera& camera,unsigned width,unsigned height) {
+  require(width && height && width<=4096 && height<=4096,"invalid scene viewport size");validate(camera.world);
+  require(std::isfinite(camera.near_clip) && camera.near_clip>0 && std::isfinite(camera.zoom_x) && std::isfinite(camera.zoom_y),"invalid scene projection");
+  // CameraSpace.TransR(): the camera transform is rigid, with positive Z forward.
+  auto view=scene_identity();
+  for(unsigned c=0;c<3;++c)for(unsigned r=0;r<3;++r)view[c*4+r]=camera.world[r*4+c];
+  for(unsigned r=0;r<3;++r)view[12+r]=-(view[r]*camera.world[12]+view[4+r]*camera.world[13]+view[8+r]*camera.world[14]);
+  // Original infinite-far D3D projection, with z_GL = 2*z_D3D - w.
+  // Keep its constant half-pixel shifts; pixel fidelity needs reference captures.
+  const SceneMatrix projection={camera.zoom_x,0,0,0,0,camera.zoom_y,0,0,
+    camera.center_x,camera.center_y,1,1,-1.0f/width,1.0f/height,-2*camera.near_clip,0};
+  return scene_combine(projection,view);
+}
+
+struct ScenePlayer::Impl {
+  const Project& project;const Graph& graph;SplineLibrary splines;
+  std::vector<std::optional<AnimationProgram>> programs;
+  std::vector<std::shared_ptr<const Mesh>> meshes;
+  std::vector<bool> visiting;
+  std::size_t mesh_bytes{};
+  Impl(const Project& p,const Graph& g):project(p),graph(g),splines(p),programs(p.operators.size()),meshes(programs.size()),visiting(programs.size()) {
+    require(graph.nodes.size()==project.operators.size(),"scene graph size mismatch");
+  }
+  void valid(std::size_t id) const {require(id<programs.size() && graph.nodes[id].active,"invalid or inactive scene operator");}
+  std::size_t alias(std::size_t id) const {
+    valid(id);const auto cmd=project.operators[id].command;const auto& node=graph.nodes[id];
+    if(cmd==1) {require(node.links.size()==1 && node.links[0].has_value(),"unresolved scene Load");return *node.links[0];}
+    require((cmd==2 || cmd==3) && node.inputs.size()==1,"invalid scene alias");return node.inputs[0];
+  }
+  std::size_t concrete(std::size_t id) const {
+    for(unsigned depth=0;depth<512;++depth) {valid(id);const auto cmd=project.operators[id].command;if(cmd<1 || cmd>3)return id;id=alias(id);}
+    throw std::runtime_error("cycle or excessive depth in scene aliases");
+  }
+  const AnimationProgram& program(std::size_t id) {
+    if(!programs[id])programs[id]=compile_animation(project.operators[id],splines);
+    return *programs[id];
+  }
+  std::shared_ptr<const Mesh> geometry(std::size_t id) {
+    if(!meshes[id]) {
+      auto mesh=evaluate_mesh(project,graph,id);
+      const auto bytes=mesh->vertices.size()*sizeof(MeshVertex)+mesh->faces.size()*sizeof(MeshFace)+mesh->kernel->bytes();
+      require(bytes<=256u*1024*1024-mesh_bytes,"scene mesh cache budget exceeded");mesh_bytes+=bytes;meshes[id]=std::move(mesh);
+    }
+    return meshes[id];
+  }
+  void execute(std::size_t id,AnimationEnvironment& env,const SceneMatrix& world,SceneFrame& frame,unsigned depth=0,std::int32_t pass=0) {
+    valid(id);require(depth<512 && ++frame.visited_operators<=1000000,"scene traversal limit");
+    Visit visit(visiting,id);const auto target=concrete(id);
+    if(operator_info(project.operators[target].command).category=="MESH") {
+      require(frame.instances.size()<65536,"scene instance limit");
+      for(auto source=id;source!=target;source=alias(source))
+        require(project.operators[source].animations.empty(),"animated mesh alias precalculation is not ported");
+      // ExecSceneInput emits cached geometry without calling mesh Exec handlers.
+      frame.instances.push_back({id,geometry(target),world,env.variables[0][0],pass});return;
+    }
+    const auto& op=project.operators[id];const auto& node=graph.nodes[id];
+    const AnimationScope animation(program(id),splines,op.parameters,env);const auto& p=animation.parameters;
+    if(op.command>=1 && op.command<=3) {execute(alias(id),env,world,frame,depth+1,pass);return;}
+    const auto one=[&](){require(node.inputs.size()==1,"scene operator needs one input");return node.inputs[0];};
+    const auto children=[&](const SceneMatrix& transform,std::int32_t adjust) {for(auto input:node.inputs)execute(input,env,transform,frame,depth+1,adjust);};
+    switch(op.command) {
+    case 0xc0:case 0xc3:
+      require(p.size()==(op.command==0xc0 ? 10u : 9u),"unsupported scene transform layout");
+      execute(one(),env,scene_combine(world,scene_srt(p)),frame,depth+1,pass);break;
+    case 0xc1:require(p.empty(),"unsupported scene Add layout");children(world,pass);break;
+    case 0xc2: {
+      require(p.size()==10 && p[9]<=4096,"unsupported scene Multiply layout/count");const auto input=one();const auto step=scene_srt(p);auto transform=world;
+      const auto selection=env.variables[3];
+      try {for(unsigned i=0;i<p[9];++i) {env.variables[3].fill(float(i));execute(input,env,transform,frame,depth+1,pass);transform=scene_combine(transform,step);}}
+      catch(...) {env.variables[3]=selection;throw;}
+      env.variables[3]=selection;break;
+    }
+    case 0xc4: {
+      require(p.size()==11 && node.inputs.empty(),"unsupported scene Light layout");
+      std::array<std::uint32_t,9> srt={std::bit_cast<std::uint32_t>(1.0f),std::bit_cast<std::uint32_t>(1.0f),std::bit_cast<std::uint32_t>(1.0f),p[0],p[1],p[2],p[3],p[4],p[5]};
+      const auto transform=scene_combine(world,scene_srt(srt));const auto range=real(p,10);
+      SceneLight light{id,column(transform,3),column(transform,2),p[6],p[8],real(p,9),range ? range : 1e15f};
+      if(!range && (p[6]&4))for(unsigned c=0;c<3;++c)light.position[c]=light.direction[c]*1e6f;
+      require(frame.lights.size()<4096,"scene light limit");frame.lights.push_back(light);break;
+    }
+    case 0x180: {
+      require(p.size()==1,"unsupported AdjustPass layout");const auto adjust=std::int64_t(pass)+std::bit_cast<std::int32_t>(p[0]);
+      require(adjust>=-2147483648LL && adjust<=2147483647LL,"scene pass overflow");execute(one(),env,world,frame,depth+1,std::int32_t(adjust));break;
+    }
+    case 0x184:require(p.size()==1 && node.inputs.empty(),"unsupported Ambient layout");frame.ambient=p[0];break;
+    case 0x185: {
+      require(p.size()==1,"unsupported scene Select layout");if(node.inputs.empty())break;
+      const double value=std::nearbyint(real(p,0));require(value>=0 && value<=2147483647,"invalid scene selection");
+      execute(node.inputs[std::size_t(value)%node.inputs.size()],env,world,frame,depth+1,pass);break;
+    }
+    default:throw std::runtime_error("scene operator "+std::to_string(id)+" ("+std::string(operator_info(op.command).name)+") is not ported");
+    }
+  }
+  SceneFrame viewport(std::size_t id,AnimationEnvironment& env,float aspect,const SceneMatrix& world,unsigned depth=0) {
+    valid(id);require(depth<512,"viewport alias depth limit");Visit visit(visiting,id);
+    const auto& op=project.operators[id];const auto& node=graph.nodes[id];
+    const AnimationScope animation(program(id),splines,op.parameters,env);const auto& p=animation.parameters;
+    if(op.command>=1 && op.command<=3)return viewport(alias(id),env,aspect,world,depth+1);
+    require(op.command==0xf0 && (p.size()==18 || p.size()==24),"expected a supported Viewport operator");
+    require(node.inputs.size()==1,"viewport spline input is not ported");
+    require(!(p[1]&~0x1033u),"viewport camera/stereo flags are not ported");
+    if(p.size()==24)require(real(p,20)==0 && real(p,21)==0 && real(p,22)==1 && real(p,23)==1,"viewport cropping is not ported");
+    SceneFrame frame;frame.viewport_id=id;frame.viewport_flags=p[1];frame.background=p[2];
+    std::array<std::uint32_t,9> srt={std::bit_cast<std::uint32_t>(1.0f),std::bit_cast<std::uint32_t>(1.0f),std::bit_cast<std::uint32_t>(1.0f),p[3],p[4],p[5],p[6],p[7],p[8]};
+    auto& camera=frame.camera;camera.world=scene_srt(srt);camera.far_clip=real(p,9);camera.near_clip=real(p,10);
+    camera.center_x=real(p,11);camera.center_y=real(p,12);camera.zoom_x=real(p,13);camera.zoom_y=real(p,14)*((p[1]&0x1000) ? 1 : aspect);
+    camera.fog_color=p[15];camera.fog_end=real(p,16);camera.fog_start=real(p,17);
+    require(camera.near_clip>0 && camera.far_clip>camera.near_clip && camera.zoom_x>0 && camera.zoom_y>0,"invalid saved scene camera");
+    execute(node.inputs[0],env,world,frame);
+    if(frame.lights.empty())frame.lights.push_back({id,column(camera.world,3),{0,0,1},0,0x78787878,1,32});
+    return frame;
+  }
+};
+ScenePlayer::ScenePlayer(const Project& p,const Graph& g):impl(std::make_unique<Impl>(p,g)) {}
+ScenePlayer::~ScenePlayer()=default;
+SceneFrame ScenePlayer::viewport(std::size_t id,AnimationEnvironment env,float aspect,const SceneMatrix& world) {
+  require(std::isfinite(aspect) && aspect>0 && aspect<=16,"invalid scene aspect");validate(world);return impl->viewport(id,env,aspect,world);
+}
+Bounds scene_bounds(const SceneFrame& frame) {
+  Bounds bounds{};bool first=true;
+  for(const auto& instance:frame.instances) {
+    require(instance.mesh!=nullptr,"missing scene mesh");const auto box=mesh_bounds(*instance.mesh);
+    for(unsigned i=0;i<8;++i) {
+      Vec3 point{};for(unsigned c=0;c<3;++c)point[c]=(i&(1u<<c)) ? box.max[c] : box.min[c];point=scene_point(instance.world,point);
+      if(first) {bounds={point,point};first=false;}
+      for(unsigned c=0;c<3;++c) {bounds.min[c]=std::min(bounds.min[c],point[c]);bounds.max[c]=std::max(bounds.max[c],point[c]);}
+    }
+  }
+  require(!first,"empty scene has no bounds");return bounds;
+}
+void write_scene(const std::filesystem::path& path,const SceneFrame& frame) {
+  std::ofstream out(path);require(bool(out),"cannot open scene output");out<<std::setprecision(9);
+  const auto array=[&](const auto& values){out<<'[';bool first=true;for(auto v:values){out<<(first ? "" : ",")<<v;first=false;}out<<']';};
+  out<<"{\"viewport\":"<<frame.viewport_id<<",\"visited_operators\":"<<frame.visited_operators
+    <<",\"viewport_flags\":"<<frame.viewport_flags<<",\"background\":"<<frame.background<<",\"ambient\":"<<frame.ambient<<",\"camera\":{";
+  out<<"\"world\":";array(frame.camera.world);out<<",\"near\":"<<frame.camera.near_clip<<",\"far\":"<<frame.camera.far_clip
+    <<",\"center\":["<<frame.camera.center_x<<','<<frame.camera.center_y<<"],\"zoom\":["<<frame.camera.zoom_x<<','<<frame.camera.zoom_y
+    <<"],\"fog_color\":"<<frame.camera.fog_color<<",\"fog_start\":"<<frame.camera.fog_start<<",\"fog_end\":"<<frame.camera.fog_end<<"},\"instances\":[";
+  for(std::size_t i=0;i<frame.instances.size();++i) {
+    const auto& v=frame.instances[i];out<<(i ? "," : "")<<"{\"operator\":"<<v.operator_id<<",\"world\":";array(v.world);
+    out<<",\"time\":"<<v.time<<",\"pass_adjust\":"<<v.pass_adjust<<",\"vertices\":"<<v.mesh->vertices.size()<<",\"faces\":"<<v.mesh->faces.size()<<'}';
+  }
+  out<<"],\"lights\":[";
+  for(std::size_t i=0;i<frame.lights.size();++i) {
+    const auto& v=frame.lights[i];out<<(i ? "," : "")<<"{\"operator\":"<<v.operator_id<<",\"position\":";array(v.position);
+    out<<",\"direction\":";array(v.direction);out<<",\"flags\":"<<v.flags<<",\"color\":"<<v.color<<",\"amplify\":"<<v.amplify<<",\"range\":"<<v.range<<'}';
+  }
+  out<<"]}\n";require(bool(out),"cannot write scene output");
+}
+} // namespace wz3

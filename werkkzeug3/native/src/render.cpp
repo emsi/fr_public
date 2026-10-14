@@ -2,12 +2,14 @@
 // Headless native Linux graphics path; no X server or Windows runtime required.
 #include "wz3/texture.hpp"
 #include "wz3/mesh.hpp"
+#include "wz3/scene.hpp"
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <GLES3/gl3.h>
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <map>
 #include <sstream>
 #include <stdexcept>
 
@@ -254,6 +256,86 @@ std::vector<std::uint8_t> render_mesh(const Mesh& mesh, unsigned width, unsigned
                      output.begin()+std::size_t(height-y-1)*width*4);
   std::cerr << "Mesh GPU readback: " << indices.size()/3 << " triangles, " << visible
             << " visible pixels, " << depth_bits << "-bit depth buffer\n";
+  return output;
+}
+std::vector<std::uint8_t> render_scene(const SceneFrame& frame,unsigned width,unsigned height) {
+  if(width<16 || height<16 || width>4096 || height>4096)throw std::runtime_error("invalid scene render size");
+  const auto view_projection=scene_view_projection(frame.camera,width,height);
+  Context context(width,height,true);
+  std::cerr<<"GL vendor: "<<glGetString(GL_VENDOR)<<"\nGL renderer: "<<glGetString(GL_RENDERER)<<"\nGL version: "<<glGetString(GL_VERSION)<<'\n';
+  GLint depth_bits=0;glGetIntegerv(GL_DEPTH_BITS,&depth_bits);
+  if(depth_bits<16)throw std::runtime_error("scene render needs a depth buffer");
+  const auto vertex=shader(GL_VERTEX_SHADER,R"(#version 300 es
+    layout(location=0) in vec3 position;
+    layout(location=1) in vec3 uv;
+    layout(location=2) in vec3 normal;
+    uniform mat4 model;
+    uniform mat4 view_projection;
+    out vec3 world_normal;
+    out vec2 texcoord;
+    void main() {
+      gl_Position = view_projection * model * vec4(position,1.0);
+      mat3 cofactors = mat3(cross(model[1].xyz,model[2].xyz),
+                           cross(model[2].xyz,model[0].xyz),
+                           cross(model[0].xyz,model[1].xyz));
+      vec3 n = cofactors * normal;
+      world_normal = dot(n,n)>1e-20 ? n : vec3(1.0,0.0,0.0);
+      texcoord = uv.xy;
+    })");
+  const auto fragment=shader(GL_FRAGMENT_SHADER,R"(#version 300 es
+    precision highp float;
+    in vec3 world_normal;
+    in vec2 texcoord;
+    out vec4 color;
+    void main() {
+      float light=0.3+0.7*abs(dot(normalize(world_normal),normalize(vec3(-0.4,0.8,0.5))));
+      float checker=mod(floor(texcoord.x*8.0)+floor(texcoord.y*8.0),2.0);
+      color=vec4(mix(vec3(0.16,0.38,0.58),vec3(0.55,0.8,0.95),checker)*light,1.0);
+    })");
+  const auto program=glCreateProgram();glAttachShader(program,vertex);glAttachShader(program,fragment);glLinkProgram(program);
+  glDeleteShader(vertex);glDeleteShader(fragment);GLint linked=0;glGetProgramiv(program,GL_LINK_STATUS,&linked);
+  if(!linked) {char log[4096]{};glGetProgramInfoLog(program,sizeof(log),nullptr,log);throw std::runtime_error(std::string("scene shader link failed: ")+log);}
+  glUseProgram(program);glUniformMatrix4fv(glGetUniformLocation(program,"view_projection"),1,GL_FALSE,view_projection.data());
+  const auto model_location=glGetUniformLocation(program,"model");
+  glViewport(0,0,width,height);glDisable(GL_DITHER);glDisable(GL_BLEND);glDisable(GL_CULL_FACE);
+  glEnable(GL_DEPTH_TEST);glDepthFunc(GL_LEQUAL);
+  const unsigned red=(frame.background>>16)&255,green=(frame.background>>8)&255,blue=frame.background&255;
+  // This standalone geometry pass has no preceding render target to preserve.
+  glClearColor(red/255.0f,green/255.0f,blue/255.0f,1);glClearDepthf(1);glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+  if(glCheckFramebufferStatus(GL_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE)throw std::runtime_error("incomplete scene framebuffer");
+  struct Buffers {GLuint vao{},vertices{},indices{};GLsizei count{};};
+  struct Vertex {Vec3 position,uv,normal;};
+  std::map<const Mesh*,Buffers> geometry;std::size_t triangles=0,allocated=0;
+  for(const auto& instance:frame.instances) {
+    if(!instance.mesh)throw std::runtime_error("missing scene geometry");
+    auto [found,created]=geometry.try_emplace(instance.mesh.get());auto& buffer=found->second;
+    if(created) {
+      const auto& mesh=*instance.mesh;validate_mesh(mesh);const auto normals=mesh_normals(mesh);
+      std::vector<Vertex> vertices;std::vector<std::uint32_t> indices;
+      for(std::size_t f=0;f<mesh.faces.size();++f) {
+        const auto& face=mesh.faces[f];const auto first=std::uint32_t(vertices.size());
+        for(unsigned c=0;c<face.count;++c) {const auto& v=mesh.vertices[face.vertices[c]];vertices.push_back({v.position,v.uv,normals[f][c]});}
+        for(unsigned c=1;c+1<face.count;++c) {indices.push_back(first);indices.push_back(first+c);indices.push_back(first+c+1);}
+      }
+      allocated+=vertices.size()*sizeof(Vertex)+indices.size()*sizeof(std::uint32_t);
+      if(allocated>512u*1024*1024)throw std::runtime_error("scene GPU geometry budget exceeded");
+      buffer.count=GLsizei(indices.size());glGenVertexArrays(1,&buffer.vao);glBindVertexArray(buffer.vao);
+      glGenBuffers(1,&buffer.vertices);glBindBuffer(GL_ARRAY_BUFFER,buffer.vertices);glBufferData(GL_ARRAY_BUFFER,vertices.size()*sizeof(Vertex),vertices.data(),GL_STATIC_DRAW);
+      glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,sizeof(Vertex),reinterpret_cast<void*>(offsetof(Vertex,position)));
+      glVertexAttribPointer(1,3,GL_FLOAT,GL_FALSE,sizeof(Vertex),reinterpret_cast<void*>(offsetof(Vertex,uv)));
+      glVertexAttribPointer(2,3,GL_FLOAT,GL_FALSE,sizeof(Vertex),reinterpret_cast<void*>(offsetof(Vertex,normal)));
+      glEnableVertexAttribArray(0);glEnableVertexAttribArray(1);glEnableVertexAttribArray(2);
+      glGenBuffers(1,&buffer.indices);glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,buffer.indices);glBufferData(GL_ELEMENT_ARRAY_BUFFER,indices.size()*sizeof(std::uint32_t),indices.data(),GL_STATIC_DRAW);
+    }else glBindVertexArray(buffer.vao);
+    glUniformMatrix4fv(model_location,1,GL_FALSE,instance.world.data());glDrawElements(GL_TRIANGLES,buffer.count,GL_UNSIGNED_INT,nullptr);triangles+=buffer.count/3;
+  }
+  std::vector<std::uint8_t> output(std::size_t(width)*height*4);glReadPixels(0,0,width,height,GL_RGBA,GL_UNSIGNED_BYTE,output.data());
+  const auto error=glGetError();
+  for(auto [mesh,b]:geometry) {static_cast<void>(mesh);glDeleteVertexArrays(1,&b.vao);glDeleteBuffers(1,&b.vertices);glDeleteBuffers(1,&b.indices);}
+  glDeleteProgram(program);if(error!=GL_NO_ERROR)throw std::runtime_error("scene GPU error "+std::to_string(error));
+  std::size_t visible=0;for(std::size_t i=0;i<output.size();i+=4)visible+=output[i]!=red || output[i+1]!=green || output[i+2]!=blue;
+  for(unsigned y=0;y<height/2;++y)std::swap_ranges(output.begin()+std::size_t(y)*width*4,output.begin()+std::size_t(y+1)*width*4,output.begin()+std::size_t(height-y-1)*width*4);
+  std::cerr<<"Scene GPU readback: "<<frame.instances.size()<<" instances, "<<geometry.size()<<" shared meshes, "<<triangles<<" triangles, "<<visible<<" visible pixels\n";
   return output;
 }
 } // namespace wz3

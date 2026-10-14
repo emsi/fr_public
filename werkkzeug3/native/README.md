@@ -189,7 +189,7 @@ star geometry, layered fireballs, bridges, city components and long tube
 assemblies and displaced band. All **752 of 752** reachable MESH operators in
 `theta_final.k` evaluate and export under Release and Clang ASan/UBSan builds.
 This completes coverage of Theta's static mesh recipes; material rendering,
-animated scene execution and full playback remain pending. To reproduce the broader CPU audit:
+complete scene execution and full playback remain pending. To reproduce the broader CPU audit:
 
 ```sh
 python3 werkkzeug3/native/tools/mesh_audit.py --all-operators \
@@ -289,13 +289,63 @@ midpoint. Release and Clang ASan/UBSan checks pass. Bytecode buffers, stacks,
 indices and conversions have explicit bounds. Transcendentals use the native math
 library, so bit equality with the old SSE approximations is not claimed. Evaluation
 uses the saved `.k` precision; the exported player's F16/F24 value and 8-bit spline
-time quantization are not yet reproduced. Scene execution, audio synchronization
-and original-frame comparison remain necessary for full playback fidelity.
+time quantization are not yet reproduced. Complete scene execution, audio
+synchronization and original-frame comparison remain necessary for full playback fidelity.
+
+## Animated scene geometry and saved cameras
+
+`wz3-scene` traverses Scene, Add, Transform, Multiply, Light and Load/Store/Nop
+operators with the animation runtime. It emits immutable mesh instances with
+world matrices, local times and pass adjustments. Multiply starts with the original
+instance, accumulates the local transform, supplies each child's selection
+variable, then restores the parent's selection. Static meshes and compiled
+animation programs are cached across frames; geometry is shared between instances.
+Lights retain their original positions, directions, flags, colors, amplification
+and range, before frustum rejection. The source's fallback camera light is added
+when no explicit lights were emitted.
+
+```sh
+# generation2 at its midpoint: event 1 spans beats 48 through 64.
+build/native/wz3-scene werkkzeug3/data/theta/theta_final.k 590 56 build/native/scene.json 1
+build/native/wz3-scene-render werkkzeug3/data/theta/theta_final.k 590 56 build/native/scene.ppm 1
+```
+
+The optional final argument selects a saved event; inactive event samples fail
+explicitly. Its transform applies to the scene, while the viewport retains its
+own animated camera. Without an event, the beat value is the animation time of
+the isolated viewport. These commands do not execute ancestor nodes or the full
+timeline/postprocessing graph. The current render size is 1024×768 at 4:3.
+
+The GLES geometry pass uses the saved perspective camera, zoom and center,
+positive-Z orientation, infinite far projection and original pixel shifts. D3D's
+depth interval is converted to GLES clip space. Unique meshes are uploaded once
+per render and reused for each instance. Shading is still the diagnostic UV
+checker; saved material shaders, light accumulation, shadows, fog and compositing
+are not applied. This is animated scene geometry, not a finished Theta frame.
+
+```sh
+python3 werkkzeug3/native/tools/scene_audit.py \
+  --renderer build/native/wz3-scene-render --output build/native/theta-scene-gallery \
+  --expect-supported 7 --expect-unsupported 16
+```
+
+At the audit's default time of 0.5, **7 of 23 reachable viewports** evaluate in
+isolation: 590, 623, 719, 723, 857, 1111 and 1728. The other 16 report their first
+unimplemented dependency, including Particles, MatHack, Event and Print. They are
+not silently omitted from successful frames. This sample coverage is not full
+timeline coverage. Reports retain scene snapshots, hashes and graphics driver
+output, and the optional HTML/PNG gallery uses only Python's standard library.
+
+All seven supported viewports pass CPU evaluation and Radeon rendering. Clang
+ASan/UBSan checks cover scene composition, shared geometry, per-instance animation,
+selection restoration, lights, cycles and recovery after failed traversal. GPU
+tests check near clipping, infinite-far behavior, positive-Z visibility, camera
+motion and depth independent of instance order; they also pass with llvmpipe.
 
 ## Next steps
 
-1. Build scene and material evaluation on the completed static mesh coverage;
-   verify native font metrics against GDI.
+1. Extend scene execution to timeline events, particles, effects and material
+   updates; verify native font metrics against GDI.
 2. Reproduce the editor's operator type checking and version migrations.
 3. Implement materials and postprocessing shaders, checking output against the
    reference rather than treating a successful graphics upload as visual fidelity.
