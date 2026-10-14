@@ -1122,13 +1122,13 @@ rounding differences are possible; bit-identical original output is unverified.
 
 Current limits: unsupported IPP commands/flags fail explicitly, including Merge's
 texture-alpha mode. New GPU target storage starts black with depth one because
-the original initial contents are unspecified; later draws retain it. Targets
-currently have separate depth/stencil attachments. Imported/procedural textures still
+the original initial contents are unspecified; later draws retain color history.
+For released graphs, depth/stencil is shared across targets and reset at frame
+start as described below. Editor previews retain separate attachments. Imported/procedural textures still
 use RGBA8 and native mipmaps rather than all legacy format rules. Saved-material mesh
 uploads are retained across frames; the diagnostic checker still rebuilds them
 for each viewport draw.
-Original font metrics, dynamic events, physical audio latency measurement
-and original-frame comparison remain.
+Full-demo visual fidelity and physical audio latency measurement remain open.
 
 ## Release reference audit
 
@@ -1399,9 +1399,70 @@ tested Radeon.
 At 36 seconds, the native graph selects event 4 (beats 80–112), targeting
 operator 423 and viewport 422. The isolated interpreter check includes that
 event's exact normalized time, 0.08829784393310547, and global beat
-82.825531005859375. The next investigation must distinguish event/ancestor
-traversal, geometry/scene-handler differences and reference-version differences;
-the sampled camera arithmetic alone does not explain the mismatch.
+82.825531005859375. The mismatch was subsequently traced to stale depth, rather than the camera
+arithmetic or the selected event. The frozen pillars belonged to an earlier
+frame and occluded the current tunnel scene.
+
+The native release renderer now reproduces the original shared depth/stencil
+surface. The final player clears the screen and shared depth before executing
+the graph; the previous port retained each target's depth between frames.
+Viewport 422 has clear flags zero, so it relies on that frame-start clear.
+Retaining its old depth froze part of the pillar view and hid new geometry.
+Color history in offscreen targets must still survive for compositing.
+
+GLES targets have different heights and bottom-left origins. A common depth
+renderbuffer attached to every target would therefore align the wrong rows.
+The port transfers the unscaled top-left overlap through a shared depth/stencil
+buffer when the color target changes. Returning from a small target preserves
+values outside its bounds. Depth clears also clear stencil, and texture clears
+cover their whole allocation before restoring the cropped draw viewport, as
+in the released `BeginViewport`. Editor-preview behavior is unchanged.
+
+`tools/release_viewport_oracle.py` executes the restored frame-start slice,
+viewport initializer and Begin/EndViewport with fake successful COM methods.
+Its **34 cases** verify screen/texture rectangles, all clear flags, D24S8 versus
+D24X8, and the frame-start black/color/depth/stencil clear. Color-target switches
+do not bind a different depth attachment. No actual driver, shaders, Windows
+APIs or application entry point execute in this audit:
+
+```sh
+uv run --no-project --with unicorn python werkkzeug3/native/tools/release_viewport_oracle.py \
+  build/reference/theta/extracted/restored-code-image.bin \
+  --output build/reference/theta/viewport-oracle.json
+```
+
+The frame-start slice `0x8246e1..0x824707` has SHA-256
+`704681554e928e69c1eefeeefe75611832bb4938f665b2701985f61b77e6c2d1`.
+The JSON also records hashes for the viewport initializer and Begin/EndViewport.
+GPU regressions verify cross-target occlusion at different dimensions, fresh
+next-frame depth, clears through smaller/cropped targets, retained color history,
+resize, reset and stable target allocations. The former renderer fails the new
+occlusion fixture. All **43 local tests** pass; the compositor also passes on
+llvmpipe and under Clang ASan/UBSan.
+
+A new full sweep completes all 16,083 frames and 148 snapshots in 26.16 seconds
+on the tested Radeon. Eight image hashes change; their nearest-reference errors
+all improve, while the other 140 captures remain byte-identical. Median RGB MSE
+falls from 416.41 to 340.30. The largest remaining discrepancies are near 111.270
+and 146.042 seconds; full-demo visual acceptance is still pending.
+
+| Music time | RGB MSE before shared depth | After |
+| --- | ---: | ---: |
+| 36 s | 18327.10 | 214.73 |
+| 40 s | 16744.31 | 241.54 |
+| 44 s | 14891.78 | 385.68 |
+| 48 s | 10098.69 | 321.91 |
+
+An additional local 65-second reference was recorded from the pinned original
+1.01 executable under Wine 11.0 WoW64 on Linux, using a private PulseAudio null
+sink. No Windows build environment was used, and Wine is not a dependency of
+the native player. The party-final download linked by Pouët has the same ZIP
+and executable hashes as the group archive above. This direct run helped expose
+the stale view, but its capture timing is not validated: audio-window offsets
+shift by about 13 ms, and repetitive music gives a false whole-capture match.
+It is qualitative evidence only, not a reason to infer different release content
+or change the native sample clock. The table uses the previously validated
+Annikras timing. No physical audio device was measured.
 
 The earlier bright-versus-dark 220-second mismatch was a frame-selection issue;
 it does not justify changing the renderer's lighting. The later release-specific

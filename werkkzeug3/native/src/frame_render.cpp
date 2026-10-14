@@ -90,16 +90,18 @@ constexpr const char* shadow_vertex=R"(#version 300 es
     // material11.vsh: finite vertex w=1; extruded direction w=0.
     gl_Position=view_projection*vec4(position.xyz+light_position*(position.w-1.0),position.w);
   })";
-void clear(FrameClear c) {
+void clear(FrameClear c,bool stencil=false) {
   glDepthMask(GL_TRUE);glClearDepthf(1);glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
   glClearColor(((c.color>>16)&255)/255.0f,((c.color>>8)&255)/255.0f,(c.color&255)/255.0f,(c.color>>24)/255.0f);
-  glClear(((c.flags&1) ? GL_COLOR_BUFFER_BIT : 0)|((c.flags&2) ? GL_DEPTH_BUFFER_BIT : 0));
+  if(stencil && (c.flags&2)) {glStencilMask(255);glClearStencil(0);}
+  glClear(((c.flags&1) ? GL_COLOR_BUFFER_BIT : 0)|((c.flags&2) ? GL_DEPTH_BUFFER_BIT|(stencil ? GL_STENCIL_BUFFER_BIT : 0) : 0));
 }
 }
 struct FrameRenderer::Impl {
   const Project& project;const Graph& graph;TextureOptions texture_options;std::unique_ptr<gles::Context> context;
   struct Surface {GLuint color{},depth{},fbo{};unsigned width{},height{};};
   std::map<std::size_t,Surface> surfaces;
+  Surface shared_depth;
   std::map<std::size_t,GLuint> bitmaps;
   std::map<std::size_t,std::shared_ptr<const Texture>> supplied_bitmaps;
   std::map<std::size_t,std::size_t> bitmap_sizes;
@@ -133,6 +135,7 @@ struct FrameRenderer::Impl {
   ~Impl() {
     if(context)eglMakeCurrent(context->display,context->surface,context->surface,context->context);
     for(const auto& [id,s]:surfaces) {static_cast<void>(id);destroy(s);}
+    destroy(shared_depth);
     for(const auto& [id,t]:bitmaps) {static_cast<void>(id);glDeleteTextures(1,&t);}
     for(const auto& [source,p]:programs) {static_cast<void>(source);glDeleteProgram(p);}
     for(const auto& [id,g]:geometry) {static_cast<void>(id);glDeleteBuffers(1,&g.buffer);}
@@ -159,6 +162,39 @@ struct FrameRenderer::Impl {
     // Original allocation contents are unspecified. Start deterministically;
     // subsequent frames/allocations retain contents until the graph clears them.
     glDisable(GL_SCISSOR_TEST);clear({3,0xff000000});glClearStencil(0);glStencilMask(255);glClear(GL_STENCIL_BUFFER_BIT);
+  }
+  void begin_release_frame(const DemoFrame& frame) {
+    // The released D3D player clears the screen and its shared Z/stencil
+    // surface before executing the graph (8246e1..824702). IPP color history
+    // survives, but old depth must not freeze Viewports whose clear flags are 0.
+    unsigned width=shared_depth.width,height=shared_depth.height;
+    for(const auto& [id,s]:surfaces) {static_cast<void>(id);width=std::max(width,s.width);height=std::max(height,s.height);}
+    if(width!=shared_depth.width || height!=shared_depth.height) {
+      surface_bytes-=std::size_t(shared_depth.width)*shared_depth.height*4;destroy(shared_depth);shared_depth={};
+      const auto bytes=std::size_t(width)*height*4;require(bytes<=256u*1024*1024-surface_bytes,"shared depth target budget exceeded");surface_bytes+=bytes;
+      shared_depth.width=width;shared_depth.height=height;
+      glGenRenderbuffers(1,&shared_depth.depth);glBindRenderbuffer(GL_RENDERBUFFER,shared_depth.depth);
+      glRenderbufferStorage(GL_RENDERBUFFER,GL_DEPTH24_STENCIL8,width,height);
+      glGenFramebuffers(1,&shared_depth.fbo);glBindFramebuffer(GL_FRAMEBUFFER,shared_depth.fbo);
+      glFramebufferRenderbuffer(GL_FRAMEBUFFER,GL_DEPTH_STENCIL_ATTACHMENT,GL_RENDERBUFFER,shared_depth.depth);
+      const GLenum none=GL_NONE;glDrawBuffers(1,&none);glReadBuffer(GL_NONE);
+      require(glCheckFramebufferStatus(GL_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE,"incomplete shared depth surface");
+      glDisable(GL_SCISSOR_TEST);clear({2,0},true);++stats.surface_allocations;
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER,shared_depth.fbo);glEnable(GL_SCISSOR_TEST);
+    glScissor(0,shared_depth.height-frame.height,frame.width,frame.height);clear({2,0},true);
+    glBindFramebuffer(GL_FRAMEBUFFER,surfaces.at(0).fbo);
+    glScissor(0,0,frame.width,frame.height);clear({1,0});
+  }
+  static void copy_depth(const Surface& from,const Surface& to) {
+    // D3D targets share depth at their top-left corner. GLES attachments have
+    // different heights and bottom-left origins, so attaching one renderbuffer
+    // everywhere would misalign them. Transfer the unscaled overlapping region.
+    const auto w=std::min(from.width,to.width),h=std::min(from.height,to.height);
+    glDisable(GL_SCISSOR_TEST);glBindFramebuffer(GL_READ_FRAMEBUFFER,from.fbo);glBindFramebuffer(GL_DRAW_FRAMEBUFFER,to.fbo);
+    glBlitFramebuffer(0,from.height-h,w,from.height,0,to.height-h,w,to.height,
+                     GL_DEPTH_BUFFER_BIT|GL_STENCIL_BUFFER_BIT,GL_NEAREST);
+    glBindFramebuffer(GL_FRAMEBUFFER,to.fbo);
   }
   GLuint bitmap(std::size_t id,std::shared_ptr<const Texture> supplied={}) {
     const auto found=bitmaps.find(id);
@@ -433,6 +469,7 @@ void FrameRenderer::reset_targets() {
     static_cast<void>(id);glBindFramebuffer(GL_FRAMEBUFFER,surface.fbo);
     clear({3,0xff000000});glClear(GL_STENCIL_BUFFER_BIT);
   }
+  if(s.shared_depth.fbo) {glBindFramebuffer(GL_FRAMEBUFFER,s.shared_depth.fbo);clear({2,0},true);}
   glFinish();require(glGetError()==GL_NO_ERROR,"frame target reset failed");
 }
 std::vector<std::uint8_t> FrameRenderer::render(const DemoFrame& frame,bool diagnostic) {
@@ -442,18 +479,33 @@ void FrameRenderer::draw(const DemoFrame& frame,bool diagnostic) {
   auto& s=*impl;s.activate();glDisable(GL_DITHER);
   require(frame.surfaces.contains(0) && frame.surfaces.at(0).width==frame.width && frame.surfaces.at(0).height==frame.height,"invalid screen surface");
   for(const auto& [id,size]:frame.surfaces)s.surface(id,size);
+  const bool released=s.project.runtime_graph;
+  if(released)s.begin_release_frame(frame);
+  std::optional<std::size_t> depth_owner;
   for(const auto& c:frame.commands) {
     const auto& dst=s.surfaces.at(c.target.surface);
     require(c.target.width && c.target.height && c.target.width<=dst.width && c.target.height<=dst.height,"frame viewport outside target");
+    if(released && depth_owner!=c.target.surface) {
+      if(depth_owner)s.copy_depth(s.surfaces.at(*depth_owner),s.shared_depth);
+      s.copy_depth(s.shared_depth,dst);depth_owner=c.target.surface;
+    }
     glBindFramebuffer(GL_FRAMEBUFFER,dst.fbo);glViewport(0,dst.height-c.target.height,c.target.width,c.target.height);
     glEnable(GL_SCISSOR_TEST);glScissor(0,dst.height-c.target.height,c.target.width,c.target.height);
+    const auto clear_target=[&](FrameClear value) {
+      // Released BeginViewport clears a texture's full extent, then restores
+      // its cropped draw rectangle. Screen clears use the draw rectangle.
+      if(released && c.target.surface)glScissor(0,0,dst.width,dst.height);
+      clear(value,released);
+      glScissor(0,dst.height-c.target.height,c.target.width,c.target.height);
+    };
     try {
       if(const auto* q=std::get_if<FrameQuad>(&c.draw))s.quad(*q,c.target.surface);
-      else if(const auto* cl=std::get_if<FrameClear>(&c.draw))clear(*cl);
-      else {const auto& scene=std::get<SceneFrame>(c.draw);clear({scene.viewport_flags&3,scene.background});if(diagnostic) {if(!scene.instances.empty())draw_scene_geometry(scene,c.target.width,c.target.height);s.effects(scene,c.target);}else s.scene_materials(scene,c.target);}
+      else if(const auto* cl=std::get_if<FrameClear>(&c.draw))clear_target(*cl);
+      else {const auto& scene=std::get<SceneFrame>(c.draw);clear_target({scene.viewport_flags&3,scene.background});if(diagnostic) {if(!scene.instances.empty())draw_scene_geometry(scene,c.target.width,c.target.height);s.effects(scene,c.target);}else s.scene_materials(scene,c.target);}
       require(glGetError()==GL_NO_ERROR,"frame draw produced an OpenGL error");
     }catch(const std::exception& e) {throw std::runtime_error("operator "+std::to_string(c.operator_id)+": "+e.what());}
   }
+  if(depth_owner) {s.copy_depth(s.surfaces.at(*depth_owner),s.shared_depth);require(glGetError()==GL_NO_ERROR,"shared depth transfer failed");}
 }
 std::vector<std::uint8_t> FrameRenderer::readback() {
   auto& s=*impl;s.activate();const auto& screen=s.surfaces.at(0);

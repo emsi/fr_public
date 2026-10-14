@@ -43,6 +43,46 @@ void targets() {
   pixel(renderer.render(replay),48,20,15,{0,0,0});
   renderer.reset_targets();pixel(renderer.render(replay),48,20,15,{0,255,0});
 }
+void release_depth() {
+  FrameFixture x;x.p.runtime_graph=true;wz3::FrameRenderer renderer(x.p,x.g);
+  wz3::DemoFrame frame;frame.width=frame.height=16;frame.surfaces={{0,{16,16}},{1,{12,8}},{2,{4,4}}};
+  const auto quad=[](std::uint32_t color,float depth) {
+    wz3::FrameQuad q;q.depth=depth;q.shader.words[0]=0x20302;q.shader.words[9]=0x10;q.shader.words[28]=color;
+    for(unsigned i=0;i<4;++i)q.shader.words[24+i]=f(1);
+    q.shader.words[34]=q.shader.words[35]=q.shader.words[36]=q.shader.words[43]=q.shader.words[44]=f(1);return q;
+  };
+  auto red=quad(0xffff0000,.25f);red.rectangle={0,0,1,.5f};const auto green=quad(0xff00ff00,.5f),blue=quad(0xff0000ff,.75f);
+  // A near draw into a shorter offscreen target occludes the screen at the
+  // same TOP-left coordinates, without copying that target's red color.
+  frame.commands={{0,{1,12,8},red},{0,{0,16,16},green}};
+  auto pixels=renderer.render(frame);pixel(pixels,16,2,2,{0,0,0});pixel(pixels,16,6,2,{0,0,0});
+  pixel(pixels,16,2,8,{0,255,0});pixel(pixels,16,14,2,{0,255,0});
+  const auto warmed=renderer.stats();
+  // The next frame clears depth once before the graph, even if no operator
+  // requests a depth clear. This caught the stale pillar view in final Theta.
+  frame.commands={{0,{0,16,16},blue}};pixels=renderer.render(frame);
+  pixel(pixels,16,2,2,{0,0,255});pixel(pixels,16,6,2,{0,0,255});pixel(pixels,16,2,8,{0,0,255});
+  // A clear through a smaller target affects only its shared depth rectangle;
+  // pixels outside it survive the round trip through that smaller attachment.
+  frame.commands={{0,{1,12,8},red},{0,{2,4,4},wz3::FrameClear{2,0}},{0,{0,16,16},green}};
+  pixels=renderer.render(frame);pixel(pixels,16,2,2,{0,255,0});pixel(pixels,16,6,2,{0,0,0});pixel(pixels,16,2,8,{0,255,0});
+  // Texture clears cover the full allocation even when its draw viewport is
+  // smaller. Screen clears retain their requested viewport rectangle.
+  frame.commands={{0,{1,12,8},red},{0,{1,4,4},wz3::FrameClear{2,0}},{0,{0,16,16},green}};
+  pixels=renderer.render(frame);pixel(pixels,16,6,2,{0,255,0});
+  frame.commands={{0,{1,12,8},red},{0,{0,4,4},wz3::FrameClear{2,0}},{0,{0,16,16},green}};
+  pixels=renderer.render(frame);pixel(pixels,16,2,2,{0,255,0});pixel(pixels,16,6,2,{0,0,0});
+  // Per-frame initialization must preserve offscreen COLOR history.
+  auto shown=quad(0xffffffff,0);shown.shader.words[0]=0x20002;shown.shader.words[9]=0;shown.shader.words[11]=0x10;
+  shown.shader.words[4]=0x101;shown.shader.textures[0]=1;shown.textures[0]=wz3::FrameTexture{true,1};
+  frame.commands={{0,{0,16,16},shown}};pixels=renderer.render(frame);
+  pixel(pixels,16,8,2,{255,0,0});pixel(pixels,16,8,13,{0,0,0});
+  check(renderer.stats().surface_allocations==warmed.surface_allocations,"release depth transfer allocated targets during playback");
+  renderer.reset_targets();pixel(renderer.render(frame),16,8,2,{0,0,0});
+  frame.width=24;frame.height=12;frame.surfaces[0]={24,12};frame.commands={{0,{0,24,12},green}};
+  pixels=renderer.render(frame);pixel(pixels,24,2,2,{0,255,0});pixel(pixels,24,23,11,{0,255,0});
+  frame.commands.clear();pixels=renderer.render(frame);pixel(pixels,24,2,2,{0,0,0});
+}
 void blur_and_merge() {
   FrameFixture x;const auto base=x.layer(x.material(0xff111111));
   const auto blur=x.add(0xe3,{5,0,f(1),1,4},{base});const auto root=x.add(0x0d,{}, {blur});
@@ -116,6 +156,6 @@ void theta(const char* path) {
 }
 }
 int main(int argc,char** argv) {
-  try {layers();targets();blur_and_merge();crashzoom_and_merge();scene_opt_in();particle_materials();normalized_effect();if(argc>1)theta(argv[1]);if(argc>2)credits(argv[1],argv[2]);}
+  try {layers();targets();release_depth();blur_and_merge();crashzoom_and_merge();scene_opt_in();particle_materials();normalized_effect();if(argc>1)theta(argv[1]);if(argc>2)credits(argv[1],argv[2]);}
   catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}
 }
