@@ -169,43 +169,51 @@ CTest; these tests are skipped explicitly if no test font is installed.
 build/native/wz3-mesh werkkzeug3/data/theta/theta_final.k mesh.flatfractal build/native/fractal.obj
 ```
 
-The initial port supports Cube, Cylinder (full circumference, one radial layer),
-Torus (closed or capped arcs with three/four sides), Sphere (at least four
-sides), Select Cube (vertex/face masks), Transform, position/UV TransEx,
-Add, deterministic Multiply with normal extrusion, MatLink, Invert,
-UVProject, SmAngle, Bend 2 (positive length), and unmasked Center, plus Load/Store/Nop. MatLink retains the actual
-material operator ID and pass as metadata/OBJ groups; it does not run shaders.
-Twenty of the 32 reachable named mesh outputs in `theta_final.k` evaluate,
-including the flat fractal, city blocks/bridge, base tube sections, tetrahedra
-arrow, layered fireballs and curved highway sections.
+The native evaluator runs the archived CPU mesh algorithms through a portable
+C++20 host. The build extracts the selected functions directly from `genmesh.cpp`
+with `tools/mesh_kernel.py`; the archive remains unchanged. This preserves its
+half-edge, face and vertex-wedge numbering, selection masks, attribute creases,
+subdivision rules, extrusion groups, and normal/tangent calculations. That order
+matters: SelectFace addresses saved face indices, and Select Random consumes
+edge and vertex PRNG draws before selecting faces.
 
-Tests check primitive volumes/winding, subdivision counts, UV seams and cube
-wraparound, transform order, selected transforms, copy/index offsets, material
-bindings, weighted normal calculations, hard edges, UV seam continuity,
-coincident disconnected components, explicit failures and all 20 supported recipes. The same
-checks pass under Clang ASan/UBSan. Meshes are limited to 1,048,576 vertices and
-polygons each, with a 256 MiB cache per evaluation.
+Supported operations include Cube, Cylinder (including radial subdivisions and
+arcs), Torus, Sphere (at least four sides), Select Cube/Sphere/Face/Random,
+Subdivide, Extrude, Transform, TransEx, Add, deterministic Multiply with normal
+extrusion, MatLink, Invert, UVProject, SmAngle, Bend 2, Center and Load/Store/Nop.
+MatLink retains operator IDs and passes; it does not execute material shaders.
+Thirty of the 32 reachable named Theta meshes evaluate, including the subdivided
+star geometry, layered fireballs, bridges, city components and long tube
+assemblies. The remaining named recipes need Color/ShadowEnable and Displace.
+Other unnamed operators, animation and full scene playback remain pending.
+An audit of all 752 reachable MESH operators currently evaluates 657; remaining
+dependencies include Grid, Color, ShadowEnable, Displace, Perlin Displace, Select
+Logic and the older Bend operator. Named-output coverage alone is not full demo
+coverage. To reproduce the broader CPU audit:
 
-The native representation tracks topological points separately from UV wedges,
-with per-edge attribute crease flags. Normals follow `GenMesh::CalcNormals`'s
-inverse squared-edge-product weights, including its degenerate `(1,0,0)` fallback.
-SmAngle adds normal/tangent creases using the original absolute dot-product test
-and quarter-turn angle units. UV projection preserves connectivity; Add/Multiply
-keep coincident components separate. The OBJ exporter writes per-corner `vn`
-indices. Sphere preserves the original averaged cap centers rather than placing
-poles at exactly half the unit radius. Multiply offsets each copy along the
-source normals before applying its accumulated transforms, splitting hard normal
-wedges as needed. Open torus caps retain the archived constant-V UVs (the source
-leaves their projection unfinished). Bend 2 preserves the source
-rotate-then-translate local frame and piecewise deformation; tests cover the
-unbent region, arc, straight tail and inverse frame transform. Non-manifold edges and separated positions within one smooth normal
-group fail explicitly.
+```sh
+python3 werkkzeug3/native/tools/mesh_audit.py --all-operators \
+  --output build/native/theta-mesh-operators --expect-supported 657 --expect-unsupported 95
+```
 
-Original half-edge/face numbering, tangent generation, skinning and animation
-are not yet reproduced. Subdivide, Extrude and SelectFace remain unsupported;
-Grid and the legacy three-sided Sphere remain pending. Portable trigonometry replaces the old SSE
-approximation, so geometry/UV/normal fidelity still needs reference comparisons.
-This exporter establishes procedural geometry execution, not full scene playback.
+The compatibility layer replaces Win32 argument-stack assumptions with explicit
+arrays/variadic handling, uses defined 32-bit PRNG arithmetic, bounds allocations
+and temporary stacks, and preserves source functions without rendering or
+Windows dependencies. Element arrays have a one-million-entry limit and the
+cache has a 256 MiB budget. Old unused vertices and deleted cap records stay in
+the indexed core because later operations depend on their numbering. Bounds and
+exports use live faces. Polygons larger than quads are triangulated only in the
+export/preview representation; their original topology remains in the core.
+
+Tests check analytical primitive volumes, winding, UV wedges, source cube face
+indices, signed-seed selection goldens, region/individual extrusion, subdivision
+weights and boundaries, transform order, normals, material bindings and all 30
+supported named recipes. These pass with Clang ASan/UBSan. All exported normals
+come from the original `CalcNormals` algorithm, including its unusual inverse
+squared-edge-product weights and degenerate `(1,0,0)` fallback. The OBJ exporter
+writes per-corner `vn` indices. Portable scalar trigonometry replaces the old
+SSE approximation; frame-level comparison with the original player is still
+needed to establish visual fidelity.
 
 With `WZ3_BUILD_RENDERER=ON`, `wz3-mesh-render` draws the geometry through native
 EGL/GLES using an orthographic inspection camera, interpolated native normals and a UV checker:
@@ -214,12 +222,12 @@ EGL/GLES using an orthographic inspection camera, interpolated native normals an
 build/native/wz3-mesh-render werkkzeug3/data/theta/theta_final.k mesh.flatfractal build/native/fractal.ppm
 python3 werkkzeug3/native/tools/mesh_audit.py \
   --renderer build/native/wz3-mesh-render --output build/native/theta-mesh-gallery \
-  --expect-supported 20 --expect-unsupported 12
+  --expect-supported 30 --expect-unsupported 2
 ```
 
 The audit writes an HTML/PNG gallery, OBJ downloads, hashes and a JSON report
 with each unsupported dependency and graphics driver output. Omit `--renderer`
-for an export-only audit without a GPU. All 20 supported outputs were exported
+for an export-only audit without a GPU. All 30 supported outputs were exported
 under ASan/UBSan and rendered on the Radeon RX 7900 XT. The graphics tests also
 pass with llvmpipe. The renderer checks framebuffer/depth availability, GL errors
 and nonempty readback; a separate occlusion test reverses polygon submission
@@ -228,8 +236,8 @@ not equality with Theta's original camera, materials or shading.
 
 ## Next steps
 
-1. Extend mesh topology, normals and selection operations; add remaining
-   primitives and deformations, and verify native font metrics against GDI.
+1. Add remaining mesh operators and attributes, then verify native font metrics
+   against GDI.
 2. Reproduce the editor's operator type checking and version migrations.
 3. Implement materials and postprocessing shaders, checking output against the
    reference rather than treating a successful graphics upload as visual fidelity.

@@ -2,6 +2,7 @@
 // Attribute creases and normal weights from GenMesh::Crease/CalcNormals and
 // Mesh_SmoothAngle in ../genmesh.cpp. Topology is independent of UV wedges.
 #include "mesh_topology.hpp"
+#include "mesh_kernel.hpp"
 #include <algorithm>
 #include <cmath>
 #include <numeric>
@@ -103,6 +104,15 @@ void smooth_mesh_angle(Mesh& mesh, float angle) {
 }
 
 MeshNormals mesh_normals(const Mesh& mesh) {
+  if(mesh.kernel) {
+    validate_mesh(mesh);
+    MeshNormals normals(mesh.faces.size());
+    for(std::size_t f=0;f<mesh.faces.size();++f)for(unsigned c=0;c<mesh.faces[f].count;++c) {
+      const auto& n=mesh.kernel->buffer.at(mesh.faces[f].vertices[c]*5+1);
+      normals[f][c]={n.x,n.y,n.z};
+    }
+    return normals;
+  }
   const auto opposite=mesh_opposites(mesh);
   Groups groups(opposite.size());
   for (std::uint32_t c=0;c<opposite.size();++c) {

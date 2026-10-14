@@ -19,6 +19,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--expect-supported", type=int)
     parser.add_argument("--expect-unsupported", type=int)
+    parser.add_argument("--all-operators", action="store_true", help="Audit every reachable MESH operator, including unnamed intermediate results")
     args = parser.parse_args()
     project = json.loads(subprocess.check_output([args.inspect, args.project], text=True, timeout=60))
     operators = project["operators"]
@@ -33,7 +34,12 @@ def main():
             return category(inputs[0], seen + (index,)) if len(inputs) == 1 else None
         return categories[op["command"]]
 
-    selected = [op for op in operators if op["reachable"] and op["name"] and category(op["id"]) == "MESH"]
+    names = {op["command"]: op["name"] for op in project["inventory"]}
+    selected = [dict(op) for op in operators if op["reachable"] and
+                (categories[op["command"]] == "MESH" if args.all_operators else op["name"] and category(op["id"]) == "MESH")]
+    for op in selected:
+        if not op["name"]:
+            op["name"] = f'{names[op["command"]]} #{op["id"]}'
     args.output.mkdir(parents=True, exist_ok=True)
     records, cards, render_failures = [], [], []
     for op in selected:
@@ -67,10 +73,11 @@ def main():
         print(f'{"OK" if record["supported"] else "UNSUPPORTED"}: {op["name"]}', flush=True)
     supported = sum(record["supported"] for record in records)
     unsupported = len(records) - supported
-    title = f"Theta geometry: {supported}/{len(records)} named meshes exported"
+    scope = "reachable mesh operators" if args.all_operators else "named meshes"
+    title = f"Theta geometry: {supported}/{len(records)} {scope} exported"
     report = {"project": str(args.project.resolve()), "project_sha256": hashlib.sha256(args.project.read_bytes()).hexdigest(),
               "exporter": str(args.exporter.resolve()), "renderer": str(args.renderer.resolve()) if args.renderer else None,
-              "supported": supported, "unsupported": unsupported, "render_failures": render_failures, "meshes": records}
+              "scope": scope, "supported": supported, "unsupported": unsupported, "render_failures": render_failures, "meshes": records}
     (args.output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     (args.output / "index.html").write_text(
         '<!doctype html><meta charset="utf-8"><title>' + title + '</title>' +

@@ -13,7 +13,7 @@ if(WZ3_TEST_GRAPHICS AND NOT WZ3_BUILD_RENDERER)
 endif()
 
 add_library(wz3_project src/project.cpp src/graph.cpp src/texture.cpp src/bitmap_composite.cpp
-  src/bitmap_filters.cpp src/bitmap_text.cpp src/font.cpp src/jpeg_decode.c src/mesh.cpp src/mesh_topology.cpp)
+  src/bitmap_filters.cpp src/bitmap_text.cpp src/font.cpp src/jpeg_decode.c src/mesh.cpp src/mesh_topology.cpp src/mesh_kernel.cpp src/mesh_evaluate.cpp)
 target_link_libraries(wz3_project PRIVATE JPEG::JPEG Freetype::Freetype)
 target_include_directories(wz3_project PUBLIC include PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_compile_features(wz3_project PUBLIC cxx_std_20)
@@ -31,6 +31,12 @@ add_custom_command(
           "${CMAKE_CURRENT_BINARY_DIR}/generated/catalog.inc"
   DEPENDS tools/catalog.py ../werkops.cpp VERBATIM)
 target_sources(wz3_project PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated/catalog.inc")
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/mesh_kernel.inc"
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/mesh_kernel.py"
+          "${CMAKE_CURRENT_SOURCE_DIR}/../genmesh.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/mesh_kernel.inc"
+  DEPENDS tools/mesh_kernel.py ../genmesh.cpp VERBATIM)
+target_sources(wz3_project PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated/mesh_kernel.inc")
 
 add_executable(wz3-inspect src/inspect.cpp)
 target_link_libraries(wz3-inspect PRIVATE wz3_project)
