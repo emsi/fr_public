@@ -176,9 +176,11 @@ Mesh torus(const Operator& op) {
   auto ro = number(op,2), ri = number(op,3);
   const auto phase = number(op,4), arc = number(op,5);
   const auto flags = op.parameters[6];
-  if (arc != 1 || flags > 3) throw std::runtime_error("open Torus arcs/flags are not ported");
+  const bool closed=arc==1;
+  if (arc<=0 || arc>1 || flags>3 || (!closed && ty>4))
+    throw std::runtime_error("Torus needs arc in (0,1] and open caps of three or four sides");
   if (flags & 1) { ri = (ro-ri)*0.5f; ro -= ri; }
-  Mesh mesh; reserve(mesh,(tx+1)*(ty+1),tx*ty);
+  Mesh mesh; reserve(mesh,(tx+1)*(ty+1)+(closed ? 0 : 2*ty),tx*ty+(closed ? 0 : 2));
   std::vector<Vec3> ring(ty);
   const float start = phase*(2.0*std::numbers::pi_v<double>)/ty;
   for (unsigned y = 0; y < ty; ++y) {
@@ -186,18 +188,30 @@ Mesh torus(const Operator& op) {
     ring[y] = {float(std::sin(double(angle))*ri)-ro,float(-std::cos(double(angle))*ri),0};
   }
   const auto original = ring;
-  const auto step = euler({0,1.0f/tx,0});
+  const auto step = euler({0,arc/tx,0});
   for (unsigned x = 0; x <= tx; ++x) {
     for (unsigned y = 0; y <= ty; ++y) {
-      auto p = (x == tx ? original : ring)[y%ty];
+      auto p = (closed && x == tx ? original : ring)[y%ty];
       if (flags & 2) p[1] += ri;
-      vertex(mesh,p,{float(y)/ty,float(x)/tx,0},0,(x%tx)*(ty+1)+y%ty);
+      vertex(mesh,p,{float(y)/ty,float(x)/tx,0},0,(closed ? x%tx : x)*(ty+1)+y%ty);
     }
     for (auto& p : ring) p = transform(step,p);
   }
   for (unsigned x = 0; x < tx; ++x) for (unsigned y = 0; y < ty; ++y) {
     const auto a = x*(ty+1)+y, b = a+ty+1;
     face(mesh,{a,a+1,b+1,b});
+  }
+  if (!closed) for (unsigned end=0;end<2;++end) {
+    std::array<std::uint32_t,4> corners{};
+    for (unsigned y=0;y<ty;++y) {
+      const auto id=end*tx*(ty+1)+y;
+      const auto& v=mesh.vertices[id];
+      // Preserve the source's unfinished cap UV projection: V is constant,
+      // U follows the unsplit ring. Only the side surface wraps U to one.
+      corners[end ? y : ty-1-y]=vertex(mesh,v.position,v.uv,0,mesh_point(mesh,id));
+    }
+    face(mesh,corners,ty);
+    mesh.faces.back().crease.fill(crease_uv);
   }
   crease_mesh_seams(mesh,0);
   return mesh;
@@ -274,6 +288,27 @@ void select_cube(Mesh& mesh, const Operator& op) {
   for (std::size_t i = 0; i < selected.size(); ++i) apply_mask(mesh.vertices[i].mask,(mask>>16)&255,selected[i],mode&3);
   for (std::size_t i = 0; i < faces.size(); ++i) apply_mask(mesh.faces[i].mask,(mask>>8)&255,faces[i],mode&3);
 }
+void bend(Mesh& mesh, const Operator& op) {
+  require(op,8);
+  auto forward=euler({number(op,3),number(op,4),number(op,5)});
+  const Vec3 center{number(op,0),number(op,1),number(op,2)};
+  for (unsigned c=0;c<3;++c) forward[3][c]=-center[c];
+  auto inverse=identity;
+  for (unsigned a=0;a<3;++a) for (unsigned b=0;b<3;++b) inverse[a][b]=forward[b][a];
+  inverse[3]=transform(inverse,center,false); // sMatrix::TransR
+  const auto length=number(op,6), angle=number(op,7)*tau;
+  if (length<=0) throw std::runtime_error("Bend 2 requires positive length");
+  for (auto& v:mesh.vertices) {
+    auto p=transform(forward,v.position);
+    const auto height=p[1];
+    if (height>=0) p[1]-=std::min(height,length);
+    const auto t=std::clamp(height/length,0.0f,1.0f)*angle;
+    const float s=std::sin(double(t)),c=std::cos(double(t));
+    const auto x=p[0],y=p[1];
+    p[0]=c*x-s*y; p[1]=s*x+c*y;
+    v.position=transform(inverse,p);
+  }
+}
 
 class Evaluator {
 public:
@@ -302,7 +337,7 @@ public:
         require(op,0);
         if (node.inputs.empty()) throw std::runtime_error("mesh Add requires inputs");
         for (const auto source : node.inputs) append(*mesh,*evaluate(source,depth+1));
-      } else if (op.command == 0x86 || op.command == 0x88 || op.command == 0x89 || op.command == 0x96 || op.command == 0xa3 || op.command == 0xa5 || op.command == 0xa6 || op.command == 0x95 || op.command == 0xac) {
+      } else if (op.command == 0x86 || op.command == 0x88 || op.command == 0x89 || op.command == 0x96 || op.command == 0xa3 || op.command == 0xa5 || op.command == 0xa6 || op.command == 0x95 || op.command == 0xab || op.command == 0xac) {
         *mesh = *input();
         if (op.command == 0x86) select_cube(*mesh,op);
         else if (op.command == 0x88 || op.command == 0x89) {
@@ -329,6 +364,8 @@ public:
           }
         } else if (op.command == 0xac) {
           require(op,1); smooth_mesh_angle(*mesh,number(op,0));
+        } else if (op.command == 0xab) {
+          bend(*mesh,op);
         } else if (op.command == 0xa5) uv_project(*mesh,op);
         else if (op.command == 0xa6) {
           require(op,2);

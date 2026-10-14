@@ -65,6 +65,16 @@ void primitives() {
   check(torus->vertices.size()==81 && torus->faces.size()==64,"torus tessellation");
   near(volume(*torus),1,"torus winding/volume");
   for (unsigned y=0;y<9;++y) check(torus->vertices[y].position==torus->vertices[72+y].position,"torus major seam");
+  const auto arc=p.get(p.add(0x83,{4,4,f(1),f(0.25f),0,f(0.5f),0}));
+  check(arc->vertices.size()==33 && arc->faces.size()==18,"torus arc must keep two unsplit quad caps");
+  near(volume(*arc),std::sqrt(0.125f),"half torus winding/volume");
+  const auto arc_edges=wz3::mesh_opposites(*arc);
+  for (const auto e:arc_edges) check(e!=wz3::mesh_no_point,"torus arc cap disconnected");
+  for (unsigned i=0;i<2;++i) for (unsigned c=0;c<4;++c) {
+    const auto& cap=arc->faces[16+i];
+    near(arc->vertices[cap.vertices[c]].uv[1],float(i),"original torus cap V is constant");
+    check(cap.crease[c]==wz3::crease_uv,"torus cap should only crease UV before SmAngle");
+  }
   const auto sphere=p.get(p.add(0x84,{4,1}));
   check(sphere->vertices.size()==12 && sphere->faces.size()==12,"sphere ring/cap topology");
   near(volume(*sphere),std::sqrt(2.0f)/8,"sphere cap winding/volume");
@@ -80,6 +90,38 @@ void primitives() {
   rejects([&]{p.get(p.add(0x84,{3,1}));});
   rejects([&]{p.get(p.add(0x82,{8,2,0,2}));});
   rejects([&]{p.get(p.add(0x83,{8,8,f(1),f(0.25f),0,f(0.5f),0}));});
+}
+void bends() {
+  Fixture p;
+  auto parameters=cube(1,4,1,1); parameters[5]=f(4);
+  const auto base=p.add(0x81,parameters); const auto original=p.get(base);
+  const auto bent=p.get(p.add(0xab,{0,0,0,0,0,0,f(1),f(0.25f)},{base}));
+  for (std::size_t i=0;i<bent->vertices.size();++i) {
+    const auto& a=original->vertices[i]; const auto& b=bent->vertices[i];
+    if (a.position[1]<=0) for (unsigned c=0;c<3;++c) near(b.position[c],a.position[c],"Bend moved geometry below its start");
+    else {
+      near(b.position[0],1-a.position[1],"Bend straight tail after length");
+      near(b.position[1],a.position[0],"Bend quarter turn");
+    }
+    near(b.position[2],a.position[2],"Bend changed local Z");
+    check(b.uv==a.uv && b.point==a.point && b.mask==a.mask,"Bend changed vertex attributes");
+  }
+  const auto unit=p.add(0x81,cube()); const auto source=p.get(unit);
+  const auto offset=p.get(p.add(0xab,{f(-1),f(-0.5f),0,0,0,0,f(1),f(0.25f)},{unit}));
+  for (std::size_t i=0;i<source->vertices.size();++i) if (source->vertices[i].position[1]==0.5f) {
+    near(offset->vertices[i].position[0],-1,"Bend center X");
+    near(offset->vertices[i].position[1],source->vertices[i].position[0]+0.5f,"Bend center Y");
+  }
+  const auto rotated=p.get(p.add(0xab,{0,0,0,0,0,f(0.25f),f(1),f(0.25f)},{unit}));
+  for (std::size_t i=0;i<source->vertices.size();++i) if (source->vertices[i].position==wz3::Vec3{0.5f,0.5f,0.5f}) {
+    near(rotated->vertices[i].position[0],-std::sqrt(0.125f),"Bend rotated local frame X");
+    near(rotated->vertices[i].position[1],std::sqrt(0.125f),"Bend rotated local frame Y");
+  }
+  const auto below=p.get(p.add(0xab,{f(1),f(5),f(3),0,0,f(0.25f),f(1),f(0.25f)},{unit}));
+  for (std::size_t i=0;i<source->vertices.size();++i) for (unsigned c=0;c<3;++c)
+    near(below->vertices[i].position[c],source->vertices[i].position[c],"Bend inverse rigid transform");
+  rejects([&]{p.get(p.add(0xab,{0,0,0,0,0,0,0,f(0.25f)},{unit}));});
+  wz3::mesh_normals(*bent);
 }
 void operators() {
   Fixture p;
@@ -177,17 +219,17 @@ void normals() {
 }
 int main(int argc,char** argv) {
   try {
-    check(argc==2,"expected Theta project");primitives();operators();normals();
+    check(argc==2,"expected Theta project");primitives();operators();normals();bends();
     const auto project=wz3::read_project(argv[1]);const auto graph=wz3::connect(project);
     for (const auto* name : {"mesh.cube","mesh.bwflattorus","mesh.LineCircle","mesh.FireGradientCircle",
         "mesh.bwflattorus8","mesh.bwflattorus4","mesh.flatfractal","mesh.g4flat","mesh.citybridge",
         "mesh.cityblock","mesh.rohrcylin120","mesh.rohrcylin32","msh.wfl1","mesh.tetra","mesh.tetra2","mesh.Arrow",
-        "mesh.fireball","mesh.fireball2"}) {
+        "mesh.fireball","mesh.fireball2","mesh.highway1","mesh.highway2"}) {
       const auto mesh=wz3::evaluate_mesh(project,graph,graph.names.at(name));
       wz3::validate_mesh(*mesh);check(!mesh->faces.empty(),"empty Theta mesh");
       wz3::mesh_normals(*mesh);
     }
     rejects([&]{wz3::evaluate_mesh(project,graph,graph.names.at("mesh.stars"));});
-    std::cout << "mesh geometry, topology, weighted normals and 18 real Theta recipes passed\n";
+    std::cout << "mesh geometry, topology, weighted normals and 20 real Theta recipes passed\n";
   } catch(const std::exception& error) {std::cerr<<error.what()<<'\n';return 1;}
 }
