@@ -202,6 +202,41 @@ Mesh torus(const Operator& op) {
   crease_mesh_seams(mesh,0);
   return mesh;
 }
+Mesh sphere(const Operator& op) {
+  require(op,2);
+  // The archived three-sided case overwrites ring UVs while looking for cap
+  // centers. Keep that legacy corner case explicit until its layout is ported.
+  const auto tx=tessellation(op.parameters[0],4), ty=tessellation(op.parameters[1]);
+  Mesh mesh; reserve(mesh,(tx+1)*(ty+1)+2,tx*(ty+2));
+  for (unsigned y=0;y<=ty;++y) {
+    const float latitude=(y+0.5f)*std::numbers::pi_v<float>/(ty+1);
+    const auto radius=float(std::sin(double(latitude)))*0.5f;
+    const auto height=float(-0.5*std::cos(double(latitude)));
+    for (unsigned x=0;x<=tx;++x) {
+      const float angle=(x%tx)*tau/tx;
+      vertex(mesh,{float(std::sin(double(angle)))*radius,height,float(-std::cos(double(angle)))*radius},
+             {float(x)/tx,1.0f-float(y)/ty,0},0,y*(tx+1)+x%tx);
+    }
+  }
+  for (unsigned y=0;y<ty;++y) for (unsigned x=0;x<tx;++x) {
+    const auto a=y*(tx+1)+x, b=a+tx+1;
+    face(mesh,{a,b,b+1,a+1});
+  }
+  for (unsigned top=0;top<2;++top) {
+    const auto start=top*ty*(tx+1);
+    Vec3 center{};
+    for (unsigned x=0;x<tx;++x) for (unsigned c=0;c<3;++c) center[c]+=mesh.vertices[start+x].position[c]*(1.0f/tx);
+    // Triangulate averages the end ring: the poles stop short of +/-0.5.
+    // Edge2Vert shifts the unsplit cap center's U from zero to one.
+    const auto mid=vertex(mesh,center,{1,float(1-top),0});
+    for (unsigned x=0;x<tx;++x) {
+      auto a=start+x,b=a+1; if (top) std::swap(a,b);
+      face(mesh,{mid,a,b,0},3,1);
+    }
+  }
+  crease_mesh_seams(mesh,0); // The caps are smooth; only the U seam is creased.
+  return mesh;
+}
 void append(Mesh& dest, const Mesh& source) {
   reserve(dest,dest.vertices.size()+source.vertices.size(),dest.faces.size()+source.faces.size());
   const auto offset = dest.vertices.size();
@@ -260,9 +295,9 @@ public:
     } else if (op.command == 2 || op.command == 3) cache_[id] = input();
     else {
       auto mesh = std::make_shared<Mesh>();
-      if (op.command == 0x81 || op.command == 0x82 || op.command == 0x83) {
+      if (op.command >= 0x81 && op.command <= 0x84) {
         if (!node.inputs.empty()) throw std::runtime_error("mesh primitive has unexpected inputs");
-        *mesh = op.command == 0x81 ? cube(op) : op.command == 0x82 ? cylinder(op) : torus(op);
+        *mesh = op.command == 0x81 ? cube(op) : op.command == 0x82 ? cylinder(op) : op.command == 0x83 ? torus(op) : sphere(op);
       } else if (op.command == 0x92) {
         require(op,0);
         if (node.inputs.empty()) throw std::runtime_error("mesh Add requires inputs");
@@ -367,15 +402,35 @@ private:
   static Mesh repeat(const Mesh& source, const Operator& op) {
     require(op,17);
     const auto count = op.parameters[9], mode = op.parameters[10];
-    if (!count || count > 4096 || mode > 1 || number(op,16) != 0)
-      throw std::runtime_error("Multiply random mode/normal extrusion or count is not supported");
-    Mesh out; reserve(out,source.vertices.size()*count,source.faces.size()*count);
+    if (!count || count > 4096 || mode > 1)
+      throw std::runtime_error("Multiply random mode or count is not supported");
+    const auto extrude=number(op,16);
+    Mesh wedges;
+    std::vector<Vec3> directions;
+    if (extrude) {
+      const auto normals=mesh_normals(source);
+      reserve(wedges,source.faces.size()*4,source.faces.size());
+      std::unordered_map<std::uint32_t,std::uint32_t> points;
+      for (std::size_t f=0;f<source.faces.size();++f) {
+        auto copy=source.faces[f];
+        for (unsigned c=0;c<copy.count;++c) {
+          const auto& v=source.vertices[copy.vertices[c]];
+          const auto point=points.try_emplace(mesh_point(source,copy.vertices[c]),wedges.vertices.size()).first->second;
+          copy.vertices[c]=vertex(wedges,v.position,v.uv,v.mask,point);
+          directions.push_back(normals[f][c]);
+        }
+        wedges.faces.push_back(copy);
+      }
+    }
+    const auto& base=extrude ? wedges : source;
+    Mesh out; reserve(out,base.vertices.size()*count,base.faces.size()*count);
     auto global = identity, local = identity;
     const auto step = srt(op,0), local_step = euler({number(op,13),number(op,14),number(op,15)});
     for (unsigned i = 0; i < count; ++i) {
-      const auto start = out.vertices.size(); append(out,source);
+      const auto start = out.vertices.size(); append(out,base);
       const auto matrix = multiply(local,global);
       for (std::size_t v = start; v < out.vertices.size(); ++v) {
+        if (extrude) for (unsigned c=0;c<3;++c) out.vertices[v].position[c]+=directions[v-start][c]*(i*extrude);
         out.vertices[v].position = transform(matrix,out.vertices[v].position);
         if (mode & 1) { out.vertices[v].uv[0] += i*number(op,11); out.vertices[v].uv[1] += i*number(op,12); }
       }

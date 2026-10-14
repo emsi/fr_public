@@ -170,18 +170,18 @@ build/native/wz3-mesh werkkzeug3/data/theta/theta_final.k mesh.flatfractal build
 ```
 
 The initial port supports Cube, Cylinder (full circumference, one radial layer),
-closed Torus, Select Cube (vertex/face masks), Transform, position/UV TransEx,
-Add, deterministic Multiply without normal extrusion, MatLink, Invert,
+closed Torus, Sphere (at least four sides), Select Cube (vertex/face masks), Transform, position/UV TransEx,
+Add, deterministic Multiply with normal extrusion, MatLink, Invert,
 UVProject, SmAngle, and unmasked Center, plus Load/Store/Nop. MatLink retains the actual
 material operator ID and pass as metadata/OBJ groups; it does not run shaders.
-Sixteen of the 32 reachable named mesh outputs in `theta_final.k` evaluate,
+Eighteen of the 32 reachable named mesh outputs in `theta_final.k` evaluate,
 including the flat fractal, city blocks/bridge, base tube sections, tetrahedra
-and arrow.
+arrow and layered fireballs.
 
 Tests check primitive volumes/winding, subdivision counts, UV seams and cube
 wraparound, transform order, selected transforms, copy/index offsets, material
 bindings, weighted normal calculations, hard edges, UV seam continuity,
-coincident disconnected components, explicit failures and all 16 supported recipes. The same
+coincident disconnected components, explicit failures and all 18 supported recipes. The same
 checks pass under Clang ASan/UBSan. Meshes are limited to 1,048,576 vertices and
 polygons each, with a 256 MiB cache per evaluation.
 
@@ -191,12 +191,15 @@ inverse squared-edge-product weights, including its degenerate `(1,0,0)` fallbac
 SmAngle adds normal/tangent creases using the original absolute dot-product test
 and quarter-turn angle units. UV projection preserves connectivity; Add/Multiply
 keep coincident components separate. The OBJ exporter writes per-corner `vn`
-indices. Non-manifold edges and separated positions within one smooth normal
+indices. Sphere preserves the original averaged cap centers rather than placing
+poles at exactly half the unit radius. Multiply offsets each copy along the
+source normals before applying its accumulated transforms, splitting hard normal
+wedges as needed. Non-manifold edges and separated positions within one smooth normal
 group fail explicitly.
 
 Original half-edge/face numbering, tangent generation, skinning and animation
 are not yet reproduced. Subdivide, Extrude and SelectFace remain unsupported;
-Sphere and Grid also remain pending. Portable trigonometry replaces the old SSE
+Grid and the legacy three-sided Sphere remain pending. Portable trigonometry replaces the old SSE
 approximation, so geometry/UV/normal fidelity still needs reference comparisons.
 This exporter establishes procedural geometry execution, not full scene playback.
 
@@ -207,12 +210,12 @@ EGL/GLES using an orthographic inspection camera, interpolated native normals an
 build/native/wz3-mesh-render werkkzeug3/data/theta/theta_final.k mesh.flatfractal build/native/fractal.ppm
 python3 werkkzeug3/native/tools/mesh_audit.py \
   --renderer build/native/wz3-mesh-render --output build/native/theta-mesh-gallery \
-  --expect-supported 16 --expect-unsupported 16
+  --expect-supported 18 --expect-unsupported 14
 ```
 
 The audit writes an HTML/PNG gallery, OBJ downloads, hashes and a JSON report
 with each unsupported dependency and graphics driver output. Omit `--renderer`
-for an export-only audit without a GPU. All 16 supported outputs were exported
+for an export-only audit without a GPU. All 18 supported outputs were exported
 under ASan/UBSan and rendered on the Radeon RX 7900 XT. The graphics tests also
 pass with llvmpipe. The renderer checks framebuffer/depth availability, GL errors
 and nonempty readback; a separate occlusion test reverses polygon submission

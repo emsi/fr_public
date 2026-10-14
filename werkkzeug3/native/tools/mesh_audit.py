@@ -75,7 +75,7 @@ def main():
     (args.output / "index.html").write_text(
         '<!doctype html><meta charset="utf-8"><title>' + title + '</title>' +
         '<style>body{background:#222;color:#eee;font:16px sans-serif;margin:2rem}a{color:#9cf}main{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:1rem}article{background:#333;padding:1rem}h2{font-size:1rem}img{width:100%;height:280px;object-fit:contain}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}</style>' +
-        f'<h1>{title}</h1><p>Native geometry previews with a diagnostic UV checker and flat shading. Original material shaders, smoothing, camera and animation are not applied.</p>' +
+        f'<h1>{title}</h1><p>Native geometry previews with a diagnostic UV checker and crease-aware weighted normals. Original material shaders, camera and animation are not applied.</p>' +
         '<p>Theta by Farbrausch (fr-038). Derived artwork: CC-BY-SA 3.0. See werkkzeug3/data/theta/LICENSE and readme.txt in the archive.</p><main>' +
         "".join(cards) + '</main>\n')
     print(title)

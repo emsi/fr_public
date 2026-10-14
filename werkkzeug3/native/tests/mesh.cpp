@@ -65,7 +65,19 @@ void primitives() {
   check(torus->vertices.size()==81 && torus->faces.size()==64,"torus tessellation");
   near(volume(*torus),1,"torus winding/volume");
   for (unsigned y=0;y<9;++y) check(torus->vertices[y].position==torus->vertices[72+y].position,"torus major seam");
+  const auto sphere=p.get(p.add(0x84,{4,1}));
+  check(sphere->vertices.size()==12 && sphere->faces.size()==12,"sphere ring/cap topology");
+  near(volume(*sphere),std::sqrt(2.0f)/8,"sphere cap winding/volume");
+  const auto sphere_bounds=wz3::mesh_bounds(*sphere);
+  near(sphere_bounds.max[1],std::sqrt(0.125f),"sphere pole must be an averaged cap, not radius 0.5");
+  for (std::size_t i=4;i<sphere->faces.size();++i) check(sphere->faces[i].mask==1,"sphere cap face mask");
+  for (const auto& v:sphere->vertices) check(v.mask==0,"sphere vertex masks must be cleared");
+  const auto opposite=wz3::mesh_opposites(*sphere);
+  for (std::size_t i=0;i<sphere->faces.size();++i) for (unsigned c=0;c<sphere->faces[i].count;++c)
+    check(opposite[i*4+c]!=wz3::mesh_no_point,"sphere seam is topologically open");
+  near(sphere->vertices[10].uv[0],1,"sphere cap center seam U");
   rejects([&]{p.get(p.add(0x81,cube(0)));});
+  rejects([&]{p.get(p.add(0x84,{3,1}));});
   rejects([&]{p.get(p.add(0x82,{8,2,0,2}));});
   rejects([&]{p.get(p.add(0x83,{8,8,f(1),f(0.25f),0,f(0.5f),0}));});
 }
@@ -147,6 +159,20 @@ void normals() {
            near(n[i][c][0],v.position[0]*2,"cylinder side smooth X");
            near(n[i][c][2],v.position[2]*2,"cylinder side smooth Z"); }
   }
+
+  // SmAngle introduces hard corners inside shared cylinder wedges. Extruding
+  // copies must split those normal wedges, then apply SRT, preserving UV offsets.
+  const auto faceted=p.add(0xac,{0},{p.add(0x82,{8,1,0,1})});
+  mesh=p.get(faceted); n=wz3::mesh_normals(*mesh);
+  const auto layers=p.get(p.add(0x95,{f(2),f(2),f(2),0,0,0,f(3),0,0,2,1,f(0.25f),f(0.5f),0,0,0,f(0.1f)},{faceted}));
+  for (std::size_t i=0;i<mesh->faces.size();++i) for (unsigned c=0;c<mesh->faces[i].count;++c) {
+    const auto& a=mesh->vertices[mesh->faces[i].vertices[c]];
+    const auto& b=layers->vertices[layers->faces[i+mesh->faces.size()].vertices[c]];
+    for (unsigned k=0;k<3;++k) near(b.position[k],(a.position[k]+n[i][c][k]*0.1f)*2+(k==0 ? 3 : 0),"normal extrusion must precede accumulated SRT");
+    near(b.uv[0],a.uv[0]+0.25f,"extruded Multiply U offset");
+    near(b.uv[1],a.uv[1]+0.5f,"extruded Multiply V offset");
+  }
+  wz3::mesh_normals(*layers);
 }
 }
 int main(int argc,char** argv) {
@@ -155,12 +181,13 @@ int main(int argc,char** argv) {
     const auto project=wz3::read_project(argv[1]);const auto graph=wz3::connect(project);
     for (const auto* name : {"mesh.cube","mesh.bwflattorus","mesh.LineCircle","mesh.FireGradientCircle",
         "mesh.bwflattorus8","mesh.bwflattorus4","mesh.flatfractal","mesh.g4flat","mesh.citybridge",
-        "mesh.cityblock","mesh.rohrcylin120","mesh.rohrcylin32","msh.wfl1","mesh.tetra","mesh.tetra2","mesh.Arrow"}) {
+        "mesh.cityblock","mesh.rohrcylin120","mesh.rohrcylin32","msh.wfl1","mesh.tetra","mesh.tetra2","mesh.Arrow",
+        "mesh.fireball","mesh.fireball2"}) {
       const auto mesh=wz3::evaluate_mesh(project,graph,graph.names.at(name));
       wz3::validate_mesh(*mesh);check(!mesh->faces.empty(),"empty Theta mesh");
       wz3::mesh_normals(*mesh);
     }
     rejects([&]{wz3::evaluate_mesh(project,graph,graph.names.at("mesh.stars"));});
-    std::cout << "mesh geometry, topology, weighted normals and 16 real Theta recipes passed\n";
+    std::cout << "mesh geometry, topology, weighted normals and 18 real Theta recipes passed\n";
   } catch(const std::exception& error) {std::cerr<<error.what()<<'\n';return 1;}
 }
