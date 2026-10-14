@@ -25,7 +25,8 @@ Pixel fade64(const Pixel& a, const Pixel& b, std::int32_t fade) {
   const auto w0 = std::clamp<std::int64_t>(32768 - half, -32768, 32767);
   Pixel result{};
   for (unsigned i = 0; i < 4; ++i)
-    result[i] = static_cast<std::uint16_t>(((a[i] * w0 >> 16) + (b[i] * w1 >> 16)) * 2);
+    result[i] = static_cast<std::uint16_t>(((std::bit_cast<std::int16_t>(a[i]) * w0 >> 16) +
+                                          (std::bit_cast<std::int16_t>(b[i]) * w1 >> 16)) * 2);
   return result;
 }
 
@@ -75,11 +76,35 @@ public:
       if (op.command == 0x21) std::fill(texture->pixels.begin(), texture->pixels.end(), color64(op.parameters[2]));
       else gradient(*texture, op);
       cache_[id] = std::move(texture);
+    } else if (op.command == 0x24) {
+      require(op, 1);
+      if (node.inputs.empty()) throw std::runtime_error("Merge requires at least one input");
+      auto texture = clone(*evaluate(node.inputs[0], depth + 1));
+      for (std::size_t i = 1; i < node.inputs.size(); ++i) {
+        const auto source = evaluate(node.inputs[i], depth + 1);
+        if (texture->width != source->width || texture->height != source->height)
+          throw std::runtime_error("Merge inputs have different dimensions");
+        for (std::size_t p = 0; p < texture->pixels.size(); ++p)
+          texture->pixels[p] = merge_pixel(texture->pixels[p], source->pixels[p], op.parameters[0]);
+      }
+      cache_[id] = std::move(texture);
+    } else if (op.command == 0x23 || op.command == 0x25 || op.command == 0x28) {
+      require(op, op.command == 0x23 ? 2 : op.command == 0x25 ? 3 : 4);
+      auto texture = clone(*input());
+      if (op.command == 0x23) {
+        const auto color = color64(op.parameters[1]);
+        for (auto& pixel : texture->pixels) pixel = color_pixel(pixel, color, op.parameters[0]);
+      } else if (op.command == 0x25) {
+        if (op.parameters[0] == 0) throw std::runtime_error("invalid texture format");
+        texture->format = op.parameters[0];
+        texture->mip_count = op.parameters[1];
+        texture->mip_threshold = op.parameters[2];
+      } else draw_dots(*texture, op.parameters[0], op.parameters[1], op.parameters[2], op.parameters[3]);
+      cache_[id] = std::move(texture);
     } else if (op.command == 0x39) {
       require(op, 11);
       const auto base = input();
-      auto texture = allocate(base->width, base->height);
-      texture->pixels = base->pixels;
+      auto texture = clone(*base);
       glow(*texture, number(op, 0), number(op, 1), number(op, 2), number(op, 3),
            number(op, 4), number(op, 5), op.parameters[6], number(op, 7), number(op, 8),
            op.parameters[9], op.parameters[10], 0);
@@ -96,7 +121,7 @@ private:
   const Graph& graph_;
   std::vector<std::shared_ptr<const Texture>> cache_;
   std::vector<bool> visiting_;
-  std::size_t allocated_{};
+  std::shared_ptr<std::size_t> allocated_ = std::make_shared<std::size_t>(0);
   static void require(const Operator& op, std::size_t count) {
     if (op.parameters.size() != count) throw std::runtime_error("unsupported texture parameter layout");
   }
@@ -108,12 +133,20 @@ private:
   }
   std::shared_ptr<Texture> allocate(unsigned width, unsigned height) {
     const auto size = std::size_t(width) * height;
-    if (size * sizeof(Pixel) > 256 * 1024 * 1024 - allocated_)
+    if (size * sizeof(Pixel) > 256 * 1024 * 1024 - *allocated_)
       throw std::runtime_error("texture cache exceeds 256 MiB limit");
-    allocated_ += size * sizeof(Pixel);
-    auto texture = std::make_shared<Texture>();
+    auto texture = std::make_unique<Texture>();
     texture->width = width; texture->height = height; texture->pixels.resize(size);
-    return texture;
+    *allocated_ += size * sizeof(Pixel);
+    return std::shared_ptr<Texture>(texture.release(), [budget = allocated_, size](Texture* object) {
+      delete object;
+      *budget -= size * sizeof(Pixel);
+    });
+  }
+  std::shared_ptr<Texture> clone(const Texture& source) {
+    auto result = allocate(source.width, source.height);
+    *result = source;
+    return result;
   }
   static void gradient(Texture& texture, const Operator& op) {
     const auto a = color64(op.parameters[2]), b = color64(op.parameters[3]);

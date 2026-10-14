@@ -1,21 +1,24 @@
 // Distributed under the BSD license in werkkzeug3/LICENSE.txt.
 #include "wz3/texture.hpp"
 #include <iostream>
+#include <algorithm>
 #include <stdexcept>
 #if defined(__SSE2__)
 #include <emmintrin.h>
 #endif
 
 void check(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
+void test_composite();
 int main() {
   try {
+    test_composite();
     check(wz3::color64(0xff804020) == wz3::Pixel{16448, 8224, 4112, 32767}, "ARGB conversion");
     const auto black = wz3::color64(0xff000000), white = wz3::color64(0xffffffff);
     check(wz3::fade64(black, white, 32768) == wz3::Pixel{16382, 16382, 16382, 32764}, "MMX midpoint rounding");
 #if defined(__SSE2__)
     // Independent machine-instruction oracle for the original MMX sequence.
     // SSE2 gives the same signed lane arithmetic without MMX/FPU state changes.
-    const wz3::Pixel a{0, 1, 16383, 32767}, b{32767, 22000, 64, 0};
+    const wz3::Pixel a{0, 65535, 16383, 32767}, b{32767, 22000, 32768, 0};
     for (int fade = 0; fade <= 65535; ++fade) {
       auto weights = _mm_set1_epi32(fade);
       weights = _mm_srai_epi32(weights, 1);
@@ -32,6 +35,11 @@ int main() {
       check(wz3::fade64(a, b, fade) == expected, "scalar interpolation differs from SIMD oracle");
     }
 #endif
+    check(wz3::merge_pixel({30000, 20, 80, 32767}, {4000, 50, 10, 32767}, 0)
+          == wz3::Pixel{32767, 70, 90, 32767}, "saturating merge add");
+    check(wz3::merge_pixel({100, 200, 300, 400}, {0, 32767, 0, 123}, 4)
+          == wz3::Pixel{100, 200, 300, 16383}, "merge green-weighted alpha");
+    check(wz3::color_pixel({0, 0, 0, 0}, white, 4) == white, "invert includes alpha");
     wz3::Project project;
     project.pages.resize(1);
     wz3::Operator op;

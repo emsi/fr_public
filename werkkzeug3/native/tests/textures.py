@@ -7,7 +7,8 @@ import tempfile
 binary, project = sys.argv[1:]
 with tempfile.TemporaryDirectory() as directory:
     output = Path(directory) / "texture.ppm"
-    for selector, width, height in (("263", 512, 512), ("tex.white", 1, 1), ("tex.BWCircle", 1024, 1024)):
+    for selector, width, height in (("263", 512, 512), ("tex.white", 1, 1),
+                                    ("tex.BWCircle", 1024, 1024), ("stars.tex", 1024, 1024)):
         result = subprocess.run([binary, project, selector, str(output)], capture_output=True, text=True, timeout=30)
         assert result.returncode == 0, result.stderr
         data = output.read_bytes()
@@ -24,8 +25,10 @@ with tempfile.TemporaryDirectory() as directory:
             assert pixels[:3] == bytes([255] * 3)
             assert pixels[(width - 1)*3:width*3] == bytes([0] * 3)
             assert pixels[:width*3] == pixels[-width*3:]
+        if selector == "stars.tex":
+            assert 740 <= sum(pixels[i:i+3] != b"\0\0\0" for i in range(0, len(pixels), 3)) <= 768
     output.unlink()
-    result = subprocess.run([binary, project, "stars.tex", str(output)], capture_output=True, text=True, timeout=30)
+    result = subprocess.run([binary, project, "rt.g5", str(output)], capture_output=True, text=True, timeout=30)
     assert result.returncode == 1 and "not ported" in result.stderr
     assert not output.exists(), "failed evaluation must not emit a pretend texture"
 print("Real Theta textures generated; unsupported recipes rejected")

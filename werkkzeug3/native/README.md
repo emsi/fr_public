@@ -34,11 +34,15 @@ rejected before large allocations.
 
 ## Native texture previews
 
-`wz3-texture` evaluates Flat, Gradient and GlowRect using the saved project
+`wz3-texture` evaluates Flat, Gradient, GlowRect, Merge, Color and Dots using the saved project
 parameters, with Load/Store/Nop graph traversal. It preserves the original
 15-bit channel representation and MMX interpolation rounding in portable C++.
 The scalar interpolation is checked against an independent SSE2 instruction
-oracle for all 65,536 normal fade values on x86. Texture generation uses the
+oracle for all 65,536 normal fade values on x86. All eleven Merge modes are also
+checked against a separate SIMD translation of the original MMX instructions.
+Dots retains the original seeded random generator. Format records pixel format
+and mipmap metadata; actual signed normal-map GPU upload is still pending.
+Texture generation uses the
 original default size offset of zero and a bounded 256 MiB intermediate cache.
 Unimplemented operators, animated textures and cyclic graphs fail explicitly.
 
@@ -66,7 +70,8 @@ will be added with the player. GLES 3 is this new backend's requirement, not the
 historical demo's minimum GPU requirement.
 
 Hardware validation on an AMD Radeon RX 7900 XT with Mesa 25.2.8 passed for the
-saved 512x512 gradient, `tex.BWCircle` at 1024x1024, and `tex.Sparkles` at 512x512.
+saved 512x512 gradient, `tex.BWCircle` and `stars.tex` at 1024x1024, and
+`tex.Sparkles` at 512x512.
 This checks native texture generation and graphics transport. It does **not**
 establish pixel equality with the original Windows renderer or full demo playback.
 PPM drops alpha; the in-memory RGBA comparison includes it. Derived Theta previews
