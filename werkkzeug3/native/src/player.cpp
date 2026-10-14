@@ -2,6 +2,7 @@
 #include "wz3/frame.hpp"
 #include "wz3/texture.hpp"
 #include "audio_sdl.hpp"
+#include <GLES3/gl3.h>
 #include <algorithm>
 #include <charconv>
 #include <chrono>
@@ -53,6 +54,18 @@ struct Window {
     int width=0,height=0;SDL_GL_GetDrawableSize(window,&width,&height);
     if(width>0 && height>0){renderer.present(width,height);SDL_GL_SwapWindow(window);}
   }
+  void loading(double progress) {
+    const auto title="fr-038: Theta - preparing "+std::to_string(int(progress*100))+"% (Escape to cancel)";
+    SDL_SetWindowTitle(window,title.c_str());
+    int width=0,height=0;SDL_GL_GetDrawableSize(window,&width,&height);if(width<=0 || height<=0)return;
+    glBindFramebuffer(GL_FRAMEBUFFER,0);glDisable(GL_SCISSOR_TEST);glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
+    glClearColor(.025f,.03f,.04f,1);glClear(GL_COLOR_BUFFER_BIT);
+    glEnable(GL_SCISSOR_TEST);glScissor(width/8,height/2,width*3/4,std::max(4,height/64));
+    glClearColor(.12f,.15f,.19f,1);glClear(GL_COLOR_BUFFER_BIT);
+    glScissor(width/8,height/2,int(width*3/4*progress),std::max(4,height/64));
+    glClearColor(.65f,.8f,1,1);glClear(GL_COLOR_BUFFER_BIT);glDisable(GL_SCISSOR_TEST);
+    SDL_GL_SwapWindow(window);
+  }
 };
 struct Snapshot {double seconds{};std::filesystem::path path;bool saved=false;};
 }
@@ -61,15 +74,18 @@ int main(int argc,char** argv) {
     std::cout<<"Usage: "<<argv[0]<<" PROJECT.k --font-file FONT.ttf [--music SONG.ogg]\n"
       <<"  [--width PIXELS] [--height PIXELS] [--duration SECONDS] [--mute]\n"
       <<"  [--capture LAST.ppm] [--snapshot SECONDS FRAME.ppm] (repeatable)\n"
+      <<"  [--no-preload | --preload-only]\n"
       <<"Escape or close the window to exit. Music defaults to the saved song's basename beside the project.\n";
     return argc<2 ? 2 : 0;
   }
   try {
     wz3::TextureOptions options;std::filesystem::path music,capture;unsigned width=0,height=0;
-    double duration=0;bool mute=false;std::vector<Snapshot> snapshots;
+    double duration=0;bool mute=false,preload=true,preload_only=false;std::vector<Snapshot> snapshots;
     for(int i=2;i<argc;++i) {
       const std::string_view option=argv[i];
       if(option=="--mute")mute=true;
+      else if(option=="--no-preload")preload=false;
+      else if(option=="--preload-only")preload_only=true;
       else if(option=="--music" && i+1<argc)music=argv[++i];
       else if(option=="--font-file" && i+1<argc)options.font_file=argv[++i];
       else if(option=="--capture" && i+1<argc)capture=argv[++i];
@@ -83,6 +99,7 @@ int main(int argc,char** argv) {
       }else throw std::runtime_error("unknown or incomplete player option: "+std::string(option));
     }
     require(!options.font_file.empty() && std::filesystem::is_regular_file(options.font_file),"supply an existing --font-file for Theta's uncached credits font");
+    require(preload || !preload_only,"--no-preload conflicts with --preload-only");
     const std::filesystem::path project_path=argv[1];const auto project=wz3::read_project(project_path);const auto graph=wz3::connect(project);
     const auto root=graph.names.find("root");require(root!=graph.names.end(),"project has no named root");
     if(!width)width=project.settings[2];
@@ -97,11 +114,37 @@ int main(int argc,char** argv) {
     wz3::PlaybackTiming timing(project,pcm.rate);auto end=timing.end_frames();
     if(duration)end=std::min(end,std::uint64_t(std::ceil(duration*pcm.rate)));
     std::cout<<"Music: "<<pcm.rate<<" Hz, "<<pcm.channels<<" channels, "<<double(pcm.frames())/pcm.rate<<" seconds\n";
-    Sdl sdl;wz3::SdlAudio audio(pcm,mute);Window window(width,height);
-    wz3::FramePlayer player(project,graph,options);
+    Sdl sdl;std::unique_ptr<wz3::SdlAudio> audio;
+    if(!preload_only)audio=std::make_unique<wz3::SdlAudio>(pcm,mute);
+    Window window(width,height);auto assets=std::make_shared<wz3::SceneAssets>(project,graph,options);
     wz3::FrameRenderer renderer(project,graph,options,wz3::FrameRenderer::Context::Current);
     std::cout<<"Video: "<<SDL_GetCurrentVideoDriver()<<"; audio: "<<SDL_GetCurrentAudioDriver()
-      <<"; callback: "<<audio.buffer_frames()<<" frames; render: "<<width<<'x'<<height<<'\n';
+      <<"; callback: "<<(audio ? audio->buffer_frames() : 0)<<" frames; render: "<<width<<'x'<<height<<'\n';
+    if(preload) {
+      const auto started=Clock::now();auto progress=started;std::uint64_t frames=0,last_log=0;
+      window.loading(0);
+      {
+        wz3::FramePlayer loading(project,graph,options,assets);
+        for(std::uint64_t ms=0;;ms+=16) {
+          if(!window.events()){std::cout<<"Loading cancelled\n";return 0;}
+          const auto sample=std::min(ms*pcm.rate/1000,end);
+          try{renderer.draw(loading.frame(root->second,timing.beat(sample),width,height,timing.milliseconds(sample)));}
+          catch(const std::exception& e){throw std::runtime_error("loading at "+std::to_string(timing.milliseconds(sample))+" ms: "+e.what());}
+          ++frames;const auto now=Clock::now();
+          if(now-progress>=std::chrono::milliseconds(100)){window.loading(double(sample)/end);progress=now;}
+          if(sample*10/end!=last_log){last_log=sample*10/end;std::cout<<"Preparing "<<last_log*10<<"%\n";}
+          if(sample==end)break;
+        }
+      } // Discard simulation, animation and event state before starting music.
+      renderer.reset_targets();window.loading(1);
+      const auto cpu=assets->stats();const auto gpu=renderer.stats();
+      std::cout<<"Loading complete: "<<frames<<" frames in "<<std::chrono::duration<double>(Clock::now()-started).count()
+        <<" seconds; "<<cpu.meshes<<" meshes, "<<cpu.fonts<<" font atlases, "<<gpu.bitmap_uploads
+        <<" bitmap uploads, "<<gpu.program_compilations<<" shader programs\n";
+      if(preload_only)return 0;
+    }
+    const auto prepared_cpu=assets->stats();const auto prepared_gpu=renderer.stats();
+    wz3::FramePlayer player(project,graph,options,assets);
     std::uint64_t rendered=0,presented=0,current=0,next_ms=16;double max_draw_ms=0,max_lag_ms=0;
     auto draw=[&](std::uint64_t sample) {
       const auto start=Clock::now();
@@ -114,12 +157,13 @@ int main(int argc,char** argv) {
       }
     };
     draw(0);window.present(renderer);SDL_SetWindowTitle(window.window,"fr-038: Theta - Escape to exit");
-    // No sound advances during initial generation. Subsequent fixed 16 ms steps
+    // No sound advances during loading. Subsequent fixed 16 ms steps
     // retain simulation/target history, including while catching up after a stall.
-    audio.start();const auto started=Clock::now();auto last_progress=started;std::uint64_t last_sample=0,last_log=0;
+    require(audio->position()==0 && audio->callback_count()==0,"audio advanced during loading");
+    audio->start();const auto started=Clock::now();auto last_progress=started;std::uint64_t last_sample=0,last_log=0;
     bool running=true;while(running && current<end) {
       const auto tick=Clock::now();running=window.events();if(!running)break;
-      const auto sample=audio.position(),target=std::min(sample,end);
+      const auto sample=audio->position(),target=std::min(sample,end);
       if(sample!=last_sample){last_sample=sample;last_progress=tick;}
       require(tick-last_progress<std::chrono::seconds(2),"audio clock stalled for two seconds");
       max_lag_ms=std::max(max_lag_ms,double(target>current ? target-current : 0)*1000/pcm.rate);
@@ -139,8 +183,13 @@ int main(int argc,char** argv) {
     }
     if(!capture.empty())wz3::write_ppm(capture,width,height,renderer.readback());
     std::cout<<"Playback "<<(running ? "complete" : "stopped")<<": "<<rendered<<" rendered frames, "<<presented
-      <<" presentations, "<<audio.callback_count()<<" audio callbacks, "<<timing.milliseconds(current)<<" ms, beat "
+      <<" presentations, "<<audio->callback_count()<<" audio callbacks, "<<timing.milliseconds(current)<<" ms, beat "
       <<double(timing.beat(current))/65536<<", "<<std::chrono::duration<double>(Clock::now()-started).count()
       <<" wall seconds; max draw "<<max_draw_ms<<" ms; max catch-up "<<max_lag_ms<<" ms\n";
+    const auto cpu=assets->stats();const auto gpu=renderer.stats();
+    std::cout<<"Playback allocations: "<<cpu.meshes-prepared_cpu.meshes<<" meshes, "<<cpu.fonts-prepared_cpu.fonts
+      <<" fonts, "<<gpu.surface_allocations-prepared_gpu.surface_allocations<<" surfaces, "<<gpu.bitmap_uploads-prepared_gpu.bitmap_uploads
+      <<" bitmaps, "<<gpu.mesh_uploads-prepared_gpu.mesh_uploads<<" mesh uploads, "<<gpu.shadow_uploads-prepared_gpu.shadow_uploads
+      <<" shadow uploads, "<<gpu.program_compilations-prepared_gpu.program_compilations<<" programs, "<<gpu.lighting_uploads-prepared_gpu.lighting_uploads<<" lighting tables\n";
   }catch(const std::exception& e){std::cerr<<"player: "<<e.what()<<'\n';return 1;}
 }

@@ -23,6 +23,8 @@ with tempfile.TemporaryDirectory(prefix="wz3-player-") as directory:
         raise RuntimeError(result.stderr)
     assert "Playback complete:" in result.stdout and "2000 ms" in result.stdout
     assert "Video: offscreen; audio: disk;" in result.stdout
+    assert "Loading complete:" in result.stdout
+    assert "Playback allocations: 0 meshes, 0 fonts, 0 surfaces, 0 bitmaps, 0 mesh uploads, 0 shadow uploads, 0 programs, 0 lighting tables" in result.stdout
     image = (path / "frame.ppm").read_bytes()
     assert image.startswith(b"P6\n160 120\n255\n"), "invalid player capture dimensions"
     pixels = image.split(b"\n", 3)[3]
@@ -34,3 +36,20 @@ with tempfile.TemporaryDirectory(prefix="wz3-player-") as directory:
     rms = math.sqrt(sum(x*x for x in pcm) / len(pcm))
     assert rms > .01, "SDL audio output is silent"
     print(f"Window/presentation/capture passed; SDL wrote {len(pcm)//2} stereo frames, RMS {rms:.6f}")
+    # A warm-up pass must not consume particle RNG or retain simulated state.
+    cold = subprocess.run([player, project, "--font-file", font, "--width", "160",
+                           "--height", "120", "--duration", "2", "--no-preload",
+                           "--capture", str(path / "cold.ppm")],
+                          env=env, capture_output=True, text=True, timeout=30)
+    if cold.returncode:
+        raise RuntimeError(cold.stderr)
+    assert image == (path / "cold.ppm").read_bytes(), "preloading changed the opening simulation"
+    print("Warm and cold opening frames match byte-for-byte")
+    prepare = subprocess.run([player, project, "--font-file", font, "--width", "160",
+                              "--height", "120", "--duration", ".25", "--preload-only"],
+                             env=dict(env, SDL_DISKAUDIOFILE=str(path / "prepare.f32")),
+                             capture_output=True, text=True, timeout=30)
+    if prepare.returncode:
+        raise RuntimeError(prepare.stderr)
+    assert "Loading complete:" in prepare.stdout and "Playback complete:" not in prepare.stdout
+    assert not (path / "prepare.f32").exists(), "preload-only opened an audio device"

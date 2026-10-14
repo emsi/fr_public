@@ -36,6 +36,22 @@ using that path. The player defaults to the saved 800×600 resolution and finds
 the window scales the picture with black bars and preserves render-target history.
 Escape or closing the window exits. Seeking, pause and looping are not implemented.
 
+Playback now starts with a cancellable loading screen. The loading pass executes
+the same 16 ms timeline into offscreen render targets, preparing all encountered
+meshes, textures, shadows and shader variants. It shares only immutable geometry
+and font data with a fresh playback instance. Particle RNG, animation, events and
+simulation clocks are recreated; screen/pool/named target color, depth and stencil
+are cleared before music starts. This also warms driver shader variants that may
+compile lazily on their first draw. It currently trades a complete preparation
+pass (about 31 seconds on the tested Radeon) for predictable playback allocation.
+
+`--no-preload` skips preparation for startup/performance comparisons.
+`--preload-only` prepares the timeline and exits without opening an audio device.
+The window remains responsive during loading, including resize and cancellation.
+`--duration` limits both preparation and playback. The final allocation counters
+report any assets/uploads/programs still created after loading, separately from
+the per-frame dynamic data needed by particles and shadows.
+
 `--duration SECONDS` limits playback for local checks. `--capture LAST.ppm`
 saves the last rendered frame; repeat `--snapshot SECONDS FRAME.ppm` to capture
 selected positions without restarting the simulation. Snapshot disk I/O can
@@ -47,9 +63,10 @@ uses about 87.4 MiB). The SDL callback copies samples without allocation or
 decoding. The renderer borrows SDL's GLES3 context and blits directly to the window,
 with no per-frame CPU readback unless a capture is requested. Simulation and
 render-target updates advance in fixed 16 ms steps; missed presentations catch up
-through intermediate frames rather than losing particle/target history. Initial
-frame generation finishes before audio starts. Later first-use asset generation
-can still cause visible stalls; this is not yet a fully precomputed player.
+through intermediate frames rather than losing particle/target history.
+Preparation and initial frame generation finish before audio starts. The loading
+pass is a native warm-up strategy, not a claim that the original KDoc precalculation
+order or global random consumption has been reproduced.
 
 `mainplayer.cpp` supplies the sample-to-beat formula and optional Buzz integer
 tick timing. The `.k` SoundOffset is editor-only and is not exported by the
@@ -77,13 +94,24 @@ checks do not establish audible synchronization or original-output fidelity.
 Local validation on the Radeon RX 7900 XT completed the whole SDL/X11 run at
 1024×768: **16,550 rendered frames, 15,489 presentations, 11,406 audio callbacks,
 and beat 609**. The SDL disk output matched every one of the 11,450,185 decoded
-stereo frames exactly, followed by silence. The largest observed draw took
-1.78 seconds and required 1.80 seconds of catch-up; first-use generation still
-needs preloading. This run used a disk backend, whose callback pacing is synthetic
+stereo frames exactly, followed by silence. This initial run without preloading
+had a 1.78-second maximum draw and 1.80 seconds of catch-up. It used a disk backend,
+whose callback pacing is synthetic
 (263.31 wall seconds for 264.78 seconds of sample time), not a hardware sound clock.
 X11 window resize/close passed separately. The container exposes the GPU and X11
 display but no ALSA sound card or PulseAudio socket; opening normal audio failed
 explicitly, so audible playback has not been verified here.
+
+With preloading enabled, the full 1024×768 X11 run again reached beat 609 with
+16,550 rendered frames. Preparation took **30.65 seconds**. Playback created
+**zero new cached meshes, fonts, surfaces, bitmap/mesh/shadow uploads, shader
+programs or lighting tables**. The maximum measured CPU frame generation and
+render submission took **8.06 ms**, versus 1.78 seconds in the cold run; the
+maximum sample-clock catch-up was 47.51 ms, versus 1.80 seconds. These timings
+include CPU scheduling and GL submission, not an isolated GPU timer measurement.
+The five 1024×768 scene captures at 30, 120, 195, 220 and 250 seconds and the final
+frame matched the earlier cold run byte-for-byte. The warm run used SDL dummy
+audio, so hardware audio synchronization remains unmeasured.
 
 The 39-test release suite passed, as did the presentation/player checks with
 Mesa software rendering. The 22 existing CPU sanitizer checks and the added audio
@@ -96,7 +124,7 @@ To repeat the complete disk-audio check (writes about 90 MiB of float PCM):
 ```sh
 SDL_AUDIODRIVER=disk SDL_DISKAUDIOFILE=build/native/theta-audio.f32 \
   build/native/wz3-player werkkzeug3/data/theta/theta_final.k \
-  --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+  --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf --no-preload
 SDL_AUDIODRIVER=dummy DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent \
   build/native/wz3-audio-tests werkkzeug3/data/theta/theta_final.k \
   werkkzeug3/data/theta/theta.ogg build/native/theta-audio.f32
@@ -1014,8 +1042,8 @@ and original-frame comparison remain.
 2. Reproduce the editor's operator type checking and version migrations.
 3. Compare saved material shading against original frames and extend remaining
    shader/format support where the comparison exposes a difference.
-4. Measure audible synchronization and remove first-use generation stalls in
-   the Linux windowed player.
+4. Measure audible synchronization and shorten loading time without changing
+   the Linux player's simulation or render-target history.
 5. Compare the whole demo's output and timing; extend editor support separately.
 
 ## Graph reconstruction
