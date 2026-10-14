@@ -171,6 +171,72 @@ void released_oracle(const char* path) {
   check(max_error<=1e-6f,"native/cloud x86 values differ by more than 1e-6");
   std::cout<<total<<" particles in "<<cases<<" released clouds match isolated x86 initializer; max absolute error "<<max_error<<'\n';
 }
+void released_motion() {
+  wz3::Project p;p.runtime_graph=true;wz3::Spline curve;curve.name="released path";curve.interpolation=0;
+  // Released spline 3 and operator 1224. These poses come from the original
+  // complete x86 handler, not the archived source oracle's shared primitives.
+  const auto key=[](unsigned time,float value){return std::array<std::uint32_t,2>{f(float(time)/255),f(value)};};
+  curve.channels={{key(0,0),key(33,58.3125f),key(51,72.0625f),key(77,64.25f),key(103,34.375f),
+                   key(143,-20.8125f),key(195,-77.4375f),key(235,-42.46875f),key(255,0)},
+                  {key(0,0),key(255,0)},
+                  {key(0,71.5f),key(17,62.21875f),key(125,-82.3125f),key(236,61.5f),key(255,71.5f)}};
+  p.splines.push_back(curve);const wz3::SplineLibrary splines(p);wz3::SceneParticles native(splines,{},true);
+  std::array<std::uint32_t,16> parameters{0x31,178,0,f(1),f(8.046875f),f(1)};parameters[12]=f(.125f);
+  const auto result=native.evaluate(1224,parameters,0);
+  const std::array<unsigned,3> indices{0,63,177};
+  const std::array<wz3::SceneMatrix,3> poses{{
+    {-.7534292936325073f,0,-.6575290560722351f,0,0,1,0,0,.6575289964675903f,0,-.7534291744232178f,0,
+      57.01850891113281f,2.942650556564331f,41.10980987548828f,1},
+    {-.05833634361624718f,0,.9982970356941223f,0,0,1,0,0,-.9982969164848328f,0,-.05833633616566658f,0,
+      7.765969276428223f,-2.539154052734375f,-82.27741241455078f,1},
+    {-.7314648628234863f,0,-.6818791031837463f,0,0,1,0,0,.6818791031837463f,0,-.7314648628234863f,0,
+      54.27203369140625f,-1.905017614364624f,43.73930740356445f,1}}};
+  for(unsigned i=0;i<indices.size();++i)for(unsigned c=0;c<16;++c)
+    check(std::abs(result[indices[i]].transform[c]-poses[i][c])<=1e-4f,"released x86 spline particle pose");
+  // Negative time wraps before the initial phase is added, then the complete
+  // transform is multiplied by its parent (operator 133 at animation -0.01).
+  parameters={0,150,0,f(2.76953125f),f(4.28125f),f(1)};parameters[12]=f(-.01f);parameters[15]=f(110.5f);
+  const auto line=native.evaluate(133,parameters);
+  const wz3::SceneMatrix parent{1,.25f,-.5f,0,-.125f,.75f,.125f,0,.25f,.5f,1.5f,0,-3,2,5,1};
+  const auto world=wz3::scene_combine(parent,line[0].transform);
+  check(f(line[0].fraction)==f(.21513116359710693f),"released x86 negative-time particle phase");
+  near(world[12],3.631021022796631f,"released x86 parent translation X");
+  near(world[13],15.265464782714844f,"released x86 parent translation Y");
+  near(world[14],40.3536376953125f,"released x86 parent translation Z");
+}
+void released_motion_oracle(const char* project,const char* path) {
+  const auto p=wz3::read_project(project);check(p.runtime_graph,"particle motion oracle requires a released runtime graph");
+  const wz3::SplineLibrary splines(p);wz3::SceneParticles native(splines,{},true);
+  std::ifstream in(path);std::string magic;unsigned cases=0,total=0,exact=0;float max_error=0;
+  in>>magic>>cases;check(in.good() && magic=="theta-particle-motion-v1" && cases>0 && cases<=4096,"invalid released motion oracle");
+  for(unsigned trial=0;trial<cases;++trial) {
+    std::size_t id=0;std::uint32_t time=0;unsigned count=0;wz3::SceneMatrix world{};
+    in>>id>>time>>count;for(auto& value:world)in>>value;
+    check(in.good() && id<p.operators.size() && count>0 && count<=16384,"invalid released motion case");
+    const auto& op=p.operators[id];check(op.command==0xc5 && op.parameters.size()==16,"invalid released motion operator");
+    auto parameters=op.parameters;parameters[12]=time;std::optional<std::size_t> curve;
+    if(!op.splines.empty() && !op.splines[0].empty())curve=splines.find(op.splines[0]);
+    const auto result=native.evaluate(id,parameters,curve);check(result.size()==count,"released motion particle count mismatch");
+    for(unsigned i=0;i<count;++i) {
+      std::array<std::uint32_t,17> expected{};for(auto& value:expected)in>>value;
+      check(in.good(),"truncated released motion oracle");
+      const auto& particle=result[i];check(particle.index==i && f(particle.fraction)==expected[0],"released motion particle index/phase mismatch");
+      const auto actual=wz3::scene_combine(world,particle.transform);
+      for(unsigned c=0;c<16;++c) {
+        const auto value=wz3::as_float(expected[c+1]),error=std::abs(actual[c]-value);
+        check(std::isfinite(value) && std::isfinite(actual[c]),"nonfinite released motion matrix");
+        max_error=std::max(max_error,error);exact+=f(actual[c])==expected[c+1];
+        if(error>1e-4f+2e-6f*std::abs(value))
+          throw std::runtime_error("released motion mismatch: operator "+std::to_string(id)+", case "+std::to_string(trial)+
+            ", particle "+std::to_string(i)+", component "+std::to_string(c)+", expected "+std::to_string(value)+", got "+std::to_string(actual[c]));
+      }
+    }
+    total+=count;
+  }
+  in>>std::ws;check(in.eof(),"trailing released motion data");
+  std::cout<<total<<" particle transforms in "<<cases<<" cases match original x86 motion; "<<exact<<'/'<<total*16
+    <<" matrix components bitwise equal; max absolute error "<<max_error<<'\n';
+}
 void theta(const char* path) {
   const auto p=wz3::read_project(path);const auto g=wz3::connect(p);const wz3::SplineLibrary splines(p);wz3::SceneParticles native(splines);unsigned count=0;
   for(std::size_t id=0;id<p.operators.size();++id)if(g.nodes[id].reachable && p.operators[id].command==0xc5) {
@@ -188,7 +254,8 @@ void theta(const char* path) {
 int main(int argc,char** argv) {
   try {
     if(argc==3 && std::string_view(argv[1])=="--release-oracle")released_oracle(argv[2]);
-    else {oracle();analytic();released();scene_variables();if(argc>1)theta(argv[1]);}
+    else if(argc==4 && std::string_view(argv[1])=="--release-motion-oracle")released_motion_oracle(argv[2],argv[3]);
+    else {oracle();analytic();released();released_motion();scene_variables();if(argc>1)theta(argv[1]);}
   }
   catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}
 }

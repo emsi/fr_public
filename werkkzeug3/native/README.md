@@ -566,8 +566,33 @@ build/native/wz3-particle-tests --release-oracle build/reference/theta/particles
 
 The JSON report retains the restored image/handler hashes, executed instruction
 ranges, source parameters and position-array hashes. This independently verifies
-the distributions used by the release; motion, spline primitives and the final
-render still have their separate comparison limits.
+the distributions used by the release.
+
+`tools/release_particle_motion_oracle.py` extends this audit through the entire
+released handler. Original instructions evaluate the cached clouds, phase wrap,
+line/spline motion, spline-facing orientation and matrix-stack multiplication.
+Only allocation, instance storage and child dispatch are replaced by hooks;
+child geometry and rendering do not execute. The audit checks that animation
+variables remain unchanged and the matrix stack is balanced after every call.
+Nine animation times (including negative and wrapped times) and two parent
+matrices produce **35,532 transforms in 162 cases** across all nine clouds.
+GCC Release and Clang ASan/UBSan both match all phases bit for bit and all matrix
+components within `1e-4 + 2e-6 * abs(reference)`: **552,674 of 568,512 matrix
+components are bitwise identical**, with a maximum absolute difference of
+**0.0000610352**. The trace SHA-256 is
+`de29ea8e66e5bb517bb17624a11febc81099021519f8047cc7df2962576f9307`.
+Standard tests retain three original spline-facing poses plus a negative-time
+line pose under a transformed parent, so those checks need no downloaded binary.
+
+```sh
+uv run --no-project --with unicorn python werkkzeug3/native/tools/release_particle_motion_oracle.py \
+  build/reference/theta/extracted/restored-code-image.bin --output build/reference/theta/particle-motion
+build/native/wz3-particle-tests --release-motion-oracle \
+  build/reference/theta/extracted/theta.wz3r build/reference/theta/particle-motion/motion.txt
+```
+
+These are controlled handler comparisons, not proof of whole-scene traversal,
+video frame timing or final pixel fidelity.
 
 Four additional root midpoint scenes now emit 333 instances at beat 96, 185 at
 120, 645 at 184 and 754 at 256. They render through the native compositor on
