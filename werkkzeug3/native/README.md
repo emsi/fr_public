@@ -78,6 +78,12 @@ To exercise the same path on a machine without a GPU:
 LIBGL_ALWAYS_SOFTWARE=1 ctest --test-dir build/native -L graphics --output-on-failure
 ```
 
+The `Native Linux` GitHub Actions workflow builds an optimized GCC configuration
+with Mesa software graphics tests and a Clang debug configuration with address
+and undefined-behavior sanitizers. Both test the actual archived Theta projects;
+the sanitizer job does not load third-party graphics drivers. CPU-only developer
+builds remain independent of EGL/GLES development packages.
+
 ## Next steps
 
 1. Add the remaining reachable texture and mesh operators behind typed native
