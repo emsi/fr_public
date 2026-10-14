@@ -2,6 +2,7 @@
 #include "wz3/frame.hpp"
 #include "wz3/texture.hpp"
 #include <charconv>
+#include <chrono>
 #include <cmath>
 #include <fstream>
 #include <iostream>
@@ -33,14 +34,19 @@ int main(int argc,char** argv) {
     wz3::FrameRenderer renderer(project,graph,options);
 #endif
     const auto end=wz3::beat_milliseconds(std::int32_t(time),wz3::as_float(project.settings[4]));
+    std::size_t preroll_frames=0;const auto started=std::chrono::steady_clock::now();
     if(step) {
       if(std::uint64_t(end)/step>100000)throw std::runtime_error("preroll frame limit");
       for(std::int64_t ms=0;ms<end;ms+=step) {
         const auto beat=std::int32_t(double(ms)*wz3::as_float(project.settings[4])*65536/60000);
-        const auto previous=player.frame(root,beat,1024,768,std::int32_t(ms));
+        try {
+          const auto previous=player.frame(root,beat,1024,768,std::int32_t(ms));
 #if WZ3_GPU_FRAME
-        renderer.render(previous,diagnostic);
+          renderer.render(previous,diagnostic);
 #endif
+        }catch(const std::exception& e){throw std::runtime_error("preroll at "+std::to_string(ms)+" ms (beat "+std::to_string(double(beat)/65536)+"): "+e.what());}
+        ++preroll_frames;
+        if(preroll_frames==1 || ms/10000!=(ms-step)/10000)std::cerr<<"Preroll "<<ms<<"/"<<end<<" ms, "<<preroll_frames<<" frames\n";
       }
     }
     const auto frame=player.frame(root,std::int32_t(time),1024,768,end);
@@ -51,6 +57,7 @@ int main(int argc,char** argv) {
 #else
     std::ofstream out(argv[4]);wz3::write_frame(out,frame);
 #endif
+    if(step)std::cout<<preroll_frames+1<<" consecutive frames including final sample in "<<std::chrono::duration<double>(std::chrono::steady_clock::now()-started).count()<<" seconds\n";
     std::cout<<frame.commands.size()<<" draw commands, "<<frame.visited_operators<<" frame visits, "<<frame.cache_hits
       <<" cache hits, "<<frame.screen_fallbacks<<" pool fallbacks\n";
   }catch(const std::exception& error) {std::cerr<<"frame: "<<error.what()<<'\n';return 1;}

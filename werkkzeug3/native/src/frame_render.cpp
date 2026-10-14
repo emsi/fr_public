@@ -4,6 +4,7 @@
 #include "wz3/print.hpp"
 #include "wz3/scene_draw.hpp"
 #include "wz3/lighting.hpp"
+#include "wz3/fog.hpp"
 #include <cmath>
 #include "gles.hpp"
 #include <algorithm>
@@ -37,12 +38,15 @@ constexpr const char* particle_vertex=R"(#version 300 es
   layout(location=1) in vec2 uv;
   layout(location=2) in vec4 color;
   uniform mat4 view_projection;
+  uniform vec4 fog_plane;
+  out float material_fog;
   uniform mat3 uv_transform[4];
   uniform vec4 flip_texture;
   out vec2 material_uv[4];
   out vec4 material_vertex_color;
   void main() {
     gl_Position=view_projection*vec4(position,1.0);
+    material_fog=clamp(dot(vec4(position,1.0),fog_plane),0.0,1.0);
     for(int i=0;i<4;++i) {
       material_uv[i]=(uv_transform[i]*vec3(uv,1.0)).xy;
       if(flip_texture[i]>0.5)material_uv[i].y=1.0-material_uv[i].y;
@@ -55,6 +59,8 @@ constexpr const char* light_vertex=R"(#version 300 es
   layout(location=3) in vec3 normal;
   layout(location=4) in vec3 tangent;
   uniform mat4 view_projection;
+  uniform vec4 fog_plane;
+  out float material_fog;
   uniform mat3 uv_transform[4];
   uniform vec4 flip_texture;
   uniform vec3 light_position;
@@ -67,6 +73,7 @@ constexpr const char* light_vertex=R"(#version 300 es
   out vec3 attenuation_uv;
   void main() {
     gl_Position=view_projection*vec4(position,1.0);
+    material_fog=clamp(dot(vec4(position,1.0),fog_plane),0.0,1.0);
     for(int i=0;i<4;++i){material_uv[i]=(uv_transform[i]*vec3(uv,1.0)).xy;if(flip_texture[i]>0.5)material_uv[i].y=1.0-material_uv[i].y;}
     vec3 B=cross(normal,tangent);
     vec3 L=directional!=0 ? light_position : light_position-position;
@@ -176,7 +183,8 @@ struct FrameRenderer::Impl {
   }
   GLuint program(const MaterialShader& s,bool particle) {
     const bool lit=(s.words[2]&7)!=0;require(!lit || particle,"lighting needs mesh vertex data");
-    const auto source=lit ? material_light_fragment_shader(s) : material_fragment_shader(s);const auto key=(lit ? "light:" : particle ? "particle:" : "quad:")+source;if(auto found=programs.find(key);found!=programs.end())return found->second;
+    auto source=lit ? material_light_fragment_shader(s) : material_fragment_shader(s);if(s.words[0]&0x40)source=fog_fragment_shader(std::move(source));
+    const auto key=(lit ? "light:" : particle ? "particle:" : "quad:")+source;if(auto found=programs.find(key);found!=programs.end())return found->second;
     require(programs.size()<4096,"frame shader cache limit");
     const auto vertex=gles::shader(GL_VERTEX_SHADER,lit ? light_vertex : particle ? particle_vertex : quad_vertex);GLuint fragment;
     try {fragment=gles::shader(GL_FRAGMENT_SHADER,source.c_str());}catch(...) {glDeleteShader(vertex);throw;}
@@ -185,11 +193,11 @@ struct FrameRenderer::Impl {
     if(!ok) {char log[4096]{};glGetProgramInfoLog(p,sizeof(log),nullptr,log);glDeleteProgram(p);throw std::runtime_error(std::string("frame shader link failed: ")+log);}
     programs.emplace(key,p);return p;
   }
-  void quad(const FrameQuad& q,std::size_t destination,const SceneEffectDraw* effect=nullptr,const SceneMatrix* projection=nullptr,const MeshDraw* mesh=nullptr,const LightDraw* light=nullptr) {
+  void quad(const FrameQuad& q,std::size_t destination,const SceneEffectDraw* effect=nullptr,const SceneMatrix* projection=nullptr,const MeshDraw* mesh=nullptr,const LightDraw* light=nullptr,const SceneFog* fog=nullptr) {
     const auto& s=q.shader;const auto flags=s.words[0];
-    require(!(flags&(light ? 0xcc0058u : 0xfc0058u)),"unlit draw fog, shadow or depth bias is not ported");
+    require(!(flags&(light ? 0xcc0018u : 0xfc0018u)),"draw shadow state or depth bias is not ported");
     require(!(flags&0x700000) || (light && (flags&0x700000)==0x300000),"unsupported stencil material operation");
-    const bool vertices=effect || mesh;require(!(s.words[2]&7) || light,"missing scene light uniforms");const auto p=program(s,vertices);glUseProgram(p);glBindVertexArray(vao);
+    const bool vertices=effect || mesh;require(!(s.words[2]&7) || light,"missing scene light uniforms");require(!(flags&0x40) || (vertices && fog),"fog requires a scene camera");const auto p=program(s,vertices);glUseProgram(p);glBindVertexArray(vao);
     std::array<float,36> matrices{};std::array<float,16> rects{},colors{};std::array<float,4> flip{};
     for(unsigned i=0;i<4;++i) {
       auto uv_shader=s;if(!vertices)uv_shader.words[4+i]&=~0x10u; // Quad UV0 and UV1 are supplied explicitly.
@@ -221,6 +229,7 @@ struct FrameRenderer::Impl {
       light_tables(p);glUniform3fv(glGetUniformLocation(p,"light_position"),1,light->position.data());glUniform3fv(glGetUniformLocation(p,"eye_position"),1,light->eye.data());
       glUniform1i(glGetUniformLocation(p,"directional"),light->directional);glUniform4fv(glGetUniformLocation(p,"attenuation_parameters"),1,light->attenuation.data());glUniform4fv(glGetUniformLocation(p,"light_color"),1,light->color.data());glUniform2fv(glGetUniformLocation(p,"specular_parameters"),1,light->specular.data());
     }
+    if(fog){glUniform4fv(glGetUniformLocation(p,"fog_plane"),1,fog->plane.data());glUniform3fv(glGetUniformLocation(p,"fog_color"),1,fog->color.data());}
     if((flags&0x700000)==0x300000){glEnable(GL_STENCIL_TEST);glStencilFunc(GL_EQUAL,0,255);glStencilOp(GL_KEEP,GL_KEEP,GL_KEEP);}else glDisable(GL_STENCIL_TEST);
     glColorMask(!(flags&0x20),!(flags&0x20),!(flags&0x20),!(flags&0x20));
     glFrontFace(vertices ? GL_CW : GL_CCW);if(flags&2)glDisable(GL_CULL_FACE);else {glEnable(GL_CULL_FACE);glCullFace((flags&4) ? GL_FRONT : GL_BACK);}
@@ -270,14 +279,15 @@ struct FrameRenderer::Impl {
     }
     return q;
   }
-  void effect(const SceneEffectDraw& draw,const SceneMatrix& projection,const FrameTarget& target) {
+  void effect(const SceneEffectDraw& draw,const SceneMatrix& projection,const FrameTarget& target,const SceneCamera& camera) {
     if(draw.vertices.empty())return;
     const auto matrix=draw.normalized ? print_normalized_projection(target.width,target.height) : projection;
-    quad(resolve_material(draw.shader,&draw),target.surface,&draw,&matrix);
+    std::optional<SceneFog> fog;if(draw.shader.words[0]&0x40){require(!draw.normalized,"normalized text fog is not ported");fog=scene_fog(camera,scene_identity());}
+    quad(resolve_material(draw.shader,&draw),target.surface,&draw,&matrix,nullptr,nullptr,fog ? &*fog : nullptr);
   }
   void effects(const SceneFrame& scene,const FrameTarget& target) {
     const auto projection=scene_view_projection(scene.camera,target.width,target.height);
-    for(const auto& draw:scene.effects)effect(draw,projection,target);
+    for(const auto& draw:scene.effects)effect(draw,projection,target,scene.camera);
   }
   const MeshGeometry& mesh_geometry(const std::shared_ptr<const Mesh>& mesh,const std::vector<SceneMeshBatch>& batches) {
     if(const auto found=geometry.find(mesh.get());found!=geometry.end())return found->second;
@@ -352,7 +362,7 @@ struct FrameRenderer::Impl {
         current=group;restore_scissor();
         if(job.light){const auto& r=draws.lights[*job.light].rectangle;const int left=int(target.width*(1+r[0])*.5f),right=int(target.width*(1+r[2])*.5f),top=int(target.height*(1-r[3])*.5f),bottom=int(target.height*(1-r[1])*.5f);glScissor(left,surfaces.at(target.surface).height-bottom,right-left,bottom-top);}
       }
-      if(job.effect) {effect(scene.effects[*job.effect],projection,target);continue;}
+      if(job.effect) {effect(scene.effects[*job.effect],projection,target,scene.camera);continue;}
       const auto& instance=scene.instances[job.instance];const auto& batches=draws.meshes.at(instance.mesh.get());
       const auto material=batches[job.batch].material;const auto& pass=(material ? scene.materials.at(*material) : scene_default_material()).passes[job.material_pass];
       try {
@@ -368,7 +378,8 @@ struct FrameRenderer::Impl {
           const auto scale=.5f/l.range;for(unsigned c=0;c<3;++c)draw.attenuation[c]=draw.position[c]*(-scale)+.5f;draw.attenuation[3]=scale;
           draw.color=light_color(pass.shader,l);draw.specular=light_specular_parameters(as_float(pass.shader.words[32]));setup=draw;
         }
-        quad(resolve_material(pass.shader),target.surface,nullptr,&matrix,&mesh,setup ? &*setup : nullptr);
+        std::optional<SceneFog> fog;if(pass.shader.words[0]&0x40)fog=scene_fog(scene.camera,instance.world);
+        quad(resolve_material(pass.shader),target.surface,nullptr,&matrix,&mesh,setup ? &*setup : nullptr,fog ? &*fog : nullptr);
       }catch(const std::exception& e) {throw std::runtime_error("mesh material "+(material ? std::to_string(*material) : "default")+": "+e.what());}
     }
     if(current)after(std::get<0>(*current),std::get<1>(*current));

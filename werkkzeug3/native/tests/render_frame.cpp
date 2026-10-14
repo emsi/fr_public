@@ -50,8 +50,8 @@ void scene_opt_in() {
   FrameFixture x;const auto root=x.add(0x0d,{}, {x.viewport()});wz3::FramePlayer player(x.p,x.g);wz3::FrameRenderer renderer(x.p,x.g);
   auto frame=player.frame(root,0,32,32);bool rejected=false;
   auto& scene=std::get<wz3::SceneFrame>(frame.commands[0].draw);auto mesh=std::make_shared<wz3::Mesh>(*scene.instances[0].mesh);
-  for(auto& face:mesh->faces)face.material=0;scene.instances[0].mesh=mesh;wz3::MaterialPass pass;pass.shader.words[0]=0x340;pass.shader.words[9]=0x10;pass.shader.words[28]=0xffffffff;scene.materials[0].passes={pass};
-  try {renderer.render(frame);}catch(const std::runtime_error& e) {rejected=std::string_view(e.what()).find("fog")!=std::string_view::npos;}
+  for(auto& face:mesh->faces)face.material=0;scene.instances[0].mesh=mesh;wz3::MaterialPass pass;pass.shader.words[0]=0x308;pass.shader.words[9]=0x10;pass.shader.words[28]=0xffffffff;scene.materials[0].passes={pass};
+  try {renderer.render(frame);}catch(const std::runtime_error& e) {rejected=std::string_view(e.what()).find("depth bias")!=std::string_view::npos;}
   check(rejected,"scene geometry was silently substituted for saved material drawing");
   const auto pixels=renderer.render(frame,true);check(pixels[(16*32+16)*4]>0,"diagnostic scene geometry failed to render");
 }

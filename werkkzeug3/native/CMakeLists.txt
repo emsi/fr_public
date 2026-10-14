@@ -14,10 +14,10 @@ endif()
 
 add_library(wz3_project src/project.cpp src/graph.cpp src/texture.cpp src/bitmap_composite.cpp
   src/bitmap_filters.cpp src/bitmap_text.cpp src/font.cpp src/jpeg_decode.c src/mesh.cpp src/mesh_topology.cpp
-  src/mesh_kernel.cpp src/mesh_evaluate.cpp src/mesh_noise.cpp src/mesh_displace.cpp src/animation.cpp src/timeline.cpp src/material.cpp src/material_shader.cpp src/scene.cpp src/frame.cpp src/particles.cpp src/effect_particles.cpp src/walk.cpp src/print.cpp src/scene_draw.cpp src/lighting.cpp src/shadow.cpp)
+  src/mesh_kernel.cpp src/mesh_evaluate.cpp src/mesh_noise.cpp src/mesh_displace.cpp src/animation.cpp src/timeline.cpp src/material.cpp src/material_shader.cpp src/scene.cpp src/frame.cpp src/particles.cpp src/effect_particles.cpp src/walk.cpp src/print.cpp src/scene_draw.cpp src/lighting.cpp src/shadow.cpp src/fog.cpp)
 # Mesh Perlin uses downward rounding; animation uses nearest-even. Preserve
 # their scalar operation boundaries and explicit floating-point environments.
-set_source_files_properties(src/mesh_kernel.cpp src/mesh_noise.cpp src/animation.cpp src/timeline.cpp src/material_shader.cpp src/scene.cpp src/frame.cpp src/particles.cpp src/effect_particles.cpp src/walk.cpp src/print.cpp src/scene_draw.cpp src/lighting.cpp src/shadow.cpp PROPERTIES
+set_source_files_properties(src/mesh_kernel.cpp src/mesh_noise.cpp src/animation.cpp src/timeline.cpp src/material_shader.cpp src/scene.cpp src/frame.cpp src/particles.cpp src/effect_particles.cpp src/walk.cpp src/print.cpp src/scene_draw.cpp src/lighting.cpp src/shadow.cpp src/fog.cpp PROPERTIES
   COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
 target_link_libraries(wz3_project PRIVATE JPEG::JPEG Freetype::Freetype)
 target_include_directories(wz3_project PUBLIC include PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
@@ -93,6 +93,9 @@ if(WZ3_BUILD_RENDERER)
 endif()
 
 if(BUILD_TESTING)
+  add_executable(wz3-fog-tests tests/fog.cpp)
+  target_link_libraries(wz3-fog-tests PRIVATE wz3_project)
+  add_test(NAME fog_transform COMMAND wz3-fog-tests)
   add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/shadow_oracle.inc"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/shadow_oracle.py"
       "${CMAKE_CURRENT_SOURCE_DIR}/../engine.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/../genmesh.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/../_types.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/shadow_oracle.inc"
@@ -169,6 +172,10 @@ if(BUILD_TESTING)
     message(STATUS "No test font found; set WZ3_TEST_FONT_FILE to enable font atlas tests")
   endif()
   if(WZ3_TEST_GRAPHICS)
+    add_executable(wz3-fog-render-tests tests/render_fog.cpp src/frame_render.cpp src/render.cpp)
+    target_link_libraries(wz3-fog-render-tests PRIVATE wz3_project PkgConfig::EGL PkgConfig::GLES)
+    add_test(NAME gpu_scene_fog COMMAND wz3-fog-render-tests "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta/theta_final.k")
+    set_tests_properties(gpu_scene_fog PROPERTIES LABELS graphics)
     add_executable(wz3-shadow-render-tests tests/render_shadow.cpp src/frame_render.cpp src/render.cpp)
     target_link_libraries(wz3-shadow-render-tests PRIVATE wz3_project PkgConfig::EGL PkgConfig::GLES)
     add_test(NAME gpu_shadow_volumes COMMAND wz3-shadow-render-tests "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta/theta_final.k")

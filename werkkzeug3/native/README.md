@@ -4,13 +4,13 @@ This directory begins a native Linux port of the Werkkzeug3 player used by
 fr-038. It does not yet play the demo. The original Windows sources and Theta
 assets remain the reference; no Wine or Windows SDK is needed for these targets.
 
-The native frame runner now executes the demo root's animation, events and image
-compositing. All 54 sampled timeline positions render with diagnostic scene
-geometry and saved particle, text, overlay and image effects when an explicit
-font file is supplied. A 2,601-frame CPU run also traverses the timeline through
-the credits. Saved mesh materials, lighting and shadows now render 46 of the 54
-samples without checker shading. Fog, timeline history for isolated samples, audio synchronization and
-comparison with original output remain unfinished.
+The native frame runner now renders the complete root timeline through beat 600
+with saved materials, lighting, shadows, fog, particles, credits and image effects.
+A headless Radeon run rendered **16,306 consecutive frames at 1024×768**, advancing
+the simulation in 16 ms steps with an explicitly supplied font. The independent
+sample audit renders 52/54 positions; two late samples require an earlier render
+target and work in the continuous run. A windowed player, audio synchronization
+and comparison with original output remain unfinished.
 
 The first target, `wz3-inspect`, reads the complete version-13 Theta projects
 directly, including operator parameters, animation records, timeline events,
@@ -481,8 +481,8 @@ same slot more than once in a frame.
 
 The GLES compositor draws these billboards using their saved unlit texture
 combiners, vertex colors, blend/depth/cull state and UV transforms. Particle jobs
-now interleave with ordinary mesh passes in strict material mode. Theta scenes
-need diagnostic shading when they use unported fog paths. The scene-only geometry renderer rejects effect scenes instead of omitting
+now interleave with ordinary mesh passes in strict material mode. The frame
+compositor supports their scene fog too. The scene-only geometry renderer rejects effect scenes instead of omitting
 their particles.
 
 For a preview with accumulated motion and retained GPU targets, replay from zero:
@@ -657,7 +657,7 @@ they also pass with llvmpipe. CPU initialization/update tests pass with ASan/UBS
 The swatches use RGBA8 uploads and native mipmap generation; legacy pixel-format,
 mipmap-count and alpha-threshold rules still need reproduction for ordinary color
 textures. The frame compositor supports signed normal textures and bump lighting.
-Environment mapping and fog remain pending.
+Environment mapping remains pending; the frame compositor now supports scene fog.
 `wz3-scene-render` continues to use diagnostic shading. Individual
 swatches do not execute the demo root's global-variable or compositing scopes,
 and comparison against original Windows frames is still required.
@@ -680,8 +680,8 @@ deterministic material binding/pass IDs. Transparent ties between different
 materials therefore still need comparison with original output. Five-plane
 frustum culling and per-light sphere/batch intersection now filter draw jobs.
 
-The renderer supports lighting inserts, per-light/default materials and shadow
-volumes. It rejects other specialized mesh finalizers, fog, depth bias and
+The renderer supports lighting inserts, per-light/default materials, shadow
+volumes and scene fog. It rejects other specialized mesh finalizers, depth bias and
 unsupported texture projections. It does not skip those passes or replace them with checker shading. The existing diagnostic
 option remains available for full-root traversal.
 
@@ -782,8 +782,8 @@ volumes, a second light and repeated frames. Ten real root samples also run on
 Radeon and llvmpipe, including the retained-target sequence described below.
 Original-executable visual comparison is still required.
 
-The strict root audit now renders **46/54 samples** with saved materials, lighting
-and shadows. Six samples stop on fog. Two more, beats 480 and 511.5, sample
+The strict root audit now renders **52/54 samples** with saved materials, lighting,
+shadows and fog. Two samples, beats 480 and 511.5, sample
 `rt.g10finale`, which the demo writes at beat 448.5. Those frames render when the
 renderer retains that earlier target; starting each audit sample from scratch
 still fails explicitly. The diagnostic gallery covers all 54 independently.
@@ -794,9 +794,48 @@ build/native/wz3-frame-render werkkzeug3/data/theta/theta_final.k root 384 \
 python3 werkkzeug3/native/tools/frame_audit.py \
   --renderer build/native/wz3-frame-render --strict-materials \
   --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf \
-  --output build/native/theta-shadow-frames \
-  --expect-evaluated 54 --expect-rendered 46
+  --output build/native/theta-fog-frames \
+  --expect-evaluated 54 --expect-rendered 52
 ```
+
+## Native fog and continuous rendering
+
+Fog follows `sMaterial11::Set`'s model-to-view plane and `material11.vsh`'s vertex
+dot product: `(fog_end - view_z) / (fog_end - fog_start)`. Each vertex factor is
+clamped before rasterization, following Microsoft's [oFog output-register
+contract](https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/dx9-graphics-reference-asm-vs-registers-output).
+The native varying uses perspective interpolation. The resulting factor blends
+RGB after the saved pixel shader and before framebuffer blending; material alpha
+is preserved, and [fog-color alpha is ignored](https://learn.microsoft.com/en-us/windows/win32/direct3d9/fog-color).
+The same stage serves unlit meshes, light passes and world-space effects. Zero-width
+fog intervals and fog on normalized text or camera-less quads fail explicitly.
+Old GPU interpolation/rounding still needs comparison with original output.
+
+CPU checks compare transformed fog planes against view-space depth. GPU tests
+cover near/far clamps, model and camera motion, a tilted triangle whose vertex
+factors exceed both endpoints, alpha testing/blending, shader-cache toggling,
+lighting and effects. All six formerly fog-blocked Theta positions render on
+Radeon and llvmpipe; some transition frames are entirely white as drawn by the
+saved compositor.
+
+The full strict render also passes from zero through beat 600 (260,869 ms),
+retaining GPU targets, particle/event state and material updates. At 100 ms steps
+it renders 2,610 frames; at 16 ms steps it renders **16,306 frames**, including the
+final sample. The latter completed locally in 45.3 seconds on Radeon RX 7900 XT.
+This is offline execution with readback, without window presentation, vsync or
+audio; it does not establish audio/video synchronization or original visual fidelity.
+The supplied DejaVu font still substitutes for the uncached Arial credits atlas.
+
+```sh
+build/native/wz3-frame-render werkkzeug3/data/theta/theta_final.k root 600 \
+  build/native/theta-continuous-600.ppm --preroll-ms 16 \
+  --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+```
+
+Preroll reports progress every ten seconds of simulated time and includes the
+timestamp/beat in any failure. Its final message records the frame count and
+elapsed wall time. Intermediate frames are rendered and read back; only the
+requested final image is written to disk.
 
 ## Demo root and native image compositor
 
@@ -843,9 +882,9 @@ python3 werkkzeug3/native/tools/frame_audit.py \
 ```
 
 The graphics command uses saved materials by default and rejects unsupported
-scene shading. **Eight of the 54 independent Theta samples still need
-`--diagnostic-geometry`** because they require fog or a previously written render
-target. That option draws checker mesh geometry
+scene shading. **Two of the 54 independent Theta samples require preroll** because
+they sample a previously written render target. The optional
+`--diagnostic-geometry` mode draws checker mesh geometry
 and saved particle/text materials, followed by the saved postprocessing and overlays. This is a compositor milestone, not complete Theta
 playback or a claim of original visual fidelity.
 
@@ -862,9 +901,9 @@ nested master restoration, the three-slot capacity, zero-duration events and
 failure recovery. GPU tests check overlay alpha blending, target orientation,
 resolution changes, blur rounding, Merge/Crashzoom and explicit diagnostic opt-in.
 Twelve geometry samples and three credits samples also run repeatedly in native
-players/renderers. The 34-test
+players/renderers. The 36-test
 Release suite passes on Radeon RX 7900 XT; mesh material and compositor tests pass
-on llvmpipe. All 21 CPU tests, including lighting, shadows and draw-order checks, pass under
+on llvmpipe. All 22 CPU tests, including lighting, shadows, fog and draw-order checks, pass under
 Clang ASan/UBSan. Small driver-dependent
 rounding differences are possible; bit-identical original output is unverified.
 
@@ -875,7 +914,7 @@ currently have separate depth/stencil attachments. Imported/procedural textures 
 use RGBA8 and native mipmaps rather than all legacy format rules. Saved-material mesh
 uploads are retained across frames; the diagnostic checker still rebuilds them
 for each viewport draw.
-Fog, original font metrics, dynamic events, audio
+Original font metrics, dynamic events, audio
 timing and original-frame comparison remain.
 
 ## Next steps
@@ -883,11 +922,9 @@ timing and original-frame comparison remain.
 1. Verify inferred Print alignment migration and native font metrics against
    the original executable/GDI.
 2. Reproduce the editor's operator type checking and version migrations.
-3. Implement fog and remaining material shaders on the mesh
-   draw queue, checking output against the
-   reference rather than treating a successful graphics upload as visual fidelity.
-4. Integrate the native animation runtime with scene/material/effect execution
-   and Ogg playback driven by a sample-based clock.
+3. Compare saved material shading against original frames and extend remaining
+   shader/format support where the comparison exposes a difference.
+4. Add a Linux windowed player and Ogg playback driven by a sample-based clock.
 5. Compare the whole demo's output and timing; extend editor support separately.
 
 ## Graph reconstruction
