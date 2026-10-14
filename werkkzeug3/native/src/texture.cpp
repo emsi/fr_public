@@ -133,7 +133,8 @@ public:
         throw std::runtime_error("unsupported Text parameter layout");
       auto texture = clone(*input());
       if ((op.parameters[5] & 0x80) && op.blob_size) {
-        draw_cached_text(*texture, blob(op), op.parameters[4], op.parameters[5]);
+        draw_cached_text(*texture, blob(op), op.parameters[4], op.parameters[5], number(op, 7),
+                         op.strings.size() > 1 ? op.strings[1] : std::string_view{});
       } else {
         if (op.strings.size() != 2) throw std::runtime_error("invalid Text strings");
         FontLayout layout{number(op, 0), number(op, 1), number(op, 2), number(op, 3), number(op, 7),

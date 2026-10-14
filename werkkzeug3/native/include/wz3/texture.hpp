@@ -42,7 +42,8 @@ void transform_bitmap(const Texture&, Texture& destination, float angle, float s
 void blur_bitmap(Texture&, Texture& scratch, unsigned flags, float sx, float sy, float amplitude);
 void normal_bitmap(const Texture&, Texture& destination, float distance, unsigned mode);
 void adjust_hscb(Texture&, float hue, float saturation, float contrast, float brightness);
-void draw_cached_text(Texture&, std::span<const std::uint8_t> blob, std::uint32_t color, unsigned flags);
+void draw_cached_text(Texture&, std::span<const std::uint8_t> blob, std::uint32_t color, unsigned flags,
+                      float inner_spacing = 0, std::string_view family = {});
 void generate_font_atlas(Texture&, const FontLayout&, const std::filesystem::path& font_file);
 void write_font_metrics(const std::filesystem::path&, const Texture&);
 std::shared_ptr<const Texture> evaluate_texture(const Project&, const Graph&, std::size_t id, const TextureOptions& = {});

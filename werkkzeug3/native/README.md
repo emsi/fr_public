@@ -215,7 +215,10 @@ its appearance and metrics are **not** claimed to match GDI. Supplying an Arial
 file still needs comparison against original captures. Cached intro text is
 unaffected by this option. Native atlas generation currently supports printable
 ASCII, unstretched scalable fonts and complete packing; missing glyphs, overflow,
-uncached paragraphs and cached atlas metrics fail explicitly.
+uncached paragraphs fail explicitly. Cached v3 atlases now load their 256 saved
+letter records and 3-bit coverage directly, without a host font. Signed bearings,
+inner spacing and UVs outside the texture are preserved; v2 remains supported
+for paragraph masks only. Cached data takes precedence over `--font-file`.
 
 ```sh
 build/native/wz3-texture werkkzeug3/data/theta/theta_final.k tex.BWCircle /tmp/circle.ppm
@@ -1100,13 +1103,27 @@ The tool records media hashes, overlap/window correlations and exact seek times.
 Frame requests use the native 16 ms simulation step. Video frame cadence and
 lossy compression still limit image comparison. Early geometry/camera captures
 correspond visually; the credits expose the confirmed project/font differences.
-This is not a pixel-fidelity pass for the whole demo. Next, import the released
-graph and baked font data before using image differences to adjust rendering.
+This is not a pixel-fidelity pass for the whole demo. The native Text decoder
+now accepts the release's cached font atlases, preserving all metrics through
+Blur/Merge/Store. The recovered `duality` atlas contains 73 glyph records and
+`Droid` four; decoding both needs no installed font. Verify the real blobs after
+extraction (these downloaded files are not part of the standard test suite):
+
+```sh
+build/native/wz3-cached-font-tests \
+  build/reference/theta/extracted/blob-1263.bin \
+  build/reference/theta/extracted/blob-1293.bin
+```
+
+Synthetic tests exercise all seven pages, signed bearings, missing glyphs,
+coverage, retained metadata and rejected corrupt blobs. Release and ASan/UBSan
+runs also pass with the actual extracted fonts. Next, import the released graph
+before using image differences to adjust rendering.
 
 ## Next steps
 
-1. Add native playback of the recovered final 1.01 graph and cached font atlas;
-   verify Print alignment against the aligned reference.
+1. Add native playback of the recovered final 1.01 graph, using the cached atlas
+   decoder; verify Print alignment against the aligned reference.
 2. Reproduce the editor's operator type checking and version migrations.
 3. Compare saved material shading against original frames and extend remaining
    shader/format support where the comparison exposes a difference.
