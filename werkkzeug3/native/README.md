@@ -34,7 +34,8 @@ rejected before large allocations.
 
 ## Native texture previews
 
-`wz3-texture` evaluates Flat, Gradient, GlowRect, Merge, Color and Dots using the saved project
+`wz3-texture` evaluates Flat, Gradient, GlowRect, Merge, Color, Dots, Transform,
+TransformMul, Blur, Normals and HSCB using the saved project
 parameters, with Load/Store/Nop graph traversal. It preserves the original
 15-bit channel representation and MMX interpolation rounding in portable C++.
 The scalar interpolation is checked against an independent SSE2 instruction
@@ -45,6 +46,14 @@ and mipmap metadata; actual signed normal-map GPU upload is still pending.
 Texture generation uses the
 original default size offset of zero and a bounded 256 MiB intermediate cache.
 Unimplemented operators, animated textures and cyclic graphs fail explicitly.
+
+Transform preserves fixed-point sampling, including the historical clamp/wrap
+edge behavior. Blur retains the fractional box kernel, repeated passes, gain and
+MMX rounding; tests compare it with an independent convolution and SIMD scaling
+oracle. Normals derive from the blue channel and retain the original BGRA-to-RGBA
+channel mapping and `0xffff` alpha. Floating-point/trigonometric results still
+need comparison with original captures; arithmetic tests alone do not establish
+whole-texture fidelity.
 
 ```sh
 build/native/wz3-texture werkkzeug3/data/theta/theta_final.k tex.BWCircle /tmp/circle.ppm

@@ -2,6 +2,7 @@
 #include "wz3/texture.hpp"
 #include <iostream>
 #include <algorithm>
+#include <bit>
 #include <stdexcept>
 #if defined(__SSE2__)
 #include <emmintrin.h>
@@ -9,9 +10,11 @@
 
 void check(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
 void test_composite();
+void test_filters();
 int main() {
   try {
     test_composite();
+    test_filters();
     check(wz3::color64(0xff804020) == wz3::Pixel{16448, 8224, 4112, 32767}, "ARGB conversion");
     const auto black = wz3::color64(0xff000000), white = wz3::color64(0xffffffff);
     check(wz3::fade64(black, white, 32768) == wz3::Pixel{16382, 16382, 16382, 32764}, "MMX midpoint rounding");
@@ -49,6 +52,19 @@ int main() {
     auto texture = wz3::evaluate_texture(project, wz3::connect(project), 0);
     check(texture->width == 4 && texture->height == 2 && texture->pixels.size() == 8, "dimension exponents");
     check(texture->pixels.front() == wz3::color64(0xff804020), "flat color");
+    project.operators[0].parameters = {2, 2, 0xffffffff};
+    wz3::Operator mul;
+    mul.command = 0x36; mul.width = 1; mul.y = 1;
+    mul.parameters = {0, std::bit_cast<std::uint32_t>(1.0f), std::bit_cast<std::uint32_t>(1.0f),
+                      std::bit_cast<std::uint32_t>(0.5f), std::bit_cast<std::uint32_t>(0.5f),
+                      0, 0xff101010, 0, 2, 0xffffffff};
+    project.operators.push_back(mul);
+    texture = wz3::evaluate_texture(project, wz3::connect(project), 1);
+    check(texture->pixels[0] == wz3::Pixel{6162, 6162, 6162, 32767}, "linear TransformMul accumulation");
+    project.operators[1].parameters[7] = 16;
+    texture = wz3::evaluate_texture(project, wz3::connect(project), 1);
+    check(texture->pixels[0] == wz3::Pixel{8216, 8216, 8216, 32767}, "doubling TransformMul accumulation");
+    project.operators.pop_back();
     project.operators[0].command = 0x22;
     bool rejected = false;
     try { wz3::evaluate_texture(project, wz3::connect(project), 0); }

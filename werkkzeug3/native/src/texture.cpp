@@ -101,6 +101,32 @@ public:
         texture->mip_threshold = op.parameters[2];
       } else draw_dots(*texture, op.parameters[0], op.parameters[1], op.parameters[2], op.parameters[3]);
       cache_[id] = std::move(texture);
+    } else if (op.command == 0x2c) {
+      require(op, 8);
+      const auto source = input();
+      if (op.parameters[6] > 13 || op.parameters[7] > 13)
+        throw std::runtime_error("transform output dimensions exceed limit");
+      const auto width = op.parameters[6] ? 1u << (op.parameters[6] - 1) : source->width;
+      const auto height = op.parameters[7] ? 1u << (op.parameters[7] - 1) : source->height;
+      auto texture = allocate(width, height);
+      metadata(*texture, *source);
+      transform_bitmap(*source, *texture, number(op, 0), number(op, 1), number(op, 2),
+                       number(op, 3), number(op, 4), op.parameters[5]);
+      cache_[id] = std::move(texture);
+    } else if (op.command == 0x29 || op.command == 0x2b || op.command == 0x2e) {
+      require(op, op.command == 0x2e ? 2 : 4);
+      const auto source = input();
+      auto texture = clone(*source);
+      if (op.command == 0x29) {
+        auto scratch = allocate(source->width, source->height);
+        blur_bitmap(*texture, *scratch, op.parameters[0], number(op, 1), number(op, 2), number(op, 3));
+      } else if (op.command == 0x2b) {
+        adjust_hscb(*texture, number(op, 0), number(op, 1), number(op, 2), number(op, 3));
+      } else normal_bitmap(*source, *texture, number(op, 0), op.parameters[1]);
+      cache_[id] = std::move(texture);
+    } else if (op.command == 0x36) {
+      require(op, 10);
+      cache_[id] = transform_mul(*input(), op);
     } else if (op.command == 0x39) {
       require(op, 11);
       const auto base = input();
@@ -146,6 +172,55 @@ private:
   std::shared_ptr<Texture> clone(const Texture& source) {
     auto result = allocate(source.width, source.height);
     *result = source;
+    return result;
+  }
+  static void metadata(Texture& dest, const Texture& source) {
+    dest.format = source.format; dest.mip_count = source.mip_count; dest.mip_threshold = source.mip_threshold;
+  }
+  std::shared_ptr<Texture> transform_mul(const Texture& source, const Operator& op) {
+    auto angle = number(op, 0), sx = number(op, 1), sy = number(op, 2);
+    auto tx = number(op, 3), ty = number(op, 4);
+    const auto border = op.parameters[5], mode = op.parameters[7], count = op.parameters[8];
+    auto fade = op.parameters[9];
+    if (!count || count > 512 || (mode & 15) > 10 || mode > 31 || ((mode & 16) && count > 16))
+      throw std::runtime_error("invalid TransformMul mode/count");
+    auto base = clone(source);
+    const auto color = color64(op.parameters[6]);
+    for (auto& p : base->pixels) p = color_pixel(p, color, 0);
+    auto result = clone(*base);
+    auto scratch = allocate(source.width, source.height);
+    const auto divisor = mode & 16 ? (1u << count) - 1 : count;
+    angle /= mode & 16 ? 1u << count : count;
+    tx = (tx - 0.5) / divisor + 0.5f; ty = (ty - 0.5) / divisor + 0.5f;
+    sx = std::pow(double(std::abs(sx)), double(1.0f / divisor)) * (sx < 0 ? -1 : 1);
+    sy = std::pow(double(std::abs(sy)), double(1.0f / divisor)) * (sy < 0 ? -1 : 1);
+    for (unsigned i = 1; i <= count; ++i) {
+      if (fade != 0xffffffff) {
+        const auto color_fade = color64(fade);
+        for (auto& p : base->pixels) p = color_pixel(p, color_fade, 0);
+      }
+      if (mode & 16) {
+        if (fade != 0xffffffff) {
+          std::uint32_t next = 0;
+          for (unsigned shift = 0; shift < 32; shift += 8) {
+            const auto channel = (fade >> shift) & 255;
+            next |= ((channel * channel) >> 8) << shift;
+          }
+          fade = next;
+        }
+        transform_bitmap(*base, *scratch, angle, sx, sy, tx, ty, border);
+        for (std::size_t p = 0; p < result->pixels.size(); ++p)
+          result->pixels[p] = merge_pixel(scratch->pixels[p], result->pixels[p], mode & 15);
+        base->pixels = result->pixels;
+        angle *= 2; tx = (tx - 0.5f) * 2 + 0.5f; ty = (ty - 0.5f) * 2 + 0.5f;
+        sx *= sx; sy *= sy;
+      } else {
+        transform_bitmap(*base, *scratch, angle * i, (sx - 1) * i + 1, (sy - 1) * i + 1,
+                         (tx - 0.5) * i + 0.5, (ty - 0.5) * i + 0.5, border);
+        for (std::size_t p = 0; p < result->pixels.size(); ++p)
+          result->pixels[p] = merge_pixel(result->pixels[p], scratch->pixels[p], mode & 15);
+      }
+    }
     return result;
   }
   static void gradient(Texture& texture, const Operator& op) {

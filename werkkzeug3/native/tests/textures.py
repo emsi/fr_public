@@ -8,8 +8,10 @@ binary, project = sys.argv[1:]
 with tempfile.TemporaryDirectory() as directory:
     output = Path(directory) / "texture.ppm"
     for selector, width, height in (("263", 512, 512), ("tex.white", 1, 1),
-                                    ("tex.BWCircle", 1024, 1024), ("stars.tex", 1024, 1024)):
-        result = subprocess.run([binary, project, selector, str(output)], capture_output=True, text=True, timeout=30)
+                                    ("tex.BWCircle", 1024, 1024), ("stars.tex", 1024, 1024),
+                                    ("tex.BWCheckerBlur", 512, 512), ("bump.BoomBox", 256, 512),
+                                    ("tex.BWSquareChecker", 1024, 1024), ("tex.griddark", 512, 512)):
+        result = subprocess.run([binary, project, selector, str(output)], capture_output=True, text=True, timeout=120)
         assert result.returncode == 0, result.stderr
         data = output.read_bytes()
         header = f"P6\n{width} {height}\n255\n".encode()
@@ -18,6 +20,10 @@ with tempfile.TemporaryDirectory() as directory:
         assert len(pixels) == width * height * 3
         if selector == "tex.white":
             assert set(pixels) == {255}
+        elif selector == "bump.BoomBox":
+            assert min(pixels[0::3]) >= 128 and max(pixels[0::3]) == 255
+        elif selector == "tex.griddark":
+            assert min(pixels) == 0 and 1 < max(pixels) < 128
         else:
             assert min(pixels) == 0 and max(pixels) >= 250
         if selector == "263":
