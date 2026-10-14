@@ -600,6 +600,33 @@ shared, so this remains a source comparison, not an original executable capture.
 Tests also check knee continuity, scoped variables, separate event instances and
 a repeated-frame run through Theta's walking branch, which emits 279 instances.
 
+The recovered final 1.01 walker (operator 1207, handler `0x81f069`) has also been
+compared with the original x86 instructions. `release_walk_oracle.py` runs its
+gait scheduler, spline evaluator and vector arithmetic with the original
+`0x103f` FPU control word. Three harness hooks supply instance storage, push the
+body matrix and capture child inputs; there are no Windows APIs, graphics calls,
+application startup or game collision world. The release's saved four-foot
+parameters and step spline run along a controlled six-second trajectory at
+16, 33 and 50 ms intervals. All **680 poses** agree: maximum body-component error
+is below `0.000002`, foot-component error below `0.000008`, and gait-phase error
+below `0.000000001`. The audit accepts at most `0.0001` absolute error and records
+the executable/handler/trace hashes, hooks, ranges and per-case errors.
+
+```sh
+build/native/wz3-walk-tests --release-trace \
+  build/reference/theta/extracted/theta.wz3r build/reference/theta/walk-native.txt
+uv run --no-project --with unicorn python werkkzeug3/native/tools/release_walk_oracle.py \
+  build/reference/theta/extracted/restored-code-image.bin build/reference/theta/walk-native.txt \
+  --output build/reference/theta/walk-comparison.json
+```
+
+This is an independent executable-arithmetic comparison of a controlled path,
+not the full animation or reference capture. Different frame intervals produce
+different final foot/body poses in both implementations because the original
+advances its step scheduler after computing the visible pose. Frame cadence
+therefore remains a factor to investigate in the creature comparison; the audit
+does not justify changing the gait algorithm to fit a third-party video.
+
 The root samples at beats 448.5, 480 and 511.5 now render with diagnostic mesh
 shading and saved postprocessing. The gait port brought the root audit to 51
 samples; Print now covers the final three with an explicit font file. Cold samples do not reconstruct prior

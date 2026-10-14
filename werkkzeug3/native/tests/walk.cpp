@@ -3,6 +3,9 @@
 #include "wz3/walk.hpp"
 #include "mesh_kernel.hpp"
 #include <cfenv>
+#include <fstream>
+#include <iomanip>
+#include <limits>
 #include <iostream>
 
 namespace source {
@@ -141,8 +144,31 @@ void theta(const char* path) {
   }
   check(moved,"Theta walking animation did not change poses");std::cout<<"Theta walking branch emitted "<<count<<" instances with changing poses\n";
 }
+void release_trace(const char* project_path,const char* output_path) {
+  const auto project=wz3::read_project(project_path);check(project.runtime_graph,"release trace needs a runtime project");
+  const wz3::SplineLibrary splines(project);
+  const wz3::Operator* op=nullptr;
+  for(const auto& candidate:project.operators)if(candidate.command==0xc8) {check(!op,"ambiguous released Walk");op=&candidate;}
+  check(op && op->splines.size()==1,"missing released Walk/spline");const auto spline=splines.find(op->splines[0]);check(spline.has_value(),"missing released gait spline");
+  std::ofstream out(output_path);out<<std::setprecision(std::numeric_limits<float>::max_digits10);
+  for(int step:{16,33,50}) {
+    wz3::SceneWalk native(splines);wz3::FrameClock clock;
+    for(int ms=0;;ms=std::min(ms+step,6000)) {
+      clock.advance(ms);const auto world=path(ms);const auto pose=native.evaluate(0,op->parameters,world,clock,spline);
+      out<<step<<' '<<ms;for(float value:world)out<<' '<<value;for(float value:pose.body)out<<' '<<value;
+      for(unsigned i=0;i<pose.count;++i)for(float value:pose.feet[i])out<<' '<<value;
+      for(float value:pose.timing)out<<' '<<value;out<<'\n';
+      if(ms==6000)break;
+    }
+  }
+  check(out.good(),"cannot write release Walk trace");
+}
 }
 int main(int argc,char** argv) {
-  try {std::fesetround(FE_TONEAREST);gait_oracle();counts_and_validation();limbs_and_rotation();variables_and_instances();if(argc>1)theta(argv[1]);}
+  try {
+    std::fesetround(FE_TONEAREST);
+    if(argc==4 && std::string_view(argv[1])=="--release-trace")release_trace(argv[2],argv[3]);
+    else {gait_oracle();counts_and_validation();limbs_and_rotation();variables_and_instances();if(argc>1)theta(argv[1]);}
+  }
   catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}
 }
