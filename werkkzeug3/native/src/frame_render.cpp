@@ -1,6 +1,7 @@
 // Distributed under the BSD license in werkkzeug3/LICENSE.txt.
 #include "wz3/frame.hpp"
 #include "wz3/texture.hpp"
+#include "wz3/print.hpp"
 #include "gles.hpp"
 #include <algorithm>
 #include <iostream>
@@ -52,14 +53,16 @@ void clear(FrameClear c) {
 }
 }
 struct FrameRenderer::Impl {
-  const Project& project;const Graph& graph;gles::Context context{1,1};
+  const Project& project;const Graph& graph;TextureOptions texture_options;gles::Context context{1,1};
   struct Surface {GLuint color{},depth{},fbo{};unsigned width{},height{};};
   std::map<std::size_t,Surface> surfaces;
   std::map<std::size_t,GLuint> bitmaps;
+  std::map<std::size_t,std::shared_ptr<const Texture>> supplied_bitmaps;
+  std::map<std::size_t,std::size_t> bitmap_sizes;
   std::map<std::string,GLuint> programs;
   GLuint vao{},particle_buffer{};std::array<GLuint,4> samplers{};
   std::size_t surface_bytes{},bitmap_bytes{};
-  Impl(const Project& p,const Graph& g):project(p),graph(g) {
+  Impl(const Project& p,const Graph& g,const TextureOptions& options):project(p),graph(g),texture_options(options) {
     std::cerr<<"GL vendor: "<<glGetString(GL_VENDOR)<<"\nGL renderer: "<<glGetString(GL_RENDERER)<<"\nGL version: "<<glGetString(GL_VERSION)<<'\n';
     glGenBuffers(1,&particle_buffer);glGenVertexArrays(1,&vao);glGenSamplers(4,samplers.data());
   }
@@ -88,13 +91,15 @@ struct FrameRenderer::Impl {
     // subsequent frames/allocations retain contents until the graph clears them.
     glDisable(GL_SCISSOR_TEST);clear({3,0xff000000});
   }
-  GLuint bitmap(std::size_t id) {
-    if(auto found=bitmaps.find(id);found!=bitmaps.end())return found->second;
-    const auto t=evaluate_texture(project,graph,id);const auto pixels=rgba8(*t);
-    require(pixels.size()<=256u*1024*1024-bitmap_bytes,"frame bitmap budget exceeded");
-    GLuint texture=0;glGenTextures(1,&texture);glBindTexture(GL_TEXTURE_2D,texture);
+  GLuint bitmap(std::size_t id,std::shared_ptr<const Texture> supplied={}) {
+    const auto found=bitmaps.find(id);
+    if(found!=bitmaps.end() && (!supplied || (supplied_bitmaps.contains(id) && supplied_bitmaps.at(id)==supplied)))return found->second;
+    const auto t=supplied ? supplied : evaluate_texture(project,graph,id,texture_options);const auto pixels=rgba8(*t);
+    const auto previous=bitmap_sizes.contains(id) ? bitmap_sizes.at(id) : 0;
+    require(pixels.size()<=256u*1024*1024-(bitmap_bytes-previous),"frame bitmap budget exceeded");
+    GLuint texture=0;if(found!=bitmaps.end())texture=found->second;else glGenTextures(1,&texture);glBindTexture(GL_TEXTURE_2D,texture);
     glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,t->width,t->height,0,GL_RGBA,GL_UNSIGNED_BYTE,pixels.data());glGenerateMipmap(GL_TEXTURE_2D);
-    bitmap_bytes+=pixels.size();bitmaps.emplace(id,texture);return texture;
+    bitmap_bytes=bitmap_bytes-previous+pixels.size();bitmap_sizes[id]=pixels.size();bitmaps[id]=texture;if(supplied)supplied_bitmaps[id]=std::move(supplied);return texture;
   }
   GLuint program(const MaterialShader& s,bool particle) {
     const auto source=material_fragment_shader(s);const auto key=(particle ? "particle:" : "quad:")+source;if(auto found=programs.find(key);found!=programs.end())return found->second;
@@ -123,7 +128,7 @@ struct FrameRenderer::Impl {
       if(binding.surface) {
         require(binding.id!=destination,"render target feedback is not supported");
         require(surfaces.contains(binding.id),"missing sampled frame surface");texture=surfaces.at(binding.id).color;flip[i]=1;
-      } else texture=bitmap(binding.id);
+      } else texture=bitmap(binding.id,(effect && effect->textures.contains(binding.id)) ? effect->textures.at(binding.id) : nullptr);
       glBindTexture(GL_TEXTURE_2D,texture);const auto tf=s.words[4+i],filter=tf&7,sampler=samplers[i];
       constexpr GLint min_filter[]={GL_NEAREST,GL_LINEAR,GL_LINEAR_MIPMAP_LINEAR,GL_LINEAR_MIPMAP_LINEAR,GL_NEAREST_MIPMAP_NEAREST,GL_LINEAR_MIPMAP_NEAREST,GL_NEAREST,GL_NEAREST};
       glSamplerParameteri(sampler,GL_TEXTURE_MIN_FILTER,min_filter[filter]);glSamplerParameteri(sampler,GL_TEXTURE_MAG_FILTER,(filter==1 || filter==2 || filter==3 || filter==5) ? GL_LINEAR : GL_NEAREST);
@@ -148,7 +153,7 @@ struct FrameRenderer::Impl {
     }
     if(!effect)glDrawArrays(GL_TRIANGLE_STRIP,0,4);
     else {
-      require(projection && effect->vertices.size()%4==0 && effect->vertices.size()<=65536*4,"invalid particle geometry");
+      require(projection && effect->vertices.size()%4==0 && effect->vertices.size()<=65536*4,"invalid effect geometry");
       std::vector<SceneEffectVertex> triangles;triangles.reserve(effect->vertices.size()/4*6);
       for(std::size_t base=0;base<effect->vertices.size();base+=4)for(unsigned i:{0u,1u,2u,0u,2u,3u})triangles.push_back(effect->vertices[base+i]);
       glUniformMatrix4fv(glGetUniformLocation(p,"view_projection"),1,GL_FALSE,projection->data());
@@ -160,13 +165,15 @@ struct FrameRenderer::Impl {
       glDrawArrays(GL_TRIANGLES,0,GLsizei(triangles.size()));
     }
   }
-  void particles(const SceneFrame& scene,const FrameTarget& target) {
+  void effects(const SceneFrame& scene,const FrameTarget& target) {
     const auto projection=scene_view_projection(scene.camera,target.width,target.height);
     for(const auto& effect:scene.effects) {
       if(effect.vertices.empty())continue;
       FrameQuad q;q.shader=effect.shader;
       for(unsigned slot=0;slot<4;++slot)if(q.shader.textures[slot]) {
-        auto id=*q.shader.textures[slot];bool resolved=false;
+        auto id=*q.shader.textures[slot];
+        if(effect.textures.contains(id)) {q.textures[slot]=FrameTexture{false,id};continue;}
+        bool resolved=false;
         for(unsigned depth=0;depth<512;++depth) {
           require(id<project.operators.size() && graph.nodes[id].active,"invalid effect texture");const auto cmd=project.operators[id].command;
           if(cmd==1) {require(graph.nodes[id].links.size()==1 && graph.nodes[id].links[0],"unresolved effect texture Load");id=*graph.nodes[id].links[0];}
@@ -176,12 +183,13 @@ struct FrameRenderer::Impl {
         require(resolved,"effect texture alias depth limit");
         q.textures[slot]=project.operators[id].command==0x26 ? FrameTexture{true,13+id} : FrameTexture{false,id};
       }
-      quad(q,target.surface,&effect,&projection);
+      const auto matrix=effect.normalized ? print_normalized_projection(target.width,target.height) : projection;
+      quad(q,target.surface,&effect,&matrix);
     }
   }
 
 };
-FrameRenderer::FrameRenderer(const Project& p,const Graph& g):impl(std::make_unique<Impl>(p,g)) {}
+FrameRenderer::FrameRenderer(const Project& p,const Graph& g,const TextureOptions& options):impl(std::make_unique<Impl>(p,g,options)) {}
 FrameRenderer::~FrameRenderer()=default;
 std::vector<std::uint8_t> FrameRenderer::render(const DemoFrame& frame,bool diagnostic) {
   if(!diagnostic)for(const auto& c:frame.commands)if(std::holds_alternative<SceneFrame>(c.draw))
@@ -197,7 +205,7 @@ std::vector<std::uint8_t> FrameRenderer::render(const DemoFrame& frame,bool diag
     try {
       if(const auto* q=std::get_if<FrameQuad>(&c.draw))s.quad(*q,c.target.surface);
       else if(const auto* cl=std::get_if<FrameClear>(&c.draw))clear(*cl);
-      else {const auto& scene=std::get<SceneFrame>(c.draw);clear({scene.viewport_flags&3,scene.background});if(!scene.instances.empty())draw_scene_geometry(scene,c.target.width,c.target.height);s.particles(scene,c.target);}
+      else {const auto& scene=std::get<SceneFrame>(c.draw);clear({scene.viewport_flags&3,scene.background});if(!scene.instances.empty())draw_scene_geometry(scene,c.target.width,c.target.height);s.effects(scene,c.target);}
       require(glGetError()==GL_NO_ERROR,"frame draw produced an OpenGL error");
     }catch(const std::exception& e) {throw std::runtime_error("operator "+std::to_string(c.operator_id)+": "+e.what());}
   }

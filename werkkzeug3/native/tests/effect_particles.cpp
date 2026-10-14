@@ -112,6 +112,11 @@ void deferred_events() {
   const auto later=x.material(0xffffffff,0x2200);x.p.operators[later].parameters[49]=2;x.g.nodes[b].links[0]=later;
   wz3::FramePlayer ordered(x.p,x.g);const auto different=ordered.frame(root,0,32,32,10);const auto& sorted=std::get<wz3::SceneFrame>(different.commands[0].draw);
   check(sorted.effects[0].operator_id==a && sorted.effects[1].operator_id==b && sorted.effects[0].sort_key<sorted.effects[1].sort_key,"effect pass sort must override insertion order");
+  x.p.operators[later].parameters[49]=std::bit_cast<std::uint32_t>(-3);
+  const auto adjusted=x.add(0x180,{5},{x.add(0xc1,{}, {b})});x.g.nodes[scene].inputs.back()=adjusted;
+  wz3::FramePlayer offset(x.p,x.g);const auto adjusted_frame=offset.frame(root,0,32,32,10);
+  const auto& draws=std::get<wz3::SceneFrame>(adjusted_frame.commands[0].draw).effects;
+  check(draws[1].sort_key>>24==2,"effect pass must add adjustment before clamping signed initial pass");
 }
 void theta(const char* path) {
   const auto p=wz3::read_project(path);const auto g=wz3::connect(p);wz3::FramePlayer player(p,g);wz3::DemoFrame frame;

@@ -35,7 +35,7 @@ class FramePlayer {
   struct Impl;
   std::unique_ptr<Impl> impl;
 public:
-  FramePlayer(const Project&,const Graph&);
+  FramePlayer(const Project&,const Graph&,const TextureOptions& = {});
   ~FramePlayer();
   FramePlayer(const FramePlayer&)=delete;
   FramePlayer& operator=(const FramePlayer&)=delete;
@@ -51,7 +51,7 @@ class FrameRenderer {
   struct Impl;
   std::unique_ptr<Impl> impl;
 public:
-  FrameRenderer(const Project&,const Graph&);
+  FrameRenderer(const Project&,const Graph&,const TextureOptions& = {});
   ~FrameRenderer();
   std::vector<std::uint8_t> render(const DemoFrame&,bool diagnostic_geometry=false);
 };

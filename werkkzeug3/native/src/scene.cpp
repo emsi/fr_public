@@ -5,6 +5,7 @@
 #include "wz3/particles.hpp"
 #include "wz3/effect_particles.hpp"
 #include "wz3/walk.hpp"
+#include "wz3/print.hpp"
 #include "particle_random.hpp"
 #include "mesh_kernel.hpp"
 #include <bit>
@@ -67,7 +68,11 @@ struct ScenePlayer::Impl {
   SceneParticles particles;EffectParticles effects;FrameClock clock;SceneWalk walker;
   struct EffectJob {std::size_t id;SceneMatrix world;std::array<AnimationVector,32> variables;std::uint32_t key;};
   std::vector<EffectJob> jobs;
-  std::map<std::size_t,std::int32_t> effect_passes;
+  struct EffectOrder {std::int32_t pass{};unsigned usage=7;};
+  std::map<std::size_t,EffectOrder> effect_order;
+  TextureOptions texture_options;
+  std::map<std::size_t,std::shared_ptr<const Texture>> print_textures;
+  std::size_t texture_bytes{};
   std::map<std::uint64_t,std::vector<std::pair<std::size_t,std::size_t>>> instances;
   std::size_t instance_count{};
   std::vector<bool> prepared;
@@ -75,7 +80,7 @@ struct ScenePlayer::Impl {
   std::vector<std::shared_ptr<const Mesh>> meshes;
   std::vector<bool> visiting;
   std::size_t mesh_bytes{};
-  Impl(const Project& p,const Graph& g):project(p),graph(g),splines(p),materials(p,g),particles(splines,random),effects(random),walker(splines),prepared(p.operators.size()),programs(p.operators.size()),meshes(programs.size()),visiting(programs.size()) {
+  Impl(const Project& p,const Graph& g,const TextureOptions& options):project(p),graph(g),splines(p),materials(p,g),particles(splines,random),effects(random),walker(splines),texture_options(options),prepared(p.operators.size()),programs(p.operators.size()),meshes(programs.size()),visiting(programs.size()) {
     require(graph.nodes.size()==project.operators.size(),"scene graph size mismatch");
   }
   void valid(std::size_t id) const {require(id<programs.size() && graph.nodes[id].active,"invalid or inactive scene operator");}
@@ -111,11 +116,17 @@ struct ScenePlayer::Impl {
     const auto [owner,token]=chain[cursor.next++];require(owner==id,"particle instance chain changed operator order");return token;
   }
   void prepare_effect(std::size_t id,std::span<const std::uint32_t> p) {
-    valid(id);if(project.operators[id].command!=0x64 || effect_passes.contains(id))return;
-    require(p.size()==12 && graph.nodes[id].inputs.empty() && graph.nodes[id].links.size()==1,"unsupported PartSystem layout");
-    std::int32_t pass=0;
-    if(const auto material=graph.nodes[id].links[0]) {const auto m=materials.snapshot(*material);if(!m.passes.empty())pass=m.passes[0].render_pass;}
-    effects.initialize(p[0],p[1]);effect_passes.emplace(id,pass);
+    valid(id);const auto cmd=project.operators[id].command;if((cmd!=0x64 && cmd!=0x61) || effect_order.contains(id))return;
+    require((cmd==0x64 ? p.size()==12 : (p.size()==5 || p.size()==6)) && graph.nodes[id].inputs.empty() && graph.nodes[id].links.size()==1,"unsupported particle/Print effect layout");
+    std::int32_t pass=0;unsigned usage=7;
+    if(const auto material=graph.nodes[id].links[0]) {const auto m=materials.snapshot(*material);if(!m.passes.empty()) {pass=m.passes[0].render_pass;if(cmd==0x61)usage=unsigned(m.passes[0].usage);}}
+    if(cmd==0x64)effects.initialize(p[0],p[1]);
+    effect_order.emplace(id,EffectOrder{pass,usage});
+  }
+  std::shared_ptr<const Texture> print_texture(std::size_t id) {
+    if(auto found=print_textures.find(id);found!=print_textures.end())return found->second;
+    auto texture=evaluate_texture(project,graph,id,texture_options);const auto bytes=texture->pixels.size()*sizeof(Pixel);
+    require(bytes<=64u*1024*1024-texture_bytes,"Print texture cache limit");texture_bytes+=bytes;print_textures.emplace(id,texture);return texture;
   }
   void prepare(std::size_t id,AnimationEnvironment& env,unsigned depth=0) {
     valid(id);if(prepared[id])return;require(depth<512,"scene preparation depth limit");
@@ -133,12 +144,27 @@ struct ScenePlayer::Impl {
     valid(id);require(depth<512,"effect alias depth limit");Visit visit(visiting,id);
     const auto& op=project.operators[id];const auto& node=graph.nodes[id];const AnimationScope scope(program(id),splines,op.parameters,env);
     if(op.command>=1 && op.command<=3) {effect(alias(id),env,world,frame,key,depth+1);return;}
-    require(op.command==0x64,"effect alias execution is not ported");
+    require(op.command==0x64 || op.command==0x61,"effect alias execution is not ported");
     // The handler reads its first cached material pass; it does not execute the
     // material link. Later MatHack operations have already run at this point.
     if(node.links[0]) {const auto material=materials.snapshot(*node.links[0]);if(!material.passes.empty()) {
-      auto vertices=effects.draw(scope.parameters,frame.camera,world,clock);
-      frame.effects.push_back({id,key,material.passes[0].shader,std::move(vertices)});
+      SceneEffectDraw draw;draw.operator_id=id;draw.sort_key=key;draw.shader=material.passes[0].shader;
+      if(op.command==0x64)draw.vertices=effects.draw(scope.parameters,frame.camera,world,clock);
+      else {
+        require(op.strings.size()==1,"Print needs one text string");
+        const auto page=(scope.parameters[0]>>4)&7;require(page!=0,"Print built-in font page zero is not ported");
+        std::shared_ptr<const FontAtlas> atlas;
+        // Theta stores its only font page in this material's texture recipe.
+        // Ambiguous pages fail rather than depending on incidental map order.
+        for(auto texture:draw.shader.textures)if(texture) {
+          const auto bitmap=print_texture(*texture);draw.textures.emplace(*texture,bitmap);
+          if(bitmap->fonts[page]) {require(!atlas || atlas==bitmap->fonts[page],"ambiguous Print font page");atlas=bitmap->fonts[page];}
+        }
+        require(atlas!=nullptr,"Print material has no matching font atlas page");
+        auto layout=layout_print(scope.parameters,op.strings[0],atlas->glyphs);draw.normalized=layout.normalized;draw.vertices=std::move(layout.vertices);
+        if(!draw.normalized)for(auto& vertex:draw.vertices)vertex.position=scene_point(world,vertex.position);
+      }
+      frame.effects.push_back(std::move(draw));
     }}
   }
   template<class F> void dispatch(std::size_t id,std::span<const std::uint32_t> p,AnimationEnvironment& env,
@@ -165,10 +191,10 @@ struct ScenePlayer::Impl {
       frame.instances.push_back({id,geometry(target),world,env.variables[0][0],pass});return;
     }
     if(operator_info(project.operators[target].command).category=="EFFECT") {
-      if(project.operators[target].command!=0x64)throw std::runtime_error("scene effect "+std::to_string(target)+" ("+std::string(operator_info(project.operators[target].command).name)+") is not ported");
+      if((project.operators[target].command!=0x64 && project.operators[target].command!=0x61))throw std::runtime_error("scene effect "+std::to_string(target)+" ("+std::string(operator_info(project.operators[target].command).name)+") is not ported");
       require(jobs.size()<65536,"effect job limit");
-      const auto render_pass=std::clamp(std::int64_t(effect_passes.at(target))+pass,std::int64_t(0),std::int64_t(255));
-      jobs.push_back({id,world,env.variables,(std::uint32_t(render_pass)<<24)|(7u<<16)});return;
+      const auto key=effect_order.at(target);const auto render_pass=std::clamp(std::int64_t(key.pass)+pass,std::int64_t(0),std::int64_t(255));
+      jobs.push_back({id,world,env.variables,(std::uint32_t(render_pass)<<24)|(key.usage<<16)});return;
     }
     const auto& op=project.operators[id];const auto& node=graph.nodes[id];
     const AnimationScope animation(program(id),splines,op.parameters,env);const auto& p=animation.parameters;
@@ -291,7 +317,7 @@ struct ScenePlayer::Impl {
     else throw std::runtime_error("event viewport path contains unsupported operator "+std::to_string(id)+" ("+std::string(operator_info(op.command).name)+")");
   }
 };
-ScenePlayer::ScenePlayer(const Project& p,const Graph& g):impl(std::make_unique<Impl>(p,g)) {}
+ScenePlayer::ScenePlayer(const Project& p,const Graph& g,const TextureOptions& options):impl(std::make_unique<Impl>(p,g,options)) {}
 ScenePlayer::~ScenePlayer()=default;
 MaterialRuntime& ScenePlayer::materials() {return impl->materials;}
 void ScenePlayer::begin_frame(std::int32_t milliseconds) {impl->clock.advance(milliseconds);}
@@ -335,7 +361,7 @@ void write_scene(const std::filesystem::path& path,const SceneFrame& frame) {
     out<<",\"direction\":";array(v.direction);out<<",\"flags\":"<<v.flags<<",\"color\":"<<v.color<<",\"amplify\":"<<v.amplify<<",\"range\":"<<v.range<<'}';
   }
   out<<"],\"effects\":[";
-  for(std::size_t i=0;i<frame.effects.size();++i) {const auto& e=frame.effects[i];out<<(i ? "," : "")<<"{\"operator\":"<<e.operator_id<<",\"sort_key\":"<<e.sort_key<<",\"particles\":"<<e.vertices.size()/4<<'}';}
+  for(std::size_t i=0;i<frame.effects.size();++i) {const auto& e=frame.effects[i];out<<(i ? "," : "")<<"{\"operator\":"<<e.operator_id<<",\"sort_key\":"<<e.sort_key<<",\"quads\":"<<e.vertices.size()/4<<'}';}
   out<<"],\"materials\":{";bool first_material=true;
   for(const auto& [id,material]:frame.materials) {out<<(first_material ? "" : ",")<<'\"'<<id<<"\":";write_material(out,material);first_material=false;}
   out<<"}}\n";require(bool(out),"cannot write scene output");

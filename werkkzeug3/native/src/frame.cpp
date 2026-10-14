@@ -32,7 +32,7 @@ struct FramePlayer::Impl {
   std::array<Target,13> pool;
   std::optional<unsigned> last;
   std::size_t master{};DemoFrame result;
-  Impl(const Project& p,const Graph& g):project(p),graph(g),splines(p),scenes(p,g),timeline(p,g),
+  Impl(const Project& p,const Graph& g,const TextureOptions& options):project(p),graph(g),splines(p),scenes(p,g,options),timeline(p,g),
       programs(p.operators.size()),previous(programs.size()),visiting(programs.size()),prepared(programs.size()),outputs(programs.size()) {
     require(g.nodes.size()==programs.size(),"frame graph size mismatch");
     for(const auto& node:g.nodes)if(node.active) {
@@ -247,7 +247,7 @@ struct FramePlayer::Impl {
     }
   }
 };
-FramePlayer::FramePlayer(const Project& p,const Graph& g):impl(std::make_unique<Impl>(p,g)) {}
+FramePlayer::FramePlayer(const Project& p,const Graph& g,const TextureOptions& options):impl(std::make_unique<Impl>(p,g,options)) {}
 FramePlayer::~FramePlayer()=default;
 DemoFrame FramePlayer::frame(std::size_t root,std::int32_t beat,unsigned width,unsigned height,std::optional<std::int32_t> milliseconds) {
   require(width && height && width<=4096 && height<=4096,"invalid frame dimensions");auto& s=*impl;
@@ -268,7 +268,7 @@ void write_frame(std::ostream& out,const DemoFrame& f) {
     out<<(first ? "" : ",")<<"{\"operator\":"<<c.operator_id<<",\"target\":"<<c.target.surface<<",\"viewport\":["<<c.target.width<<','<<c.target.height<<']';first=false;
     if(const auto* scene=std::get_if<SceneFrame>(&c.draw)) {
       std::size_t particles=0;for(const auto& effect:scene->effects)particles+=effect.vertices.size()/4;
-      out<<",\"kind\":\"scene\",\"instances\":"<<scene->instances.size()<<",\"lights\":"<<scene->lights.size()<<",\"effect_draws\":"<<scene->effects.size()<<",\"effect_particles\":"<<particles;
+      out<<",\"kind\":\"scene\",\"instances\":"<<scene->instances.size()<<",\"lights\":"<<scene->lights.size()<<",\"effect_draws\":"<<scene->effects.size()<<",\"effect_quads\":"<<particles;
     }
     else if(const auto* clear=std::get_if<FrameClear>(&c.draw))out<<",\"kind\":\"clear\",\"flags\":"<<clear->flags<<",\"color\":"<<clear->color;
     else {

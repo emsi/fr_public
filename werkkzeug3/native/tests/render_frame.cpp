@@ -70,6 +70,25 @@ void particle_materials() {
   frame.commands.insert(frame.commands.begin(),{root,frame.commands[0].target,front});
   const auto occluded=renderer.render(frame,true);pixel(occluded,64,32,32,{0,0,0});
 }
+void credits(const char* path,const char* font) {
+  const auto p=wz3::read_project(path);const auto g=wz3::connect(p);const wz3::TextureOptions options{font};
+  wz3::FramePlayer player(p,g,options);wz3::FrameRenderer renderer(p,g,options);
+  for(int beat:{514,552,590}) {
+    auto frame=player.frame(g.names.at("root"),beat*65536,320,240);const auto text=renderer.render(frame,true);bool found=false;
+    for(auto& command:frame.commands)if(auto* scene=std::get_if<wz3::SceneFrame>(&command.draw))for(auto& effect:scene->effects)if(effect.operator_id==1774) {effect.vertices.clear();found=true;}
+    check(found,"credits GPU test did not find Print");const auto background=renderer.render(frame,true);unsigned changed=0;
+    for(std::size_t i=0;i<text.size();i+=4)changed+=text[i]!=background[i] || text[i+1]!=background[i+1] || text[i+2]!=background[i+2];
+    // At beat 514 the entering text is almost entirely behind the bottom bar.
+    if(beat!=514)check(changed>100,"credits text did not contribute visible pixels");std::cout<<"Theta credits at "<<beat<<": "<<changed<<" glyph pixels\n";
+  }
+}
+void normalized_effect() {
+  FrameFixture fixture;wz3::FrameRenderer renderer(fixture.p,fixture.g);wz3::DemoFrame frame;frame.width=frame.height=64;frame.surfaces[0]={64,64};
+  wz3::SceneFrame scene;scene.viewport_flags=3;wz3::SceneEffectDraw text;text.normalized=true;text.shader.words[0]=0x20000;text.shader.words[9]=0x10;text.shader.words[28]=0xffff0000;
+  for(unsigned i=0;i<4;++i)text.shader.words[24+i]=f(1);text.shader.words[34]=text.shader.words[35]=text.shader.words[36]=text.shader.words[43]=text.shader.words[44]=f(1);
+  text.vertices={{{.25f,-.25f,0},{0,0},0xffffffff},{{.75f,-.25f,0},{1,0},0xffffffff},{{.75f,-.75f,0},{1,1},0xffffffff},{{.25f,-.75f,0},{0,1},0xffffffff}};
+  scene.effects.push_back(text);frame.commands.push_back({0,{0,64,64},scene});const auto pixels=renderer.render(frame,true);pixel(pixels,64,16,16,{255,0,0});pixel(pixels,64,32,32,{0,0,0});
+}
 void theta(const char* path) {
   const auto p=wz3::read_project(path);const auto g=wz3::connect(p);wz3::FramePlayer player(p,g);wz3::FrameRenderer renderer(p,g);
   for(int beat:{56,72,96,120,144,184,216,256,384,448,480,511}) {
@@ -82,6 +101,6 @@ void theta(const char* path) {
 }
 }
 int main(int argc,char** argv) {
-  try {layers();targets();blur_and_merge();crashzoom_and_merge();scene_opt_in();particle_materials();if(argc>1)theta(argv[1]);}
+  try {layers();targets();blur_and_merge();crashzoom_and_merge();scene_opt_in();particle_materials();normalized_effect();if(argc>1)theta(argv[1]);if(argc>2)credits(argv[1],argv[2]);}
   catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}
 }

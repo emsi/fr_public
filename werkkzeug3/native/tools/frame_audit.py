@@ -18,6 +18,7 @@ def main():
     parser.add_argument("--project", type=Path, default=root / "werkkzeug3/data/theta/theta_final.k")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--beats", type=float, nargs="+", help="explicit sample beats instead of event midpoints")
+    parser.add_argument("--font-file", type=Path, help="explicit font for uncached credits atlas")
     parser.add_argument("--expect-evaluated", type=int)
     parser.add_argument("--expect-rendered", type=int)
     args = parser.parse_args()
@@ -53,7 +54,8 @@ def main():
         for artifact in (snapshot, ppm, png):
             artifact.unlink(missing_ok=True)
         command = [args.project, "root", str(beat)]
-        run = subprocess.run([args.exporter, *command, snapshot], capture_output=True, text=True, timeout=180)
+        options = ["--font-file", str(args.font_file)] if args.font_file else []
+        run = subprocess.run([args.exporter, *command, snapshot, *options], capture_output=True, text=True, timeout=180)
         record = dict(beat=beat, events=events, evaluated=run.returncode == 0, exit_code=run.returncode, stdout=run.stdout, stderr=run.stderr)
         body = f'<pre>{html.escape(run.stdout if record["evaluated"] else run.stderr)}</pre>'
         if record["evaluated"]:
@@ -62,7 +64,7 @@ def main():
                           sha256=hashlib.sha256(snapshot.read_bytes()).hexdigest())
             body += f'<a href="{snapshot.name}">Ordered draw commands</a>'
             if args.renderer:
-                render = subprocess.run([args.renderer, *command, ppm, "--diagnostic-geometry"], capture_output=True, text=True, timeout=180)
+                render = subprocess.run([args.renderer, *command, ppm, "--diagnostic-geometry", *options], capture_output=True, text=True, timeout=180)
                 record["render"] = dict(exit_code=render.returncode, stdout=render.stdout, stderr=render.stderr)
                 if render.returncode == 0:
                     width, height = write_png(ppm.read_bytes(), png)
@@ -77,8 +79,10 @@ def main():
     rendered = sum("image" in record for record in records)
     report = dict(project=str(args.project.resolve()), project_sha256=hashlib.sha256(args.project.read_bytes()).hexdigest(),
                   scope="full demo root; independent samples from fresh players, no audio clock or continuous playback",
-                  rendering="diagnostic scene geometry with saved particle, IPP and Layer2D materials",
+                  rendering="diagnostic scene geometry with saved particle, Print, IPP and Layer2D materials",
                   evaluated=evaluated, rendered=rendered, samples=records)
+    if args.font_file:
+        report["font"] = dict(file=str(args.font_file.resolve()), sha256=hashlib.sha256(args.font_file.read_bytes()).hexdigest(), original_gdi_fidelity=False)
     (args.output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     (args.output / "index.html").write_text(
         '<!doctype html><meta charset="utf-8"><title>Native Theta root compositor</title>'

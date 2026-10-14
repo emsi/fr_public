@@ -14,10 +14,10 @@ endif()
 
 add_library(wz3_project src/project.cpp src/graph.cpp src/texture.cpp src/bitmap_composite.cpp
   src/bitmap_filters.cpp src/bitmap_text.cpp src/font.cpp src/jpeg_decode.c src/mesh.cpp src/mesh_topology.cpp
-  src/mesh_kernel.cpp src/mesh_evaluate.cpp src/mesh_noise.cpp src/mesh_displace.cpp src/animation.cpp src/timeline.cpp src/material.cpp src/material_shader.cpp src/scene.cpp src/frame.cpp src/particles.cpp src/effect_particles.cpp src/walk.cpp)
+  src/mesh_kernel.cpp src/mesh_evaluate.cpp src/mesh_noise.cpp src/mesh_displace.cpp src/animation.cpp src/timeline.cpp src/material.cpp src/material_shader.cpp src/scene.cpp src/frame.cpp src/particles.cpp src/effect_particles.cpp src/walk.cpp src/print.cpp)
 # Mesh Perlin uses downward rounding; animation uses nearest-even. Preserve
 # their scalar operation boundaries and explicit floating-point environments.
-set_source_files_properties(src/mesh_kernel.cpp src/mesh_noise.cpp src/animation.cpp src/timeline.cpp src/material_shader.cpp src/scene.cpp src/frame.cpp src/particles.cpp src/effect_particles.cpp src/walk.cpp PROPERTIES
+set_source_files_properties(src/mesh_kernel.cpp src/mesh_noise.cpp src/animation.cpp src/timeline.cpp src/material_shader.cpp src/scene.cpp src/frame.cpp src/particles.cpp src/effect_particles.cpp src/walk.cpp src/print.cpp PROPERTIES
   COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
 target_link_libraries(wz3_project PRIVATE JPEG::JPEG Freetype::Freetype)
 target_include_directories(wz3_project PUBLIC include PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
@@ -94,6 +94,16 @@ endif()
 
 if(BUILD_TESTING)
   add_custom_command(
+    OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/print_oracle.inc"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/print_oracle.py"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../geneffect.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/print_oracle.inc"
+    DEPENDS tools/print_oracle.py tools/particles_oracle.py ../geneffect.cpp VERBATIM)
+  add_executable(wz3-print-tests tests/print.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/print_oracle.inc")
+  target_include_directories(wz3-print-tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_compile_options(wz3-print-tests PRIVATE -frounding-math -ffp-contract=off)
+  target_link_libraries(wz3-print-tests PRIVATE wz3_project)
+  add_test(NAME print_layout COMMAND wz3-print-tests)
+  add_custom_command(
     OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/walk_oracle.inc"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/walk_oracle.py"
             "${CMAKE_CURRENT_SOURCE_DIR}/../genscene.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/walk_oracle.inc"
@@ -128,6 +138,8 @@ if(BUILD_TESTING)
   find_file(WZ3_TEST_FONT_FILE NAMES DejaVuSans.ttf PATHS /usr/share/fonts/truetype/dejavu
     DOC "Font used for native atlas tests (override with an explicit TTF path)")
   if(WZ3_TEST_FONT_FILE)
+    add_test(NAME theta_print COMMAND wz3-print-tests
+      "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta/theta_final.k" "${WZ3_TEST_FONT_FILE}")
     add_executable(wz3-font-tests tests/font.cpp)
     target_link_libraries(wz3-font-tests PRIVATE wz3_project)
     add_test(NAME theta_font_atlas COMMAND wz3-font-tests
@@ -138,8 +150,11 @@ if(BUILD_TESTING)
   if(WZ3_TEST_GRAPHICS)
     add_executable(wz3-frame-render-tests tests/render_frame.cpp src/frame_render.cpp src/render.cpp)
     target_link_libraries(wz3-frame-render-tests PRIVATE wz3_project PkgConfig::EGL PkgConfig::GLES)
-    add_test(NAME gpu_frame_compositor COMMAND wz3-frame-render-tests
-      "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta/theta_final.k")
+    set(WZ3_FRAME_TEST_ARGS "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta/theta_final.k")
+    if(WZ3_TEST_FONT_FILE)
+      list(APPEND WZ3_FRAME_TEST_ARGS "${WZ3_TEST_FONT_FILE}")
+    endif()
+    add_test(NAME gpu_frame_compositor COMMAND wz3-frame-render-tests ${WZ3_FRAME_TEST_ARGS})
     set_tests_properties(gpu_frame_compositor PROPERTIES LABELS graphics)
     add_test(NAME gpu_theta_gradient COMMAND wz3-render
       "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta/theta_final.k" 263

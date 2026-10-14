@@ -83,6 +83,10 @@ void generate_font_atlas(Texture& texture, const FontLayout& layout, const std::
   int major, minor, patch;
   FT_Library_Version(font.library, &major, &minor, &patch);
   atlas->rasterizer = "FreeType " + std::to_string(major) + "." + std::to_string(minor) + "." + std::to_string(patch);
+  // The original final metric loop covers all 256 entries, including characters
+  // absent from the requested set. Those entries retain zero glyph dimensions
+  // but still receive the common line height and inner spacing.
+  for(auto& glyph:atlas->glyphs)glyph={{0,0,float(inner*2)/xs,float(line_height+inner*2)/ys},-float(inner)/xs,float(inner*2)/xs,false};
   std::vector<std::uint8_t> mask(std::size_t(xs) * ys);
   const auto spacing = (layout.outer_spacing + 2) * 4;
   int xp = left + spacing, yp = top + spacing;

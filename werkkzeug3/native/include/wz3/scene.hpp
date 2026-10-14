@@ -4,6 +4,7 @@
 #include "wz3/mesh.hpp"
 #include "wz3/timeline.hpp"
 #include "wz3/material.hpp"
+#include "wz3/texture.hpp"
 
 namespace wz3 {
 // Column-major matrices. combine(parent,local) applies local first.
@@ -43,6 +44,9 @@ struct SceneEffectDraw {
   MaterialShader shader;
   // Four vertices per source quad, in perimeter order.
   std::vector<SceneEffectVertex> vertices;
+  bool normalized{};
+  // Retain font pixels with the metrics that generated the glyph geometry.
+  std::map<std::size_t,std::shared_ptr<const Texture>> textures;
 };
 struct SceneFrame {
   std::size_t viewport_id{},visited_operators{};
@@ -59,7 +63,7 @@ class ScenePlayer {
   struct Impl;
   std::unique_ptr<Impl> impl;
 public:
-  ScenePlayer(const Project&,const Graph&); // References must outlive the player.
+  ScenePlayer(const Project&,const Graph&,const TextureOptions& = {}); // References must outlive the player.
   ~ScenePlayer();
   ScenePlayer(const ScenePlayer&)=delete;
   ScenePlayer& operator=(const ScenePlayer&)=delete;

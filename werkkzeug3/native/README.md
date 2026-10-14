@@ -5,9 +5,11 @@ fr-038. It does not yet play the demo. The original Windows sources and Theta
 assets remain the reference; no Wine or Windows SDK is needed for these targets.
 
 The native frame runner now executes the demo root's animation, events and image
-compositing. Twenty-eight of 54 sampled timeline positions render with diagnostic
-scene geometry and the saved overlays/effects. Full scene materials, particle effects,
-audio synchronization and visual comparison remain unfinished.
+compositing. All 54 sampled timeline positions render with diagnostic scene
+geometry and saved particle, text, overlay and image effects when an explicit
+font file is supplied. A 2,601-frame CPU run also traverses the timeline through
+the credits. Full scene materials, lighting/shadows, audio synchronization and
+comparison with original output remain unfinished.
 
 The first target, `wz3-inspect`, reads the complete version-13 Theta projects
 directly, including operator parameters, animation records, timeline events,
@@ -385,7 +387,7 @@ Windows executable capture.
 Four additional root midpoint scenes now emit 333 instances at beat 96, 185 at
 120, 645 at 184 and 754 at 256. They render through the native compositor on
 Radeon and llvmpipe using diagnostic geometry shading. A full audit renders
-51 of 54 root samples after the emitter and gait ports; the remaining failures are Print.
+all 54 root samples after the emitter, gait and Print ports (with an explicit font file).
 
 ```sh
 build/native/wz3-frame-render werkkzeug3/data/theta/theta_final.k root 96 \
@@ -438,8 +440,8 @@ Tests also check knee continuity, scoped variables, separate event instances and
 a repeated-frame run through Theta's walking branch, which emits 279 instances.
 
 The root samples at beats 448.5, 480 and 511.5 now render with diagnostic mesh
-shading and saved postprocessing. The complete root audit reaches **51 of 54**
-samples; the remaining three stop at Print. Cold samples do not reconstruct prior
+shading and saved postprocessing. The gait port brought the root audit to 51
+samples; Print now covers the final three with an explicit font file. Cold samples do not reconstruct prior
 steps; use `--preroll-ms` for accumulated animation from the start.
 
 ```sh
@@ -510,6 +512,58 @@ right-to-left evaluation, inferred from the original x86 compiler; exact seed an
 argument-order fidelity still need reference captures. Precalculation RNG draws,
 legacy texture formats, full scene material rendering and audio timing remain
 separate fidelity work.
+
+## Credits and Print
+
+The credits `Print` operator (1774) now emits its 215 glyph quads through the
+native compositor. The port retains glyph bearings and advances, line/blank-line
+spacing, left/center/right alignment, `%|` alignment markers, vertical centering,
+optional cylindrical curvature and the 4,096-quad source limit. The six-word
+layout follows the archived handler; literal text and normalized debug projection
+are supported. Game/FPS substitutions, built-in page zero and font pages sourced
+outside the material's texture graph remain explicit unsupported cases.
+
+Theta's five-word Print record predates the Radius parameter. Radius defaults to
+zero. It also sets bit 0, which the archived newer handler ignores while using
+bits 8..9 for horizontal alignment. Native loading interprets that old bit as
+center-X only for a five-word record without newer alignment bits. This is an
+**inferred compatibility migration**, not an original-executable verification:
+without it the saved credits start at screen center and clip off the right edge.
+Six-word records retain the archived flag behavior.
+
+The saved credits atlas has no cached glyph mask. Its empty font name selects
+Arial in the original GDI implementation. Native rendering requires an explicit
+font file and uses the existing FreeType atlas generator. The frame retains the
+exact atlas pixels used for its layout, so GPU uploads and glyph metrics agree.
+Absent characters retain the archive's common line height and padding metrics;
+they can emit degenerate quads, rather than silently gaining replacement glyphs.
+Print uses its first material pass and the initial pass/usage for deferred sorting.
+
+```sh
+build/native/wz3-frame-render werkkzeug3/data/theta/theta_final.k root 552 \
+  build/native/theta-credits.ppm --diagnostic-geometry \
+  --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+python3 werkkzeug3/native/tools/frame_audit.py \
+  --renderer build/native/wz3-frame-render --output build/native/theta-print-gallery \
+  --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf \
+  --expect-evaluated 54 --expect-rendered 54
+```
+
+DejaVu Sans is a validation font, not an assertion of Arial/GDI fidelity. The
+report records its path and hash. Without a font file the earlier 51 samples
+still execute; the three credits samples fail with the missing-font diagnostic.
+The standalone scene CLI has no font option yet; use the full frame runner for
+credits. Supplying Arial would still require a GDI metric/rasterization comparison.
+
+`print_layout` compares 720 layouts against the extracted archived handler, plus
+geometry-cap and bounds checks. `theta_print` compares the saved credits after
+the explicit flag migration, checks cached atlas identity and animated placement,
+and executes 2,601 consecutive CPU frames at 100 ms intervals from time zero
+through 260 seconds. This validates traversal and retained state at that step;
+it is not real-time audio/GPU playback. GPU checks draw the actual credits,
+compare against the same frames with the text removed, and verify normalized
+projection, winding and clipping on Radeon and llvmpipe. Entering text at beat
+514 is mostly hidden behind the bottom letterbox; later samples show the roll.
 
 ## Timeline events inside scenes
 
@@ -645,8 +699,9 @@ build/native/wz3-frame werkkzeug3/data/theta/theta_final.k root 72 build/native/
 build/native/wz3-frame-render werkkzeug3/data/theta/theta_final.k root 72 \
   build/native/root-72.ppm --diagnostic-geometry
 python3 werkkzeug3/native/tools/frame_audit.py \
-  --renderer build/native/wz3-frame-render --output build/native/theta-walk-gallery \
-  --expect-evaluated 51 --expect-rendered 51
+  --renderer build/native/wz3-frame-render --output build/native/theta-print-gallery \
+  --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf \
+  --expect-evaluated 54 --expect-rendered 54
 ```
 
 The graphics command **requires `--diagnostic-geometry` when a scene is present**.
@@ -656,7 +711,7 @@ substituting a scene shader. This is a compositor milestone, not complete Theta
 playback or a claim of original visual fidelity.
 
 The audit samples the full root at 54 distinct midpoints from 57 enabled IPP
-events. **51 samples execute and render**; three fail explicitly at Print. Beats 56, 72, 144 and 216 each emit 14 draws with one viewport;
+events. **All 54 samples execute and render with an explicit font file**. Beats 56, 72, 144 and 216 each emit 14 draws with one viewport;
 beat 384 emits 17 draws with two viewports, including render-to-texture. Overlay
 transition samples emit additional draws. The gallery retains command snapshots,
 image hashes, exact failures and graphics driver details. Each gallery sample
@@ -667,9 +722,10 @@ CPU tests cover ordering, scoped global variables, shared target reuse, crop UVs
 nested master restoration, the three-slot capacity, zero-duration events and
 failure recovery. GPU tests check overlay alpha blending, target orientation,
 resolution changes, blur rounding, Merge/Crashzoom and explicit diagnostic opt-in.
-Twelve root samples also run repeatedly in one native player/renderer. The 26-test
+Twelve geometry samples and three credits samples also run repeatedly in native
+players/renderers. The 28-test
 Release suite passes on Radeon RX 7900 XT; compositor tests pass on llvmpipe and
-the 16-test CPU suite passes under Clang ASan/UBSan. Small driver-dependent
+the 18-test CPU suite passes under Clang ASan/UBSan. Small driver-dependent
 rounding differences are possible; bit-identical original output is unverified.
 
 Current limits: unsupported IPP commands/flags fail explicitly, including Merge's
@@ -678,13 +734,13 @@ the original initial contents are unspecified; later draws retain it. Targets
 currently have separate depth attachments. Imported/procedural textures still
 use RGBA8 and native mipmaps rather than all legacy format rules. Scene geometry
 uploads are shared within a viewport draw but are not yet retained across frames.
-Scene lighting, shadow volumes, fog, remaining effect execution, uncached text
-metrics, dynamic events, audio timing and original-frame comparison remain.
+Scene lighting, shadow volumes, fog, original font metrics, dynamic events, audio
+timing and original-frame comparison remain.
 
 ## Next steps
 
-1. Extend root scene execution to Print, and verify native
-   font metrics against GDI.
+1. Verify inferred Print alignment migration and native font metrics against
+   the original executable/GDI.
 2. Reproduce the editor's operator type checking and version migrations.
 3. Connect material passes to scene drawing and implement lighting/shadow and
    remaining effect shaders, checking output against the
