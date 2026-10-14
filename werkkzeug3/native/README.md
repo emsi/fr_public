@@ -9,7 +9,7 @@ The player renders the complete timeline with saved materials, lighting, shadows
 fog, particles, credits and image effects. It supports both the archived editor
 project and the recovered final 1.01 release graph. The release runs through its
 verified beat-592 endpoint: **16,083 consecutive frames at 1024×768**, advancing
-in 16 ms steps. Its cached fonts need no host font substitution. Six captures
+in 16 ms steps. Its cached fonts need no host font substitution. Seven captures
 match byte for byte between offline rendering and callback-paced playback.
 The editor project has different content and a beat-609 endpoint. Audible
 synchronization on a physical sound device and whole-demo original-output
@@ -1222,11 +1222,11 @@ the independent Python decoder. All 127 animation programs execute in the audit
 (635 evaluations), with 15,677 spline samples. This establishes native graph
 execution, not final visual or physical audio synchronization fidelity.
 
-A full SDL/X11 playback of the recovered graph at 1024×768 completed 16,083
-frames, 15,276 presentations and 11,084 dummy-audio callbacks through the recovered
+A full SDL/X11 playback after the released rendering-phase correction at 1024×768 completed 16,083
+frames, 15,275 presentations and 11,084 dummy-audio callbacks through the recovered
 endpoint, with zero new static assets/uploads/programs during playback. Offline
-rendering produced byte-identical captures at 30, 120, 195, 220 and 250 seconds
-and the endpoint. This verifies simulation/render history independently of
+rendering produced byte-identical captures at 4, 12, 16, 120, 195, 220 and 250 seconds.
+The endpoint remains black. This verifies simulation/render history independently of
 callback pacing; it does not test physical audio output. All 43 local Release
 tests pass, including 16 graphics tests.
 
@@ -1276,6 +1276,17 @@ mean squared differences of bicubic-resized 240×144 RGB images, useful for
 selecting frame phase, not an acceptance threshold. Resolution, filtering,
 simulation cadence and video compression still limit this comparison.
 
+The comparison also writes `index.html` beside its JSON and PNG files. Open it
+locally to browse the timeline or largest errors, compare frames side by side,
+blend them, or display their difference. It shows actual sample/PTS timestamps,
+search-boundary matches and ambiguous equal-error matches. It needs no server
+or network. Generate the viewer for an existing report without decoding the
+video again:
+
+```sh
+python werkkzeug3/native/tools/reference_gallery.py build/reference/theta/compared/comparison.json
+```
+
 | Music time | Best RGB MSE | Observation at the matched video timestamp |
 | --- | ---: | --- |
 | 30 s | 724.92 | Tunnel geometry, materials and camera closely correspond. |
@@ -1322,6 +1333,13 @@ These are nearest-frame searches with the same crop, metric and search window.
 Other sweep positions still differ substantially, including the scene around
 36–44 seconds. The wider comparison is diagnostic coverage, not full-demo
 acceptance.
+
+The corrected full sweep completes all 16,083 frames and 148 snapshots. Of the
+148 nearest-frame comparisons, 21 improve and none worsen; median RGB MSE falls
+from 444.47 to 416.41. The unchanged five checkpoints above still apply. The
+largest remaining differences are now at 36, 40, 44 and 41.726 seconds, followed
+by event midpoints near 111.270 and 146.042 seconds. Regression checks pass on
+Radeon RX 7900 XT, llvmpipe and Clang ASan/UBSan; all 43 local Release tests pass.
 
 The earlier bright-versus-dark 220-second mismatch was a frame-selection issue;
 it does not justify changing the renderer's lighting. The later release-specific

@@ -16,6 +16,7 @@ import subprocess
 import numpy as np
 
 from reference_align import digest
+from reference_gallery import write_gallery
 
 
 def run(command):
@@ -110,6 +111,7 @@ def main():
             best_at_search_edge=best in (eligible[0], eligible[-1]),
             candidates=[dict(video_pts=stamps[i], video_seconds=times[i], mse=float(errors[i])) for i in eligible]))
     (args.output / "comparison.json").write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
+    write_gallery(report, args.output)
     for frame in report["frames"]:
         print(f'{frame["requested_seconds"]:g}s: video {frame["best_video_seconds"]:.6f}s, '
               f'offset {frame["visual_offset_seconds"]:.6f}s, RGB MSE {frame["best_mse"]:.2f}')
