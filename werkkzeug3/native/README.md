@@ -1,16 +1,78 @@
 # Native Linux work on fr-038: Theta
 
-This directory begins a native Linux port of the Werkkzeug3 player used by
-fr-038. It does not yet play the demo. The original Windows sources and Theta
-assets remain the reference; no Wine or Windows SDK is needed for these targets.
+This directory contains a native Linux port of the Werkkzeug3 player used by
+fr-038. `wz3-player` plays the saved Theta project in an SDL2 window with Ogg
+audio and an audio-sample clock. The original Windows sources and Theta assets
+remain the reference; no Wine or Windows SDK is needed for these targets.
 
 The native frame runner now renders the complete root timeline through beat 600
 with saved materials, lighting, shadows, fog, particles, credits and image effects.
 A headless Radeon run rendered **16,306 consecutive frames at 1024×768**, advancing
 the simulation in 16 ms steps with an explicitly supplied font. The independent
 sample audit renders 52/54 positions; two late samples require an earlier render
-target and work in the continuous run. A windowed player, audio synchronization
-and comparison with original output remain unfinished.
+target and work in the continuous run. The windowed player uses the saved beat-609
+endpoint. Audible synchronization on a real sound device and comparison with
+original output remain unverified.
+
+## Play Theta on Linux
+
+In addition to the base dependencies below, install SDL2, Vorbis, EGL and GLES
+development libraries. Run these commands from the repository root:
+
+```sh
+sudo apt-get install libsdl2-dev libvorbis-dev libegl-dev libgles-dev pkg-config
+cmake -S werkkzeug3/native -B build/native -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DWZ3_BUILD_RENDERER=ON -DWZ3_BUILD_PLAYER=ON -DWZ3_TEST_GRAPHICS=ON
+cmake --build build/native
+ctest --test-dir build/native --output-on-failure
+build/native/wz3-player werkkzeug3/data/theta/theta_final.k \
+  --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+```
+
+The font is an explicit substitute for Arial; install `fonts-dejavu-core` if
+using that path. The player defaults to the saved 800×600 resolution and finds
+`theta.ogg` beside the project. `--music PATH` overrides that lookup;
+`--width 1024 --height 768` changes the internal rendering resolution. Resizing
+the window scales the picture with black bars and preserves render-target history.
+Escape or closing the window exits. Seeking, pause and looping are not implemented.
+
+`--duration SECONDS` limits playback for local checks. `--capture LAST.ppm`
+saves the last rendered frame; repeat `--snapshot SECONDS FRAME.ppm` to capture
+selected positions without restarting the simulation. Snapshot disk I/O can
+delay presentation. `--mute` outputs silence through the same audio device and
+clock; it does not bypass the need for a working audio backend.
+
+Music is decoded up front to interleaved float PCM with a 256 MiB limit (Theta
+uses about 87.4 MiB). The SDL callback copies samples without allocation or
+decoding. The renderer borrows SDL's GLES3 context and blits directly to the window,
+with no per-frame CPU readback unless a capture is requested. Simulation and
+render-target updates advance in fixed 16 ms steps; missed presentations catch up
+through intermediate frames rather than losing particle/target history. Initial
+frame generation finishes before audio starts. Later first-use asset generation
+can still cause visible stalls; this is not yet a fully precomputed player.
+
+`mainplayer.cpp` supplies the sample-to-beat formula and optional Buzz integer
+tick timing. The `.k` SoundOffset is editor-only and is not exported by the
+original player. Theta has 11,450,185 stereo frames at 44,100 Hz (259.641 s), while
+its saved endpoint is beat 609 (264.783 s); the callback supplies silence for the
+tail. The clock interpolates only inside the most recently requested audio buffer
+and stops if callbacks stop. It estimates audio delivery, not the physical DAC
+position: [SDL2 does not expose exact downstream playback position](https://wiki.libsdl.org/SDL2/SDL_GetQueuedAudioSize).
+Unmeasured hardware buffering remains a synchronization limitation.
+
+For an explicitly silent visual check on a host without audio access:
+
+```sh
+SDL_AUDIODRIVER=dummy build/native/wz3-player werkkzeug3/data/theta/theta_final.k \
+  --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf --duration 10
+```
+
+The player fails if the normal audio device cannot open; it does not silently
+select a dummy backend. Automated player tests use SDL's offscreen video and
+disk audio backends, validate a nonblank frame and non-silent PCM, and require
+no desktop or speaker. Separate audio tests cover sample interpolation/stalls,
+EOF padding, stereo ordering, mute, Buzz timing, and the saved endpoint. These
+checks do not establish audible synchronization or original-output fidelity.
 
 The first target, `wz3-inspect`, reads the complete version-13 Theta projects
 directly, including operator parameters, animation records, timeline events,
@@ -116,8 +178,8 @@ Wayland compositor, SDL or Windows components. It uploads the CPU-generated
 texture, draws it with a shader and compares every RGBA readback byte against the
 CPU image before saving RGB PPM output. It prints the actual driver/renderer;
 device availability alone is not counted as hardware-rendering evidence.
-The headless backend is an initial validation path; a desktop window and audio
-will be added with the player. GLES 3 is this new backend's requirement, not the
+The headless backend remains a validation path alongside the SDL player.
+GLES 3 is this new backend's requirement, not the
 historical demo's minimum GPU requirement.
 
 Hardware validation on an AMD Radeon RX 7900 XT with Mesa 25.2.8 passed for all
@@ -914,8 +976,8 @@ currently have separate depth/stencil attachments. Imported/procedural textures 
 use RGBA8 and native mipmaps rather than all legacy format rules. Saved-material mesh
 uploads are retained across frames; the diagnostic checker still rebuilds them
 for each viewport draw.
-Original font metrics, dynamic events, audio
-timing and original-frame comparison remain.
+Original font metrics, dynamic events, physical audio latency measurement
+and original-frame comparison remain.
 
 ## Next steps
 
@@ -924,7 +986,8 @@ timing and original-frame comparison remain.
 2. Reproduce the editor's operator type checking and version migrations.
 3. Compare saved material shading against original frames and extend remaining
    shader/format support where the comparison exposes a difference.
-4. Add a Linux windowed player and Ogg playback driven by a sample-based clock.
+4. Measure audible synchronization and remove first-use generation stalls in
+   the Linux windowed player.
 5. Compare the whole demo's output and timing; extend editor support separately.
 
 ## Graph reconstruction
