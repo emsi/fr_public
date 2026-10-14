@@ -97,7 +97,7 @@ void clear(FrameClear c) {
 }
 }
 struct FrameRenderer::Impl {
-  const Project& project;const Graph& graph;TextureOptions texture_options;gles::Context context{1,1};
+  const Project& project;const Graph& graph;TextureOptions texture_options;std::unique_ptr<gles::Context> context;
   struct Surface {GLuint color{},depth{},fbo{};unsigned width{},height{};};
   std::map<std::size_t,Surface> surfaces;
   std::map<std::size_t,GLuint> bitmaps;
@@ -122,13 +122,15 @@ struct FrameRenderer::Impl {
   std::size_t geometry_bytes{};
   GLuint vao{},particle_buffer{};std::array<GLuint,4> samplers{};
   std::size_t surface_bytes{},bitmap_bytes{};
-  Impl(const Project& p,const Graph& g,const TextureOptions& options):project(p),graph(g),texture_options(options) {
+  Impl(const Project& p,const Graph& g,const TextureOptions& options,FrameRenderer::Context mode):project(p),graph(g),texture_options(options) {
+    if(mode==FrameRenderer::Context::Headless)context=std::make_unique<gles::Context>(1,1);
+    require(glGetString(GL_VERSION)!=nullptr,"FrameRenderer needs a current GLES3 context");
     std::cerr<<"GL vendor: "<<glGetString(GL_VENDOR)<<"\nGL renderer: "<<glGetString(GL_RENDERER)<<"\nGL version: "<<glGetString(GL_VERSION)<<'\n';
     glGenBuffers(1,&particle_buffer);glGenVertexArrays(1,&vao);glGenSamplers(4,samplers.data());
     glGenBuffers(1,&shadow_index_buffer);
   }
   ~Impl() {
-    eglMakeCurrent(context.display,context.surface,context.surface,context.context);
+    if(context)eglMakeCurrent(context->display,context->surface,context->surface,context->context);
     for(const auto& [id,s]:surfaces) {static_cast<void>(id);destroy(s);}
     for(const auto& [id,t]:bitmaps) {static_cast<void>(id);glDeleteTextures(1,&t);}
     for(const auto& [source,p]:programs) {static_cast<void>(source);glDeleteProgram(p);}
@@ -138,7 +140,7 @@ struct FrameRenderer::Impl {
     glDeleteTextures(1,&normal_cube);glDeleteTextures(1,&attenuation_volume);
     glDeleteBuffers(1,&particle_buffer);glDeleteSamplers(4,samplers.data());glDeleteVertexArrays(1,&vao);
   }
-  void activate() {gles::egl_check(eglMakeCurrent(context.display,context.surface,context.surface,context.context),"frame context activation");}
+  void activate() {if(context)gles::egl_check(eglMakeCurrent(context->display,context->surface,context->surface,context->context),"frame context activation");}
   static void destroy(const Surface& s) {glDeleteTextures(1,&s.color);glDeleteRenderbuffers(1,&s.depth);glDeleteFramebuffers(1,&s.fbo);}
   void surface(std::size_t id,FrameSurface size) {
     require(size.width && size.height && size.width<=4096 && size.height<=4096,"invalid frame surface dimensions");
@@ -387,9 +389,12 @@ struct FrameRenderer::Impl {
   }
 
 };
-FrameRenderer::FrameRenderer(const Project& p,const Graph& g,const TextureOptions& options):impl(std::make_unique<Impl>(p,g,options)) {}
+FrameRenderer::FrameRenderer(const Project& p,const Graph& g,const TextureOptions& options,Context mode):impl(std::make_unique<Impl>(p,g,options,mode)) {}
 FrameRenderer::~FrameRenderer()=default;
 std::vector<std::uint8_t> FrameRenderer::render(const DemoFrame& frame,bool diagnostic) {
+  draw(frame,diagnostic);return readback();
+}
+void FrameRenderer::draw(const DemoFrame& frame,bool diagnostic) {
   auto& s=*impl;s.activate();glDisable(GL_DITHER);
   require(frame.surfaces.contains(0) && frame.surfaces.at(0).width==frame.width && frame.surfaces.at(0).height==frame.height,"invalid screen surface");
   for(const auto& [id,size]:frame.surfaces)s.surface(id,size);
@@ -405,9 +410,26 @@ std::vector<std::uint8_t> FrameRenderer::render(const DemoFrame& frame,bool diag
       require(glGetError()==GL_NO_ERROR,"frame draw produced an OpenGL error");
     }catch(const std::exception& e) {throw std::runtime_error("operator "+std::to_string(c.operator_id)+": "+e.what());}
   }
-  glBindFramebuffer(GL_FRAMEBUFFER,s.surfaces.at(0).fbo);std::vector<std::uint8_t> pixels(std::size_t(frame.width)*frame.height*4);
-  glReadPixels(0,0,frame.width,frame.height,GL_RGBA,GL_UNSIGNED_BYTE,pixels.data());require(glGetError()==GL_NO_ERROR,"frame readback failed");
-  for(unsigned y=0;y<frame.height/2;++y)std::swap_ranges(pixels.begin()+std::size_t(y)*frame.width*4,pixels.begin()+std::size_t(y+1)*frame.width*4,pixels.begin()+std::size_t(frame.height-y-1)*frame.width*4);
+}
+std::vector<std::uint8_t> FrameRenderer::readback() {
+  auto& s=*impl;s.activate();const auto& screen=s.surfaces.at(0);
+  glBindFramebuffer(GL_FRAMEBUFFER,screen.fbo);std::vector<std::uint8_t> pixels(std::size_t(screen.width)*screen.height*4);
+  glReadPixels(0,0,screen.width,screen.height,GL_RGBA,GL_UNSIGNED_BYTE,pixels.data());require(glGetError()==GL_NO_ERROR,"frame readback failed");
+  for(unsigned y=0;y<screen.height/2;++y)std::swap_ranges(pixels.begin()+std::size_t(y)*screen.width*4,pixels.begin()+std::size_t(y+1)*screen.width*4,pixels.begin()+std::size_t(screen.height-y-1)*screen.width*4);
   return pixels;
+}
+void FrameRenderer::present(unsigned width,unsigned height) {
+  require(width && height && width<=16384 && height<=16384,"invalid drawable size");
+  auto& s=*impl;s.activate();const auto& screen=s.surfaces.at(0);
+  unsigned w=width,h=height;
+  if(std::uint64_t(width)*screen.height>std::uint64_t(height)*screen.width)w=std::uint64_t(height)*screen.width/screen.height;
+  else h=std::uint64_t(width)*screen.height/screen.width;
+  const auto x=(width-w)/2,y=(height-h)/2;
+  glBindFramebuffer(GL_DRAW_FRAMEBUFFER,0);glDisable(GL_SCISSOR_TEST);
+  glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);glClearColor(0,0,0,1);glClear(GL_COLOR_BUFFER_BIT);
+  glBindFramebuffer(GL_READ_FRAMEBUFFER,screen.fbo);
+  glBlitFramebuffer(0,0,screen.width,screen.height,x,y,x+w,y+h,GL_COLOR_BUFFER_BIT,GL_LINEAR);
+  require(glGetError()==GL_NO_ERROR,"frame presentation failed");
+  glBindFramebuffer(GL_FRAMEBUFFER,0);
 }
 } // namespace wz3

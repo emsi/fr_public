@@ -51,8 +51,16 @@ class FrameRenderer {
   struct Impl;
   std::unique_ptr<Impl> impl;
 public:
-  FrameRenderer(const Project&,const Graph&,const TextureOptions& = {});
+  enum class Context { Headless, Current };
+  // Current borrows the caller's GLES3 context. Keep it current for every call,
+  // including destruction, and keep it alive longer than the renderer.
+  FrameRenderer(const Project&,const Graph&,const TextureOptions& = {},Context=Context::Headless);
   ~FrameRenderer();
   std::vector<std::uint8_t> render(const DemoFrame&,bool diagnostic_geometry=false);
+  void draw(const DemoFrame&,bool diagnostic_geometry=false);
+  std::vector<std::uint8_t> readback(); // last screen, top-down RGBA8
+  // Blit the last screen to framebuffer 0, preserving aspect with black bars.
+  // The caller owns the window/swap; this does not read pixels back to the CPU.
+  void present(unsigned drawable_width,unsigned drawable_height);
 };
 } // namespace wz3
