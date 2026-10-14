@@ -59,7 +59,7 @@ public:
     visiting_[id] = true;
     const auto& op = project_.operators[id];
     const auto& node = graph_.nodes[id];
-    if (!op.animations.empty()) throw std::runtime_error("animated texture operators are not implemented");
+    if (op.has_animation()) throw std::runtime_error("animated texture operators are not implemented");
     const auto input = [&]() {
       if (node.inputs.size() != 1) throw std::runtime_error("texture operator requires exactly one input");
       return evaluate(node.inputs.front(), depth + 1);

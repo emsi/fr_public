@@ -19,12 +19,14 @@ int main(int argc, char** argv) {
       active_count += graph.nodes[i].active;
       if (graph.nodes[i].reachable) { ++reachable_count; ++reachable_counts[project.operators[i].command]; }
     }
-    std::size_t animations = 0, spline_keys = 0;
-    for (const auto& op : project.operators) { ++counts[op.command]; animations += op.animations.size(); }
+    std::size_t animations = 0, spline_keys = 0, runtime_programs = 0;
+    for (const auto& op : project.operators) { ++counts[op.command]; animations += op.animations.size(); runtime_programs += op.animation_code.size()>1; }
     for (const auto& spline : project.splines)
       for (const auto& channel : spline.channels) spline_keys += channel.size();
     const auto bpm = wz3::as_float(project.settings[4]);
     std::cout << "{\n  \"version\": " << project.version
+      << ",\n  \"runtime_graph\": " << (project.runtime_graph ? "true" : "false")
+      << ",\n  \"runtime_animation_programs\": " << runtime_programs
       << ",\n  \"bytes\": " << project.bytes.size()
       << ",\n  \"demo\": " << quote(project.demo_name)
       << ",\n  \"song\": " << quote(project.song_name)

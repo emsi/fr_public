@@ -26,7 +26,7 @@ int main(int argc,char** argv) {
     if(std::string_view(argv[2])=="--audit" && argc==3) {
       std::size_t programs=0,reachable=0,nodes=0,used=0,bytes=0,evaluations=0,samples=0;
       for(std::size_t id=0;id<project.operators.size();++id) {
-        const auto& op=project.operators[id];if(op.animations.empty())continue;
+        const auto& op=project.operators[id];if(!op.has_animation())continue;
         try {
           const auto program=wz3::compile_animation(op,splines);++programs;reachable+=graph.nodes[id].reachable;
           nodes+=program.source_nodes;used+=program.used_nodes;bytes+=program.code.size();

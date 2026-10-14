@@ -71,7 +71,7 @@ struct Snapshot {double seconds{};std::filesystem::path path;bool saved=false;};
 }
 int main(int argc,char** argv) {
   if(argc<2 || std::string_view(argv[1])=="--help") {
-    std::cout<<"Usage: "<<argv[0]<<" PROJECT.k --font-file FONT.ttf [--music SONG.ogg]\n"
+    std::cout<<"Usage: "<<argv[0]<<" PROJECT.k|theta.wz3r [--font-file FONT.ttf] [--music SONG.ogg]\n"
       <<"  [--width PIXELS] [--height PIXELS] [--duration SECONDS] [--mute]\n"
       <<"  [--capture LAST.ppm] [--snapshot SECONDS FRAME.ppm] (repeatable)\n"
       <<"  [--no-preload | --preload-only]\n"
@@ -98,9 +98,10 @@ int main(int argc,char** argv) {
         snapshots.push_back({seconds,argv[++i],false});
       }else throw std::runtime_error("unknown or incomplete player option: "+std::string(option));
     }
-    require(!options.font_file.empty() && std::filesystem::is_regular_file(options.font_file),"supply an existing --font-file for Theta's uncached credits font");
+    require(options.font_file.empty() || std::filesystem::is_regular_file(options.font_file),"--font-file does not exist");
     require(preload || !preload_only,"--no-preload conflicts with --preload-only");
     const std::filesystem::path project_path=argv[1];const auto project=wz3::read_project(project_path);const auto graph=wz3::connect(project);
+    if(project.runtime_graph)std::cerr<<"Released graph: using explicit provisional timing from the native envelope\n";
     const auto root=graph.names.find("root");require(root!=graph.names.end(),"project has no named root");
     if(!width)width=project.settings[2];
     if(!height)height=project.settings[3];

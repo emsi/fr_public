@@ -16,7 +16,7 @@ if(WZ3_TEST_GRAPHICS AND NOT WZ3_BUILD_RENDERER)
   message(FATAL_ERROR "WZ3_TEST_GRAPHICS requires WZ3_BUILD_RENDERER")
 endif()
 
-add_library(wz3_project src/project.cpp src/graph.cpp src/texture.cpp src/bitmap_composite.cpp
+add_library(wz3_project src/project.cpp src/release_project.cpp src/graph.cpp src/texture.cpp src/bitmap_composite.cpp
   src/bitmap_filters.cpp src/bitmap_text.cpp src/font.cpp src/jpeg_decode.c src/mesh.cpp src/mesh_topology.cpp
   src/mesh_kernel.cpp src/mesh_evaluate.cpp src/mesh_noise.cpp src/mesh_displace.cpp src/animation.cpp src/timeline.cpp src/material.cpp src/material_shader.cpp src/scene.cpp src/frame.cpp src/particles.cpp src/effect_particles.cpp src/walk.cpp src/print.cpp src/scene_draw.cpp src/lighting.cpp src/shadow.cpp src/fog.cpp)
 # Mesh Perlin uses downward rounding; animation uses nearest-even. Preserve
@@ -123,6 +123,10 @@ endif()
 if(BUILD_TESTING)
   add_test(NAME packed_release_reader COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/release_audit.py")
+  add_executable(wz3-release-project-tests tests/release_project.cpp)
+  target_link_libraries(wz3-release-project-tests PRIVATE wz3_project)
+  target_compile_options(wz3-release-project-tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME runtime_project COMMAND wz3-release-project-tests)
   add_executable(wz3-cached-font-tests tests/cached_font.cpp)
   target_link_libraries(wz3-cached-font-tests PRIVATE wz3_project)
   target_compile_options(wz3-cached-font-tests PRIVATE -Wall -Wextra -Wpedantic -Werror)

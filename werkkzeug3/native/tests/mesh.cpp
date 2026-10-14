@@ -163,6 +163,16 @@ void operators() {
   const auto repeats = p.get(p.add(0x95,{f(1),f(1),f(1),0,0,0,f(2),0,0,3,0,0,0,0,0,0,0},{base}));
   check(repeats->faces.size()==18,"Multiply copy count");
   box=wz3::mesh_bounds(*repeats);near(box.min[0],-0.5,"Multiply starts with original");near(box.max[0],4.5,"Multiply accumulated translation");
+  const auto repeat_id=p.project.operators.size()-1;
+  p.project.operators[repeat_id].parameters.push_back(0);
+  rejects([&]{p.get(repeat_id);}); // extra words are release-specific
+  p.project.runtime_graph=true;const auto padded=p.get(repeat_id);
+  check(padded->vertices.size()==repeats->vertices.size() && padded->faces.size()==repeats->faces.size(),"release Multiply padding changed topology");
+  for(std::size_t i=0;i<padded->vertices.size();++i)
+    check(padded->vertices[i].position==repeats->vertices[i].position && padded->vertices[i].uv==repeats->vertices[i].uv,"release Multiply padding changed geometry");
+  p.project.operators[repeat_id].parameters.back()=1;rejects([&]{p.get(repeat_id);});
+  p.project.operators[repeat_id].parameters.pop_back();p.project.runtime_graph=false;
+
   const auto added = p.get(p.add(0x92,{}, {base,base}));
   check(added->vertices.size()==48 && added->faces[6].vertices[0]==original->faces[0].vertices[0]+24,"Add index offset");
   const auto inverted = p.get(p.add(0xa3,{}, {base}));near(volume(*inverted),-1,"Invert winding");

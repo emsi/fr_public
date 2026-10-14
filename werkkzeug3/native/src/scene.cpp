@@ -196,7 +196,7 @@ struct ScenePlayer::Impl {
     if(operator_info(project.operators[target].command).category=="MESH") {
       require(frame.instances.size()<65536,"scene instance limit");
       for(auto source=id;source!=target;source=alias(source))
-        require(project.operators[source].animations.empty(),"animated mesh alias precalculation is not ported");
+        require(!project.operators[source].has_animation(),"animated mesh alias precalculation is not ported");
       // ExecSceneInput emits cached geometry without calling mesh Exec handlers.
       frame.instances.push_back({id,geometry(target),world,env.variables[0][0],pass});return;
     }

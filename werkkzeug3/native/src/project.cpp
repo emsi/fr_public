@@ -3,6 +3,7 @@
 // sReadBegin/sReadString/sReadEnd in ../_types.cpp.
 #include "wz3/project.hpp"
 
+#include <algorithm>
 #include <bit>
 #include <fstream>
 #include <map>
@@ -88,6 +89,9 @@ Project read_project(const std::filesystem::path& path) {
 
 Project parse_project(std::vector<std::uint8_t> bytes) {
   if (bytes.size() > max_file_size) throw std::runtime_error("project exceeds 64 MiB limit");
+  constexpr std::array<std::uint8_t,8> runtime_magic{'W','Z','3','T','H','R','1',0};
+  if(bytes.size()>=runtime_magic.size() && std::equal(runtime_magic.begin(),runtime_magic.end(),bytes.begin()))
+    return parse_release_project(std::move(bytes));
   Project project;
   project.bytes = std::move(bytes);
   Reader reader(project.bytes);

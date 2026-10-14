@@ -6,7 +6,7 @@
 namespace wz3::legacy {
 namespace {
 void require(const Operator& op,std::size_t count) {
-  if(op.parameters.size()!=count) throw std::runtime_error("unsupported mesh parameter layout");
+  if(op.parameters.size()!=count) throw std::runtime_error("mesh command "+std::to_string(op.command)+" has "+std::to_string(op.parameters.size())+" parameters; expected "+std::to_string(count));
 }
 float real(const Operator& op,unsigned i) {
   const auto v=as_float(op.parameters.at(i));
@@ -48,7 +48,7 @@ public:
     if(depth>512 || visiting[id])throw std::runtime_error("cycle or excessive depth in mesh graph");
     visiting[id]=true;
     const auto& op=project.operators[id];const auto& node=graph.nodes[id];
-    if(!op.animations.empty())throw std::runtime_error("animated mesh operators are not ported");
+    if(op.has_animation())throw std::runtime_error("animated mesh operators are not ported");
     const auto input=[&]() {
       if(node.inputs.size()!=1)throw std::runtime_error("mesh operator "+std::to_string(id)+" ("+std::string(operator_info(op.command).name)+") input signature is not ported");
       return get(node.inputs[0],depth+1);
@@ -171,7 +171,10 @@ public:
           mesh->TransVert(m);break;
         }
         case 0x95: {
-          require(op,17);const auto count=integer(op,9,4096,1),mode=integer(op,10,1);
+          // Final 1.01 exports an extra zero after the 17 Multiply arguments.
+          // Keep it in the project, but never reinterpret it as a new argument.
+          if(!(project.runtime_graph && op.parameters.size()==18 && op.parameters[17]==0))require(op,17);
+          const auto count=integer(op,9,4096,1),mode=integer(op,10,1);
           const auto extrude=real(op,16);
           if(extrude)mesh->NeedAllNormals();
           auto out=std::make_shared<GenMesh>();out->Init(sGMF_DEFAULT,0);

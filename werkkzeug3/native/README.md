@@ -1044,7 +1044,7 @@ and original-frame comparison remain.
 
 The [final 1.01 executable on scene.org](https://files.scene.org/view/demos/groups/farbrausch/fr-038_theta_final.zip)
 contains a different project from `data/theta/theta_final.k`. The native player
-currently plays that editor project. Its credits omit the final-version and ryg
+can now also load that released graph from a `.wz3r` envelope. Its credits omit the final-version and ryg
 credit lines, use size 1.0, and have an uncached atlas with an empty family name.
 The release instead contains size **1.199981689453125** (the packed F24 version
 of 1.2), a `duality` font atlas with cached metrics and pixels, and the additional
@@ -1080,7 +1080,41 @@ This is a version-specific audit, not a generic `.kx` loader. The release uses
 one-byte class command IDs rather than the current archive reader's two-byte
 IDs. Its class 0x95 also packs 18 words despite declaring 17; the audit retains
 all words. No BPM or duration is inferred from the undecoded surrounding header.
-The native player does **not yet accept** `graph.bin` or `graph.json`.
+The raw `graph.bin` and audit JSON are not player inputs. To package the graph
+for playback, supply provisional timing explicitly. These values come from the
+editor project and have **not** been recovered from the release's player header:
+
+```sh
+uv run --no-project --with unicorn python werkkzeug3/native/tools/release_audit.py \
+  --exe build/reference/theta/fr-038-final.exe --output build/reference/theta/extracted \
+  --bpm 138 --end-beat 609
+SDL_AUDIODRIVER=dummy build/native/wz3-player build/reference/theta/extracted/theta.wz3r
+```
+
+Omit `SDL_AUDIODRIVER=dummy` to use a working sound device. The recovered font
+atlases need no `--font-file`. The envelope defaults to 800×600; `--width` and
+`--height` on the extractor set the defaults, and player options can override
+them. `--buzz-timing` explicitly selects the alternative integer tick clock.
+`graph.json` records the supplied settings and envelope hash. The player labels
+this timing provisional at startup; endpoint/clock fidelity remains to verify.
+
+`.wz3r` is a small native transport format, not an original Farbrausch format:
+8-byte magic `WZ3THR1\0`, then six little-endian 32-bit words (width, height,
+IEEE-754 BPM, endpoint in 16.16 beats, Buzz flag, graph byte count), followed by
+the unchanged graph slice. The native reader preserves packed parameter bits,
+direct ordered inputs/links, bytecode, event order, quantized splines and blobs.
+Generated operator/spline names only connect the existing native interfaces;
+they do not reconstruct an editor layout or recompile animation. Compiled
+programs are checked for bounded operands, stack balance and valid references.
+The release's extra zero word on Multiply is retained in the project and ignored
+by its existing 17-argument handler; nonzero padding is rejected.
+
+The complete released graph executes through the provisional beat-609 endpoint:
+16,550 preparation frames, 102 meshes, one font atlas, 31 bitmap uploads and
+27 shader programs. The 1,329 operator payloads/connections and 89 events match
+the independent Python decoder. All 127 animation programs execute in the audit
+(635 evaluations), with 15,677 spline samples. This establishes native graph
+execution, not final visual or physical audio synchronization fidelity.
 
 The [2011 Annikras video linked by Pouët](https://www.youtube.com/watch?v=rrgzBptM2bM)
 provides an initial visual reference. It is a third-party capture, not a new
@@ -1117,13 +1151,13 @@ build/native/wz3-cached-font-tests \
 
 Synthetic tests exercise all seven pages, signed bearings, missing glyphs,
 coverage, retained metadata and rejected corrupt blobs. Release and ASan/UBSan
-runs also pass with the actual extracted fonts. Next, import the released graph
-before using image differences to adjust rendering.
+runs also pass with the actual extracted fonts. The runtime importer now makes
+release-versus-video comparisons possible without the editor-project differences.
 
 ## Next steps
 
-1. Add native playback of the recovered final 1.01 graph, using the cached atlas
-   decoder; verify Print alignment against the aligned reference.
+1. Verify the released graph's Print alignment, timing and remaining visual
+   differences against the aligned reference.
 2. Reproduce the editor's operator type checking and version migrations.
 3. Compare saved material shading against original frames and extend remaining
    shader/format support where the comparison exposes a difference.

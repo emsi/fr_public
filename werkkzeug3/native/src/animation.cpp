@@ -100,7 +100,48 @@ AnimationVector SplineLibrary::evaluate(std::size_t id,float time) const {
   return value;
 }
 
+namespace {
+AnimationProgram runtime_animation(const Operator& op,const SplineLibrary& splines) {
+  require(op.animations.empty(),"operator mixes editor animation and runtime bytecode");
+  require(op.animation_code.size()<=4096,"runtime animation bytecode limit");
+  AnimationProgram program;program.code=op.animation_code;Reader r{program.code};
+  unsigned stack=0,stores=0;
+  const auto push=[&](){require(stack<255,"runtime animation stack overflow");++stack;};
+  const auto pop=[&](){require(stack>0,"runtime animation stack underflow");--stack;};
+  for(;;) {
+    const auto cmd=r.byte(),group=family(cmd);
+    if(cmd==1) {require(stack==0 && r.at==program.code.size(),"unbalanced or trailing runtime bytecode");break;}
+    if(cmd==0)continue;
+    if(is_store(cmd)) {
+      const auto index=r.byte();pop();
+      if(group==0x80) {
+        require(index<32 && stores++<256,"runtime animation variable store limit");program.written_variables|=1u<<index;
+      }else {
+        require(index<op.parameters.size(),"runtime parameter store index");
+        if(group!=0xb0 && group!=0xf0)for(unsigned c=0;c<4;++c)if(cmd&(1u<<c))
+          require(index+c<op.parameters.size(),"runtime parameter store overrun");
+      }
+    }else if(cmd==2) {
+      const auto index=r.byte();require(index<32,"runtime animation variable index");program.read_variables|=1u<<index;push();
+    }else if(cmd>=3 && cmd<=6) {
+      const auto index=r.byte();require(index+cmd-2<=op.parameters.size(),"runtime parameter load overrun");push();
+    }else if(cmd>=0x16 && cmd<=0x18) {
+      if(cmd==0x16)for(unsigned i=0;i<4;++i)r.real();
+      else if(cmd==0x17)r.word();else r.real();
+      push();
+    }else if((cmd>=0x0b && cmd<=0x0f) || cmd==0x1f) {pop();pop();push();}
+    else {
+      require(cmd<=0x21 && stack>0,"unknown opcode or runtime animation stack underflow");
+      if(cmd==0x19) {const auto low=r.byte();const auto index=low|(r.byte()<<8);require(index<splines.size(),"runtime animation spline index");}
+      else if(cmd==0x1d){r.real();r.real();}
+      else if(cmd==0x1e){r.byte();r.byte();}
+    }
+  }
+  return program;
+}
+}
 AnimationProgram compile_animation(const Operator& op,const SplineLibrary& splines) {
+  if(!op.animation_code.empty())return runtime_animation(op,splines);
   const NearestRounding rounding;
   const auto n=op.animations.size();require(n<=4096,"animation node limit");
   AnimationProgram program;program.source_nodes=n;

@@ -4,7 +4,7 @@
 This deliberately supports one SHA-256-pinned executable, not arbitrary PE files
 or a generic .kx format. Unicorn runs only its kkrunchy depacker, stopping before
 the first loader API. No Windows API is forwarded and no demo code is run.
-The exported graph is NOT yet an input accepted by the native player.
+The optional .wz3r envelope adds explicit provisional timing for native playback.
 
 Graph layout reference: KDoc::Init in ../kdoc.cpp; packed numbers: ../_types.cpp.
 This older release uses one-byte class IDs and has no current .kx timing header
@@ -241,7 +241,19 @@ def main():
     source.add_argument("--exe", type=Path, help="SHA-pinned fr-038-final.exe; requires Unicorn")
     source.add_argument("--image", type=Path, help="SHA-pinned image from an earlier depack")
     ap.add_argument("--output", required=True, type=Path)
+    ap.add_argument("--bpm", type=float, help="explicit provisional BPM for a native playback envelope")
+    ap.add_argument("--end-beat", type=float, help="explicit provisional endpoint; requires --bpm")
+    ap.add_argument("--width", type=int, default=800)
+    ap.add_argument("--height", type=int, default=600)
+    ap.add_argument("--buzz-timing", action="store_true")
     args = ap.parse_args()
+    if (args.bpm is None) != (args.end_beat is None):
+        ap.error("--bpm and --end-beat must be supplied together")
+    if not 64 <= args.width <= 4096 or not 64 <= args.height <= 4096:
+        ap.error("dimensions must be in [64,4096]")
+    if args.bpm is not None and (not math.isfinite(args.bpm) or not 1 <= args.bpm <= 1000 or
+                                 not math.isfinite(args.end_beat) or not 0 < args.end_beat < 32768):
+        ap.error("BPM must be in [1,1000] and endpoint in (0,32768)")
     image = unpack(args.exe) if args.exe else pinned(args.image, IMAGE_SHA256)
     graph_bytes = image[GRAPH_START:GRAPH_END]
     graph = parse_graph(graph_bytes)
@@ -259,6 +271,13 @@ def main():
             (args.output / op["blob_file"]).write_bytes(graph_bytes[start:start + op["blob_size"]])
     (args.output / "graph.bin").write_bytes(graph_bytes)
     (args.output / "theta.ogg").write_bytes(song)
+    if args.bpm is not None:
+        envelope = struct.pack("<8sIIfIII", b"WZ3THR1\0", args.width, args.height, args.bpm,
+                               int(args.end_beat * 65536), args.buzz_timing, len(graph_bytes)) + graph_bytes
+        (args.output / "theta.wz3r").write_bytes(envelope)
+        graph["provenance"]["native_envelope"] = dict(width=args.width, height=args.height,
+            bpm=args.bpm, end_beat=args.end_beat, buzz_timing=args.buzz_timing,
+            timing="explicit provisional values; not recovered release header", sha256=sha256(envelope))
     (args.output / "graph.json").write_text(json.dumps(graph, indent=2, allow_nan=False) + "\n")
     print(json.dumps(dict(operators=len(graph["operators"]), classes=len(graph["classes"]),
                           events=len(graph["events"]), splines=len(graph["splines"]),

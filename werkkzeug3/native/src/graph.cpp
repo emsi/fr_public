@@ -2,6 +2,7 @@
 // References: WerkPage::Connect1/2, WerkDoc::Connect and FindRoot.
 #include "wz3/graph.hpp"
 #include <algorithm>
+#include <stdexcept>
 
 namespace wz3 {
 Graph connect(const Project& project) {
@@ -20,7 +21,15 @@ Graph connect(const Project& project) {
       if (op.bypass) graph.warnings.push_back("bypassed operator has a name: " + op.name);
     }
   }
-  for (auto& page : pages) {
+  if(project.runtime_graph) {
+    if(project.runtime_inputs.size()!=graph.nodes.size())throw std::runtime_error("runtime graph size mismatch");
+    for(std::size_t i=0;i<graph.nodes.size();++i) {
+      for(auto input:project.runtime_inputs[i])if(input>=i)throw std::runtime_error("runtime input is not topologically ordered");
+      graph.nodes[i].inputs=project.runtime_inputs[i];
+    }
+    for(unsigned i=0;i<16;++i)if(project.runtime_roots[i]<graph.nodes.size())
+      graph.names.emplace(i==0 ? "root" : "root_"+std::to_string(i),project.runtime_roots[i]);
+  } else for (auto& page : pages) {
     std::stable_sort(page.begin(), page.end(), [&](auto a, auto b) {
       return project.operators[a].y < project.operators[b].y;
     });
