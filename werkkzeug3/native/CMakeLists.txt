@@ -121,6 +121,8 @@ if(WZ3_BUILD_PLAYER)
 endif()
 
 if(BUILD_TESTING)
+  add_test(NAME packed_release_reader COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/release_audit.py")
   add_executable(wz3-fog-tests tests/fog.cpp)
   target_link_libraries(wz3-fog-tests PRIVATE wz3_project)
   add_test(NAME fog_transform COMMAND wz3-fog-tests)

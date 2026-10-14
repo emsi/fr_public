@@ -11,8 +11,10 @@ A headless Radeon run rendered **16,306 consecutive frames at 1024×768**, advan
 the simulation in 16 ms steps with an explicitly supplied font. The independent
 sample audit renders 52/54 positions; two late samples require an earlier render
 target and work in the continuous run. The windowed player uses the saved beat-609
-endpoint. Audible synchronization on a real sound device and comparison with
-original output remain unverified.
+endpoint. Audible synchronization on a real sound device remains unverified.
+An initial release-reference audit found that the supplied editor project differs
+from final 1.01; see the release comparison below. Original-output fidelity is
+not yet established.
 
 ## Play Theta on Linux
 
@@ -1035,10 +1037,76 @@ for each viewport draw.
 Original font metrics, dynamic events, physical audio latency measurement
 and original-frame comparison remain.
 
+## Release reference audit
+
+The [final 1.01 executable on scene.org](https://files.scene.org/view/demos/groups/farbrausch/fr-038_theta_final.zip)
+contains a different project from `data/theta/theta_final.k`. The native player
+currently plays that editor project. Its credits omit the final-version and ryg
+credit lines, use size 1.0, and have an uncached atlas with an empty family name.
+The release instead contains size **1.199981689453125** (the packed F24 version
+of 1.2), a `duality` font atlas with cached metrics and pixels, and the additional
+credits. These are confirmed data differences, not evidence of a shader bug.
+The release's embedded Ogg matches the repository's `theta.ogg` byte for byte.
+
+`tools/release_audit.py` recovers the release graph on Linux without Windows,
+Wine, a GPU or a Windows SDK. It accepts only the executable SHA-256 below,
+emulates its kkrunchy depacker in Unicorn, and stops at the first LoadLibraryA
+call. It supplies no Windows APIs and does not execute the demo. The memory
+snapshot is taken before import resolution/code unfiltering; it is not a runnable
+unpacked PE. Only the embedded static graph and asset bytes are decoded.
+
+```sh
+mkdir -p build/reference/theta
+curl -fL https://files.scene.org/get/demos/groups/farbrausch/fr-038_theta_final.zip \
+  -o build/reference/theta/fr-038_theta_final.zip
+unzip -j build/reference/theta/fr-038_theta_final.zip fr-038-final.exe \
+  -d build/reference/theta
+uv run --no-project --with unicorn python werkkzeug3/native/tools/release_audit.py \
+  --exe build/reference/theta/fr-038-final.exe --output build/reference/theta/extracted
+```
+
+The ZIP SHA-256 is `5b5111affe566961274e6887443259923e47ce61c3ba3fb710514ea414107d81`;
+the EXE SHA-256 is `c11f0fbc6aa65776ea6ec706d8de0777b0f7d94a32378df484cb05ccc6847d8a`.
+Extraction produced 1,329 operators, 67 classes, 89 events, 61 splines, seven blobs
+and one active root (1328). `graph.json` retains connections, exact parameter words,
+animation bytecode, events, spline keys, blob offsets and hashes. `graph.bin`
+SHA-256 is `6fd7977100e5b1eff913eff6c9416c5e31af2d7303dee706121c99374e20c66a`.
+All downloaded/extracted artifacts stay in ignored `build/`.
+
+This is a version-specific audit, not a generic `.kx` loader. The release uses
+one-byte class command IDs rather than the current archive reader's two-byte
+IDs. Its class 0x95 also packs 18 words despite declaring 17; the audit retains
+all words. No BPM or duration is inferred from the undecoded surrounding header.
+The native player does **not yet accept** `graph.bin` or `graph.json`.
+
+The [2011 Annikras video linked by Pouët](https://www.youtube.com/watch?v=rrgzBptM2bM)
+provides an initial visual reference. It is a third-party capture, not a new
+controlled run of the executable. Whole-track audio correlation aligns it at
+**video time = native music time + 3.066875 s**, with correlation 0.99336 and
+five separate 20-second windows above 0.9928. This offset belongs to the video;
+it does not change the player's sample clock. The 1200×720 video excludes the
+letterbox bars present in native 4:3 captures.
+
+With that video saved locally, repeat the alignment and extract samples using
+FFmpeg/ffprobe and NumPy:
+
+```sh
+uv run --no-project --with numpy python werkkzeug3/native/tools/reference_align.py \
+  werkkzeug3/data/theta/theta.ogg build/reference/theta/annikras-reference.mp4 \
+  --output build/reference/theta/aligned --frames 30 120 195 220 250
+```
+
+The tool records media hashes, overlap/window correlations and exact seek times.
+Frame requests use the native 16 ms simulation step. Video frame cadence and
+lossy compression still limit image comparison. Early geometry/camera captures
+correspond visually; the credits expose the confirmed project/font differences.
+This is not a pixel-fidelity pass for the whole demo. Next, import the released
+graph and baked font data before using image differences to adjust rendering.
+
 ## Next steps
 
-1. Verify inferred Print alignment migration and native font metrics against
-   the original executable/GDI.
+1. Add native playback of the recovered final 1.01 graph and cached font atlas;
+   verify Print alignment against the aligned reference.
 2. Reproduce the editor's operator type checking and version migrations.
 3. Compare saved material shading against original frames and extend remaining
    shader/format support where the comparison exposes a difference.
