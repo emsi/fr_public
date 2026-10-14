@@ -77,7 +77,7 @@ def main():
     rendered = sum("image" in record for record in records)
     report = dict(project=str(args.project.resolve()), project_sha256=hashlib.sha256(args.project.read_bytes()).hexdigest(),
                   scope="full demo root; independent samples from fresh players, no audio clock or continuous playback",
-                  rendering="diagnostic scene geometry with saved IPP effects and Layer2D materials",
+                  rendering="diagnostic scene geometry with saved particle, IPP and Layer2D materials",
                   evaluated=evaluated, rendered=rendered, samples=records)
     (args.output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     (args.output / "index.html").write_text(

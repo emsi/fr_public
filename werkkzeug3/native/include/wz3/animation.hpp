@@ -3,6 +3,7 @@
 #include "wz3/project.hpp"
 #include <map>
 #include <optional>
+#include <memory>
 
 namespace wz3 {
 using AnimationVector = std::array<float,4>;
@@ -26,9 +27,11 @@ struct AnimationProgram {
 };
 AnimationProgram compile_animation(const Operator&,const SplineLibrary&);
 
+struct AnimationInstanceCursor {std::uint64_t chain{};std::size_t next{};};
 struct AnimationEnvironment {
   std::array<AnimationVector,32> variables{};
   std::optional<std::size_t> event_spline;
+  std::shared_ptr<AnimationInstanceCursor> instances=std::make_shared<AnimationInstanceCursor>();
 };
 AnimationEnvironment frame_environment(std::int32_t beat_16_16);
 
@@ -55,9 +58,10 @@ class EventAnimationScope {
   AnimationEnvironment& environment;
   std::array<AnimationVector,8> saved;
   std::optional<std::size_t> saved_spline;
+  std::shared_ptr<AnimationInstanceCursor> saved_instances;
 public:
   float time{};
-  EventAnimationScope(const Event&,std::int32_t beat_16_16,const SplineLibrary&,AnimationEnvironment&);
+  EventAnimationScope(const Event&,std::int32_t beat_16_16,const SplineLibrary&,AnimationEnvironment&,std::optional<std::size_t> event_id={});
   ~EventAnimationScope();
   EventAnimationScope(const EventAnimationScope&)=delete;
   EventAnimationScope& operator=(const EventAnimationScope&)=delete;

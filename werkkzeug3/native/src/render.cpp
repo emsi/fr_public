@@ -262,6 +262,7 @@ void draw_scene_geometry(const SceneFrame& frame,unsigned width,unsigned height)
   glDeleteProgram(program);const auto error=glGetError();if(error!=GL_NO_ERROR)throw std::runtime_error("scene GPU error "+std::to_string(error));
 }
 std::vector<std::uint8_t> render_scene(const SceneFrame& frame,unsigned width,unsigned height) {
+  if(!frame.effects.empty())throw std::runtime_error("effect scenes require the wz3-frame-render compositor");
   if(width<16 || height<16 || width>4096 || height>4096)throw std::runtime_error("invalid scene render size");
   Context context(width,height,true);
   std::cerr<<"GL renderer: "<<glGetString(GL_RENDERER)<<'\n';

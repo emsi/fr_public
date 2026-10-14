@@ -331,16 +331,17 @@ are not applied. This is animated scene geometry, not a finished Theta frame.
 
 ```sh
 python3 werkkzeug3/native/tools/scene_audit.py \
-  --renderer build/native/wz3-scene-render --output build/native/theta-scene-gallery \
-  --expect-supported 10 --expect-unsupported 13
+  --output build/native/theta-scene-audit \
+  --expect-supported 12 --expect-unsupported 11
 ```
 
-At the audit's default time of 0.5, **10 of 23 reachable viewports** evaluate in
-isolation: 590, 623, 697, 719, 723, 827, 857, 924, 1111 and 1728. The other 13 report their first
-unimplemented dependency, including PartSystem and Print, or a missing
+At the audit's default time of 0.5, **12 of 23 reachable viewports** evaluate in
+isolation: 590, 623, 697, 719, 723, 827, 857, 924, 979, 980, 1111 and 1728. The other 11 report their first
+unimplemented dependency, including Print, or a missing
 timeline context required by Event. They are
 not silently omitted from successful frames. This sample coverage is not full
-timeline coverage. Reports retain scene snapshots, hashes and graphics driver
+timeline coverage. The standalone geometry renderer explicitly rejects effect
+scenes; use `wz3-frame-render` to draw their saved particle materials. Reports retain scene snapshots, hashes and graphics driver
 output, and the optional HTML/PNG gallery uses only Python's standard library.
 
 Clang ASan/UBSan checks cover scene composition, shared geometry, per-instance animation,
@@ -352,8 +353,8 @@ motion and depth independent of instance order; they also pass with llvmpipe.
 
 All **nine reachable Scene Particles operators** (`0xc5`) now execute. These
 repeat child meshes/scenes along lines or named splines; the separate
-PartEmitter/PartSystem effects simulate particles over elapsed milliseconds and
-remain unported. The native operator supports seeded cube, normalized-surface
+PartEmitter/PartSystem effects simulate particles over elapsed milliseconds
+(see below). The native operator supports seeded cube, normalized-surface
 and volume distributions, random/ordered phases, come-in gating, looping controls,
 gravity, pulse displacement, spline orientation and random/angular velocities.
 Children receive the original particle index in `KV_SELECT` and wrapped phase in
@@ -384,7 +385,7 @@ Windows executable capture.
 Four additional root midpoint scenes now emit 333 instances at beat 96, 185 at
 120, 645 at 184 and 754 at 256. They render through the native compositor on
 Radeon and llvmpipe using diagnostic geometry shading. A full audit renders
-28 of 54 root samples; remaining failures are PartSystem, Walk and Print.
+48 of 54 root samples after the emitter port; remaining failures are Walk and Print.
 
 ```sh
 build/native/wz3-frame-render werkkzeug3/data/theta/theta_final.k root 96 \
@@ -393,11 +394,75 @@ ctest --test-dir build/native -R scene_particles --output-on-failure
 ```
 
 GenSpline operator inputs and the optimized `0x100` mesh-instance path are
-explicitly unsupported; neither occurs in Theta's nine operators. Their local
-seeded RNG does not yet model interactions with the global RNG used by the
-unported emitter effects. Counts, random rejection, phase ranges and cache memory
+explicitly unsupported; neither occurs in Theta's nine operators. Seeded mesh
+clouds and emitters now share a runtime RNG, with cloud state stored per event
+instance and execution occurrence. Startup/precalculation RNG consumption still
+differs from the original executable. Counts, random rejection, phase ranges and cache memory
 are bounded. Final scene materials, lights and shadows still require their
 rendering pipeline.
+
+## Stateful emitters and particle materials
+
+Both Theta `PartEmitter` operators (960 and 1451) and both `PartSystem` operators
+(961 and 1465) execute natively. The runtime retains 16 bounded particle slots,
+emitter burst counters and round-robin cursors. The saved 17-word emitter layout
+receives the editor defaults for slot count, mesh fade and morph parameters.
+Theta's emitters have no mesh inputs; mesh emitters remain explicitly unsupported.
+
+`FramePlayer::frame` accepts milliseconds independently of the 16.16 beat position.
+Omitting them derives an offline clock from the saved BPM (138 for Theta).
+`ScenePlayer::begin_frame` provides the same clock for callers of the scene API;
+a fresh standalone scene sample has zero elapsed time. Backward time produces a
+zero delta while preserving particles, matching `KEnvironment::InitFrame`.
+Construct a new player to restart simulation. A large first-frame jump does not
+reconstruct intervening emission or motion.
+
+Scene traversal emits particles immediately and queues effect paint jobs. Jobs
+retain the scoped animation variables and world matrix, run after all emitters
+and MatHack operations, and sort by the initial material pass plus pass adjustment.
+Equal keys retain reverse traversal order, matching the source's prepend list
+and stable radix sort. Each PartSystem consumes only its first material pass.
+Billboards face the saved camera (or use the source's world-aligned flag), retain
+UVs, life-dependent size/color and the unusual alpha packing in `SetVert`.
+Particles draw **before** the millisecond movement/gravity update. Expiration uses
+strict `age > lifetime` and swap deletion; multiple paint jobs can advance the
+same slot more than once in a frame.
+
+The GLES compositor draws these billboards using their saved unlit texture
+combiners, vertex colors, blend/depth/cull state and UV transforms. Scene meshes
+still use diagnostic shading. Particle jobs retain their relative paint order;
+interleaving with the complete mesh material/light/shadow pipeline remains to be
+ported. The scene-only geometry renderer rejects effect scenes instead of omitting
+their particles.
+
+For a preview with accumulated motion and retained GPU targets, replay from zero:
+
+```sh
+build/native/wz3-frame-render werkkzeug3/data/theta/theta_final.k root 8 \
+  build/native/theta-emitter-8.ppm --diagnostic-geometry --preroll-ms 16
+# CPU replay runs the same simulation without rendering intermediate targets.
+build/native/wz3-frame werkkzeug3/data/theta/theta_final.k root 8 \
+  build/native/theta-emitter-8.json --preroll-ms 16
+ctest --test-dir build/native -R 'effect_particles|gpu_frame_compositor' --output-on-failure
+```
+
+The fixed replay step is part of the simulation: this reproduces the archive's
+frame-dependent update scheme, not a new frame-rate-independent integrator.
+`effect_particles` compiles the unmodified archived PartSystem handler and
+`SetVert` into a test host, using an independent SSE2 translation of MMX Fade64.
+It compares billboard positions, packed colors, UVs, surviving particles,
+velocities and ages across fade endpoints, camera/world alignment and expiration.
+Separate analytical tests cover emission rates, capacities, bursts, event-owned
+state, multiple slots, backward clocks and deferred pass ordering. The actual
+opening accumulates 100 moving particles after 1000 ms at 10 ms steps. GLES tests
+verify particle material color, winding and depth occlusion on Radeon and llvmpipe.
+
+The source oracle shares portable matrix/vector primitives and is not an original
+executable capture. The emitter's three random function arguments use explicit
+right-to-left evaluation, inferred from the original x86 compiler; exact seed and
+argument-order fidelity still need reference captures. Precalculation RNG draws,
+legacy texture formats, full scene material rendering and audio timing remain
+separate fidelity work.
 
 ## Timeline events inside scenes
 
@@ -409,8 +474,8 @@ hand. Load/Store/Nop aliases on that branch retain their animation scopes.
 build/native/wz3-scene werkkzeug3/data/theta/theta_final.k scene.generation2 56 build/native/event.json --event
 build/native/wz3-scene-render werkkzeug3/data/theta/theta_final.k cp1 72 build/native/cp1.ppm --event
 python3 werkkzeug3/native/tools/scene_audit.py --events \
-  --renderer build/native/wz3-scene-render --output build/native/theta-event-gallery \
-  --expect-supported 7 --expect-unsupported 50
+  --output build/native/theta-event-audit \
+  --expect-supported 8 --expect-unsupported 49
 ```
 
 `EventTimeline` resolves names afresh, ignores disabled or unresolved events,
@@ -424,8 +489,8 @@ executes only the first. Cached mesh inputs keep the original behavior of
 bypassing execution, including an Event wrapper around a mesh.
 
 The `cp1` scene now emits nine mesh instances at beat 72, including its nested
-`roataiont1` event. Seven of 57 enabled IPP event midpoint samples currently reach
-supported viewports: `generation2`, `generation4`, `generation6`, `generation7`,
+`roataiont1` event. Eight of 57 enabled IPP event midpoint samples currently reach
+supported viewports: `generation2`, `generation4`, `generation6`, `generation7`, `generation9`,
 `cp1`, `cp2a` and `cp3a`. This count includes overlay events that require the
 frame compositor rather than the scene-only API; it is separate from the isolated viewport audit.
 The scene API returns every viewport execution for overlapping events. The
@@ -460,7 +525,7 @@ KA_CHANGEPARA is explicitly rejected until cache rebuilding is implemented.
 after all scene jobs have been emitted, so an update after a mesh in the traversal
 still affects that frame. Viewport 1156 at beat 384/event 0 now evaluates 14 mesh
 instances and 11 lights, including nested events and material updates. Viewports
-979/980 progress past MatHack and stop at their remaining PartSystem dependency.
+979/980 now also queue their PartSystem draw using the updated material.
 
 ```sh
 build/native/wz3-material werkkzeug3/data/theta/theta_final.k --audit
@@ -533,19 +598,19 @@ build/native/wz3-frame werkkzeug3/data/theta/theta_final.k root 72 build/native/
 build/native/wz3-frame-render werkkzeug3/data/theta/theta_final.k root 72 \
   build/native/root-72.ppm --diagnostic-geometry
 python3 werkkzeug3/native/tools/frame_audit.py \
-  --renderer build/native/wz3-frame-render --output build/native/theta-particle-gallery \
-  --expect-evaluated 28 --expect-rendered 28
+  --renderer build/native/wz3-frame-render --output build/native/theta-emitter-gallery \
+  --expect-evaluated 48 --expect-rendered 48
 ```
 
 The graphics command **requires `--diagnostic-geometry` when a scene is present**.
-It draws scene geometry with the existing checker shader, then executes the
-saved postprocessing and overlays. Omitting the option fails rather than silently
+It draws scene geometry with the existing checker shader and particles with
+their saved materials, then executes the saved postprocessing and overlays. Omitting the option fails rather than silently
 substituting a scene shader. This is a compositor milestone, not complete Theta
 playback or a claim of original visual fidelity.
 
 The audit samples the full root at 54 distinct midpoints from 57 enabled IPP
-events. **28 samples execute and render**; 26 fail explicitly at PartSystem,
-Walk or Print. Beats 56, 72, 144 and 216 each emit 14 draws with one viewport;
+events. **48 samples execute and render**; six fail explicitly at Walk (three)
+or Print (three). Beats 56, 72, 144 and 216 each emit 14 draws with one viewport;
 beat 384 emits 17 draws with two viewports, including render-to-texture. Overlay
 transition samples emit additional draws. The gallery retains command snapshots,
 image hashes, exact failures and graphics driver details. Each gallery sample
@@ -556,9 +621,9 @@ CPU tests cover ordering, scoped global variables, shared target reuse, crop UVs
 nested master restoration, the three-slot capacity, zero-duration events and
 failure recovery. GPU tests check overlay alpha blending, target orientation,
 resolution changes, blur rounding, Merge/Crashzoom and explicit diagnostic opt-in.
-Nine root samples also run repeatedly in one native player/renderer. The 24-test
+Nine root samples also run repeatedly in one native player/renderer. The 25-test
 Release suite passes on Radeon RX 7900 XT; compositor tests pass on llvmpipe and
-the 14-test CPU suite passes under Clang ASan/UBSan. Small driver-dependent
+the 15-test CPU suite passes under Clang ASan/UBSan. Small driver-dependent
 rounding differences are possible; bit-identical original output is unverified.
 
 Current limits: unsupported IPP commands/flags fail explicitly, including Merge's
@@ -567,12 +632,12 @@ the original initial contents are unspecified; later draws retain it. Targets
 currently have separate depth attachments. Imported/procedural textures still
 use RGBA8 and native mipmaps rather than all legacy format rules. Scene geometry
 uploads are shared within a viewport draw but are not yet retained across frames.
-Scene lighting, shadow volumes, fog, particle/effect execution, uncached text
+Scene lighting, shadow volumes, fog, remaining effect execution, uncached text
 metrics, dynamic events, audio timing and original-frame comparison remain.
 
 ## Next steps
 
-1. Extend root scene execution to PartEmitter/PartSystem, Walk and Print, and verify native
+1. Extend root scene execution to Walk and Print, and verify native
    font metrics against GDI.
 2. Reproduce the editor's operator type checking and version migrations.
 3. Connect material passes to scene drawing and implement lighting/shadow and

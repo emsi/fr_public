@@ -53,6 +53,23 @@ void scene_opt_in() {
   check(rejected,"scene geometry was silently substituted for saved material drawing");
   const auto pixels=renderer.render(frame,true);check(pixels[(16*32+16)*4]>0,"diagnostic scene geometry failed to render");
 }
+void particle_materials() {
+  FrameFixture x;const auto material=x.material(0xffffffff,0x2200);x.p.operators[material].parameters[19]=0x40;x.p.operators[material].parameters[0]&=~2u;
+  const auto effect=x.add(0x64,{0,16,0xff804020,0xff804020,0xff804020,f(1),f(1),f(1),f(.5f),0,0,0},{},{material});
+  const auto emitter=x.add(0x63,{0,0,1,f(1),f(100),0,0,0,0,0,0,0,0,0,0,0,0});
+  const auto scene=x.add(0xc1,{}, {effect,emitter}),viewport=x.viewport();x.g.nodes[viewport].inputs={scene};
+  const auto root=x.add(0x0d,{}, {viewport});wz3::FramePlayer player(x.p,x.g);wz3::FrameRenderer renderer(x.p,x.g);
+  auto frame=player.frame(root,0,64,64,10);const auto& sc=std::get<wz3::SceneFrame>(frame.commands[0].draw);
+  check(sc.instances.empty() && sc.effects.size()==1 && sc.effects[0].vertices.size()==4,"GPU particle fixture must contain a real effect quad");
+  const auto pixels=renderer.render(frame,true);pixel(pixels,64,32,32,{128,64,32});pixel(pixels,64,0,0,{0,0,0});
+  // Particle materials must retain depth testing. Seed the same target's depth
+  // with a frontmost opaque Layer2D, then clear only color before the scene.
+  auto& rendered=std::get<wz3::SceneFrame>(frame.commands[0].draw);rendered.viewport_flags=1;
+  wz3::FrameQuad front;front.shader.words[0]=0x20102;front.shader.words[9]=0x10;front.shader.words[28]=0xffffffff;front.depth=.01f;
+  for(unsigned i=0;i<4;++i)front.shader.words[24+i]=f(1);front.shader.words[34]=front.shader.words[35]=front.shader.words[36]=front.shader.words[43]=front.shader.words[44]=f(1);
+  frame.commands.insert(frame.commands.begin(),{root,frame.commands[0].target,front});
+  const auto occluded=renderer.render(frame,true);pixel(occluded,64,32,32,{0,0,0});
+}
 void theta(const char* path) {
   const auto p=wz3::read_project(path);const auto g=wz3::connect(p);wz3::FramePlayer player(p,g);wz3::FrameRenderer renderer(p,g);
   for(int beat:{56,72,96,120,144,184,216,256,384}) {
@@ -65,6 +82,6 @@ void theta(const char* path) {
 }
 }
 int main(int argc,char** argv) {
-  try {layers();targets();blur_and_merge();crashzoom_and_merge();scene_opt_in();if(argc>1)theta(argv[1]);}
+  try {layers();targets();blur_and_merge();crashzoom_and_merge();scene_opt_in();particle_materials();if(argc>1)theta(argv[1]);}
   catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}
 }

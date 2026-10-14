@@ -3,6 +3,7 @@
 // sMatrix::InitDir in _types.cpp. Retain source quirks rather than "fixing" art.
 #include "wz3/particles.hpp"
 #include "mesh_kernel.hpp"
+#include "particle_random.hpp"
 #include <bit>
 #include <cfenv>
 
@@ -14,37 +15,16 @@ struct Nearest {
   Nearest() {std::fesetround(FE_TONEAREST);}
   ~Nearest() {std::fesetround(previous);}
 };
-class Random {
-  std::uint32_t state;
-public:
-  explicit Random(std::uint32_t seed) {
-    const auto product=seed*121u;
-    const auto mix=seed+seed*17u+product+std::uint32_t(std::bit_cast<std::int32_t>(product)/17);
-    state=mix;for(unsigned i=0;i<4;++i) {if(i)state^=mix;next();}
-  }
-  std::uint32_t next() {
-    const auto a=state*0x343fdu+0x269ec3u;state=a*0x343fdu+0x269ec3u;
-    return ((state>>10)&0xffffu)|((a<<6)&0xffff0000u);
-  }
-  float real(float max=1) {return (float(next()&0x3fffffff)*max)/1073741824.0f;}
-  legacy::sVector vector() {
-    legacy::sVector v;v.x=real(2)-1;v.y=real(2)-1;v.z=real(2)-1;return v;
-  }
-  legacy::sVector sphere() {
-    for(unsigned tries=0;tries<1024;++tries) {auto v=vector();if(v.Dot3(v)<=1)return v;}
-    throw std::runtime_error("particle random rejection limit");
-  }
-};
 SceneMatrix matrix(const legacy::sMatrix& m) {
   return {m.i.x,m.i.y,m.i.z,m.i.w,m.j.x,m.j.y,m.j.z,m.j.w,m.k.x,m.k.y,m.k.z,m.k.w,m.l.x,m.l.y,m.l.z,m.l.w};
 }
 }
 struct SceneParticles::Impl {
-  const SplineLibrary& splines;
+  const SplineLibrary& splines;std::shared_ptr<ParticleRandom> random;
   struct Particle {legacy::sVector position,speed,rotation,rotation_speed;};
   struct Cloud {std::array<std::uint32_t,16> key{};std::vector<Particle> particles;bool initialized{};};
   std::map<std::size_t,Cloud> clouds;std::size_t bytes{};
-  explicit Impl(const SplineLibrary& s):splines(s) {}
+  Impl(const SplineLibrary& s,std::shared_ptr<ParticleRandom> rng):splines(s),random(rng ? std::move(rng) : std::make_shared<ParticleRandom>()) {}
   const Cloud& cloud(std::size_t id,const std::array<std::uint32_t,30>& p) {
     // RandSpeed is stored but not compared by the source. It is used from the
     // current parameters during motion, so changing it does not reseed a cloud.
@@ -53,7 +33,7 @@ struct SceneParticles::Impl {
     auto& cached=clouds[id];if(cached.initialized && cached.key==key)return cached;
     const auto new_bytes=std::size_t(p[1])*sizeof(Particle),old_bytes=cached.particles.size()*sizeof(Particle);
     require(new_bytes<=64u*1024*1024-(bytes-old_bytes),"scene particle cache budget exceeded");
-    Cloud next;next.key=key;next.particles.reserve(p[1]);Random rng(p[2]);const unsigned mode=p[0];
+    Cloud next;next.key=key;next.particles.reserve(p[1]);auto& rng=*random;rng.seed(p[2]);const unsigned mode=p[0];
     for(unsigned i=0;i<p[1];++i) {
       Particle v;
       if((mode&12)==8)v.position=rng.sphere();
@@ -70,7 +50,7 @@ struct SceneParticles::Impl {
     next.initialized=true;bytes=bytes-old_bytes+new_bytes;cached=std::move(next);return cached;
   }
 };
-SceneParticles::SceneParticles(const SplineLibrary& s):impl(std::make_unique<Impl>(s)) {}
+SceneParticles::SceneParticles(const SplineLibrary& s,std::shared_ptr<ParticleRandom> rng):impl(std::make_unique<Impl>(s,std::move(rng))) {}
 SceneParticles::~SceneParticles()=default;
 std::vector<SceneParticle> SceneParticles::evaluate(std::size_t id,std::span<const std::uint32_t> parameters,std::optional<std::size_t> spline) {
   const Nearest rounding;

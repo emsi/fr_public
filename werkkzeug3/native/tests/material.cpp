@@ -91,10 +91,9 @@ void theta(const char* file) {
   }
   check(count==65 && passes==120,"reachable Theta material/pass count");std::cout<<count<<" Theta materials, "<<passes<<" render passes\n";
   wz3::ScenePlayer player(p,g);for(auto id:{979u,980u}) {
-    bool particles=false;
-    try {player.viewport(id,wz3::frame_environment(32768),4.0f/3);}
-    catch(const std::runtime_error& error) {particles=std::string_view(error.what()).find("961 (PartSystem)")!=std::string_view::npos;}
-    check(particles,"MatHack scene must reach its remaining particle-system dependency");
+    const auto frame=player.viewport(id,wz3::frame_environment(32768),4.0f/3);
+    check(frame.effects.size()==1 && frame.effects[0].operator_id==961,"MatHack scene particle paint job");
+    check(frame.effects[0].shader.words[0]==0x2200,"particle draw lost its saved material");
   }
   wz3::EventTimeline timeline(p,g);timeline.begin_frame(384*65536);auto env=wz3::frame_environment(timeline.beat());const wz3::SplineLibrary splines(p);
   const wz3::EventAnimationScope event(p.events[0],timeline.beat(),splines,env);

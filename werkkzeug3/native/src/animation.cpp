@@ -290,8 +290,8 @@ bool event_active(const Event& event,std::int32_t beat) {
   const auto start=signed_word(event.fields[1]),end=signed_word(event.fields[2]);
   return !event.fields[10] && (start==end || (beat>=start && beat<end));
 }
-EventAnimationScope::EventAnimationScope(const Event& event,std::int32_t beat,const SplineLibrary& splines,AnimationEnvironment& env):
-    environment(env),saved_spline(env.event_spline) {
+EventAnimationScope::EventAnimationScope(const Event& event,std::int32_t beat,const SplineLibrary& splines,AnimationEnvironment& env,std::optional<std::size_t> event_id):
+    environment(env),saved_spline(env.event_spline),saved_instances(env.instances) {
   const NearestRounding rounding;std::copy_n(env.variables.begin(),8,saved.begin());
   const auto start=signed_word(event.fields[1]),end=signed_word(event.fields[2]);
   if(start<end)time=float(std::int64_t(beat)-start)/float(std::int64_t(end)-start);
@@ -306,8 +306,9 @@ EventAnimationScope::EventAnimationScope(const Event& event,std::int32_t beat,co
   // A missing event spline leaves an enclosing event's spline in place.
   const auto spline=splines.find(event.spline);if(spline)env.event_spline=spline;
   std::copy(values.begin(),values.end(),env.variables.begin());
+  if(event_id)env.instances=std::make_shared<AnimationInstanceCursor>(AnimationInstanceCursor{*event_id+1,0});
 }
 EventAnimationScope::~EventAnimationScope() {
-  std::copy(saved.begin(),saved.end(),environment.variables.begin());environment.event_spline=saved_spline;
+  std::copy(saved.begin(),saved.end(),environment.variables.begin());environment.event_spline=saved_spline;environment.instances=saved_instances;
 }
 } // namespace wz3

@@ -84,7 +84,8 @@ void theta(const char* path) {
     const auto& scene=std::get<wz3::SceneFrame>(frame.commands[0].draw);
     check(scene.viewport_id==sample[1] && scene.instances.size()==sample[2],"Theta particle scene instance count");
   }
-  rejects([&]{player.frame(root,0,1024,768);},"1465 (PartSystem)");
+  const auto opening=player.frame(root,0,1024,768);
+  check(!std::get<wz3::SceneFrame>(opening.commands[0].draw).effects.empty(),"opening particle effect was not queued");
 }
 }
 int main(int argc,char** argv) {

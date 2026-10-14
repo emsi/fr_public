@@ -28,6 +28,23 @@ constexpr const char* quad_vertex=R"(#version 300 es
     }
     material_vertex_color=vec4(0.0);
   })";
+constexpr const char* particle_vertex=R"(#version 300 es
+  layout(location=0) in vec3 position;
+  layout(location=1) in vec2 uv;
+  layout(location=2) in vec4 color;
+  uniform mat4 view_projection;
+  uniform mat3 uv_transform[4];
+  uniform vec4 flip_texture;
+  out vec2 material_uv[4];
+  out vec4 material_vertex_color;
+  void main() {
+    gl_Position=view_projection*vec4(position,1.0);
+    for(int i=0;i<4;++i) {
+      material_uv[i]=(uv_transform[i]*vec3(uv,1.0)).xy;
+      if(flip_texture[i]>0.5)material_uv[i].y=1.0-material_uv[i].y;
+    }
+    material_vertex_color=color.bgra;
+  })";
 void clear(FrameClear c) {
   glDepthMask(GL_TRUE);glClearDepthf(1);glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
   glClearColor(((c.color>>16)&255)/255.0f,((c.color>>8)&255)/255.0f,(c.color&255)/255.0f,(c.color>>24)/255.0f);
@@ -40,18 +57,18 @@ struct FrameRenderer::Impl {
   std::map<std::size_t,Surface> surfaces;
   std::map<std::size_t,GLuint> bitmaps;
   std::map<std::string,GLuint> programs;
-  GLuint vao{};std::array<GLuint,4> samplers{};
+  GLuint vao{},particle_buffer{};std::array<GLuint,4> samplers{};
   std::size_t surface_bytes{},bitmap_bytes{};
   Impl(const Project& p,const Graph& g):project(p),graph(g) {
     std::cerr<<"GL vendor: "<<glGetString(GL_VENDOR)<<"\nGL renderer: "<<glGetString(GL_RENDERER)<<"\nGL version: "<<glGetString(GL_VERSION)<<'\n';
-    glGenVertexArrays(1,&vao);glGenSamplers(4,samplers.data());
+    glGenBuffers(1,&particle_buffer);glGenVertexArrays(1,&vao);glGenSamplers(4,samplers.data());
   }
   ~Impl() {
     eglMakeCurrent(context.display,context.surface,context.surface,context.context);
     for(const auto& [id,s]:surfaces) {static_cast<void>(id);destroy(s);}
     for(const auto& [id,t]:bitmaps) {static_cast<void>(id);glDeleteTextures(1,&t);}
     for(const auto& [source,p]:programs) {static_cast<void>(source);glDeleteProgram(p);}
-    glDeleteSamplers(4,samplers.data());glDeleteVertexArrays(1,&vao);
+    glDeleteBuffers(1,&particle_buffer);glDeleteSamplers(4,samplers.data());glDeleteVertexArrays(1,&vao);
   }
   void activate() {gles::egl_check(eglMakeCurrent(context.display,context.surface,context.surface,context.context),"frame context activation");}
   static void destroy(const Surface& s) {glDeleteTextures(1,&s.color);glDeleteRenderbuffers(1,&s.depth);glDeleteFramebuffers(1,&s.fbo);}
@@ -79,23 +96,23 @@ struct FrameRenderer::Impl {
     glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,t->width,t->height,0,GL_RGBA,GL_UNSIGNED_BYTE,pixels.data());glGenerateMipmap(GL_TEXTURE_2D);
     bitmap_bytes+=pixels.size();bitmaps.emplace(id,texture);return texture;
   }
-  GLuint program(const MaterialShader& s) {
-    const auto source=material_fragment_shader(s);if(auto found=programs.find(source);found!=programs.end())return found->second;
+  GLuint program(const MaterialShader& s,bool particle) {
+    const auto source=material_fragment_shader(s);const auto key=(particle ? "particle:" : "quad:")+source;if(auto found=programs.find(key);found!=programs.end())return found->second;
     require(programs.size()<4096,"frame shader cache limit");
-    const auto vertex=gles::shader(GL_VERTEX_SHADER,quad_vertex);GLuint fragment;
+    const auto vertex=gles::shader(GL_VERTEX_SHADER,particle ? particle_vertex : quad_vertex);GLuint fragment;
     try {fragment=gles::shader(GL_FRAGMENT_SHADER,source.c_str());}catch(...) {glDeleteShader(vertex);throw;}
     const auto p=glCreateProgram();glAttachShader(p,vertex);glAttachShader(p,fragment);glLinkProgram(p);glDeleteShader(vertex);glDeleteShader(fragment);
     GLint ok=0;glGetProgramiv(p,GL_LINK_STATUS,&ok);
     if(!ok) {char log[4096]{};glGetProgramInfoLog(p,sizeof(log),nullptr,log);glDeleteProgram(p);throw std::runtime_error(std::string("frame shader link failed: ")+log);}
-    programs.emplace(source,p);return p;
+    programs.emplace(key,p);return p;
   }
-  void quad(const FrameQuad& q,std::size_t destination) {
+  void quad(const FrameQuad& q,std::size_t destination,const SceneEffectDraw* effect=nullptr,const SceneMatrix* projection=nullptr) {
     const auto& s=q.shader;const auto flags=s.words[0];
-    require(!(flags&0xfc0078),"Layer2D fog, shadow or depth bias is not ported");
-    const auto p=program(s);glUseProgram(p);glBindVertexArray(vao);
+    require(!(flags&0xfc0078),"unlit draw fog, shadow or depth bias is not ported");
+    const auto p=program(s,effect!=nullptr);glUseProgram(p);glBindVertexArray(vao);
     std::array<float,36> matrices{};std::array<float,16> rects{},colors{};std::array<float,4> flip{};
     for(unsigned i=0;i<4;++i) {
-      auto uv_shader=s;uv_shader.words[4+i]&=~0x10u; // Quad UV0 and UV1 are supplied explicitly.
+      auto uv_shader=s;if(!effect)uv_shader.words[4+i]&=~0x10u; // Quad UV0 and UV1 are supplied explicitly.
       const auto m=material_uv_matrix(uv_shader,i);std::copy(m.begin(),m.end(),matrices.begin()+i*9);
       std::copy(q.uv[i].begin(),q.uv[i].end(),rects.begin()+i*4);
       for(unsigned c=0;c<4;++c)colors[i*4+c]=((s.words[28+i]>>(c==0 ? 16 : c==1 ? 8 : c==2 ? 0 : 24))&255)/255.0f;
@@ -120,7 +137,7 @@ struct FrameRenderer::Impl {
     glUniform4fv(glGetUniformLocation(p,"rectangle"),1,q.rectangle.data());glUniform1f(glGetUniformLocation(p,"depth"),q.depth);
     glUniform4fv(glGetUniformLocation(p,"uv_rect[0]"),4,rects.data());glUniformMatrix3fv(glGetUniformLocation(p,"uv_transform[0]"),4,GL_FALSE,matrices.data());
     glUniform4fv(glGetUniformLocation(p,"flip_texture"),1,flip.data());glUniform4fv(glGetUniformLocation(p,"material_colors[0]"),4,colors.data());
-    glFrontFace(GL_CCW);if(flags&2)glDisable(GL_CULL_FACE);else {glEnable(GL_CULL_FACE);glCullFace((flags&4) ? GL_FRONT : GL_BACK);}
+    glFrontFace(effect ? GL_CW : GL_CCW);if(flags&2)glDisable(GL_CULL_FACE);else {glEnable(GL_CULL_FACE);glCullFace((flags&4) ? GL_FRONT : GL_BACK);}
     glEnable(GL_DEPTH_TEST);glDepthMask((flags&0x100) ? GL_TRUE : GL_FALSE);glDepthFunc(!(flags&0x200) ? GL_ALWAYS : (flags&0x80) ? GL_EQUAL : GL_LEQUAL);
     const auto blend=(flags>>12)&15;require(blend<=9,"unsupported frame blend mode");
     if(!blend)glDisable(GL_BLEND);
@@ -129,8 +146,40 @@ struct FrameRenderer::Impl {
       constexpr GLenum dst[]={0,GL_ONE_MINUS_SRC_ALPHA,GL_ONE,GL_SRC_COLOR,GL_SRC_COLOR,GL_ONE_MINUS_SRC_COLOR,GL_ONE,GL_ONE_MINUS_SRC_COLOR,GL_ONE,GL_ONE};
       glEnable(GL_BLEND);glBlendEquation(blend==6 ? GL_FUNC_REVERSE_SUBTRACT : GL_FUNC_ADD);glBlendFunc(src[blend],dst[blend]);
     }
-    glDrawArrays(GL_TRIANGLE_STRIP,0,4);
+    if(!effect)glDrawArrays(GL_TRIANGLE_STRIP,0,4);
+    else {
+      require(projection && effect->vertices.size()%4==0 && effect->vertices.size()<=65536*4,"invalid particle geometry");
+      std::vector<SceneEffectVertex> triangles;triangles.reserve(effect->vertices.size()/4*6);
+      for(std::size_t base=0;base<effect->vertices.size();base+=4)for(unsigned i:{0u,1u,2u,0u,2u,3u})triangles.push_back(effect->vertices[base+i]);
+      glUniformMatrix4fv(glGetUniformLocation(p,"view_projection"),1,GL_FALSE,projection->data());
+      glBindBuffer(GL_ARRAY_BUFFER,particle_buffer);glBufferData(GL_ARRAY_BUFFER,triangles.size()*sizeof(SceneEffectVertex),triangles.data(),GL_STREAM_DRAW);
+      glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,sizeof(SceneEffectVertex),reinterpret_cast<void*>(offsetof(SceneEffectVertex,position)));
+      glVertexAttribPointer(1,2,GL_FLOAT,GL_FALSE,sizeof(SceneEffectVertex),reinterpret_cast<void*>(offsetof(SceneEffectVertex,uv)));
+      glVertexAttribPointer(2,4,GL_UNSIGNED_BYTE,GL_TRUE,sizeof(SceneEffectVertex),reinterpret_cast<void*>(offsetof(SceneEffectVertex,color)));
+      glEnableVertexAttribArray(0);glEnableVertexAttribArray(1);glEnableVertexAttribArray(2);
+      glDrawArrays(GL_TRIANGLES,0,GLsizei(triangles.size()));
+    }
   }
+  void particles(const SceneFrame& scene,const FrameTarget& target) {
+    const auto projection=scene_view_projection(scene.camera,target.width,target.height);
+    for(const auto& effect:scene.effects) {
+      if(effect.vertices.empty())continue;
+      FrameQuad q;q.shader=effect.shader;
+      for(unsigned slot=0;slot<4;++slot)if(q.shader.textures[slot]) {
+        auto id=*q.shader.textures[slot];bool resolved=false;
+        for(unsigned depth=0;depth<512;++depth) {
+          require(id<project.operators.size() && graph.nodes[id].active,"invalid effect texture");const auto cmd=project.operators[id].command;
+          if(cmd==1) {require(graph.nodes[id].links.size()==1 && graph.nodes[id].links[0],"unresolved effect texture Load");id=*graph.nodes[id].links[0];}
+          else if(cmd==2 || cmd==3) {require(graph.nodes[id].inputs.size()==1,"invalid effect texture alias");id=graph.nodes[id].inputs[0];}
+          else {resolved=true;break;}
+        }
+        require(resolved,"effect texture alias depth limit");
+        q.textures[slot]=project.operators[id].command==0x26 ? FrameTexture{true,13+id} : FrameTexture{false,id};
+      }
+      quad(q,target.surface,&effect,&projection);
+    }
+  }
+
 };
 FrameRenderer::FrameRenderer(const Project& p,const Graph& g):impl(std::make_unique<Impl>(p,g)) {}
 FrameRenderer::~FrameRenderer()=default;
@@ -148,7 +197,7 @@ std::vector<std::uint8_t> FrameRenderer::render(const DemoFrame& frame,bool diag
     try {
       if(const auto* q=std::get_if<FrameQuad>(&c.draw))s.quad(*q,c.target.surface);
       else if(const auto* cl=std::get_if<FrameClear>(&c.draw))clear(*cl);
-      else {const auto& scene=std::get<SceneFrame>(c.draw);clear({scene.viewport_flags&3,scene.background});draw_scene_geometry(scene,c.target.width,c.target.height);}
+      else {const auto& scene=std::get<SceneFrame>(c.draw);clear({scene.viewport_flags&3,scene.background});if(!scene.instances.empty())draw_scene_geometry(scene,c.target.width,c.target.height);s.particles(scene,c.target);}
       require(glGetError()==GL_NO_ERROR,"frame draw produced an OpenGL error");
     }catch(const std::exception& e) {throw std::runtime_error("operator "+std::to_string(c.operator_id)+": "+e.what());}
   }

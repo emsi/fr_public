@@ -22,7 +22,7 @@ struct FrameCommand {
   std::variant<FrameClear,FrameQuad,SceneFrame> draw;
 };
 struct DemoFrame {
-  std::int32_t beat{};
+  std::int32_t beat{},milliseconds{};
   unsigned width{},height{};
   std::size_t visited_operators{},cache_hits{},screen_fallbacks{};
   // 0 is the screen, 1..12 the legacy pool, 13+operator_id a bitmap target.
@@ -39,7 +39,9 @@ public:
   ~FramePlayer();
   FramePlayer(const FramePlayer&)=delete;
   FramePlayer& operator=(const FramePlayer&)=delete;
-  DemoFrame frame(std::size_t root,std::int32_t beat,unsigned width,unsigned height);
+  // Omitted milliseconds are derived from the saved BPM for offline sampling.
+  DemoFrame frame(std::size_t root,std::int32_t beat,unsigned width,unsigned height,
+                  std::optional<std::int32_t> milliseconds={});
 };
 void write_frame(std::ostream&,const DemoFrame&);
 // Keeps render targets and generated texture uploads alive across frames.

@@ -3,8 +3,11 @@
 // sMaterialEnv::MakeProjectionMatrix. No Win32 ABI or graphics API is used here.
 #include "wz3/scene.hpp"
 #include "wz3/particles.hpp"
+#include "wz3/effect_particles.hpp"
+#include "particle_random.hpp"
 #include "mesh_kernel.hpp"
 #include <bit>
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <iomanip>
@@ -58,12 +61,20 @@ SceneMatrix scene_view_projection(const SceneCamera& camera,unsigned width,unsig
 }
 
 struct ScenePlayer::Impl {
-  const Project& project;const Graph& graph;SplineLibrary splines;MaterialRuntime materials;SceneParticles particles;
+  const Project& project;const Graph& graph;SplineLibrary splines;MaterialRuntime materials;
+  std::shared_ptr<ParticleRandom> random=std::make_shared<ParticleRandom>();
+  SceneParticles particles;EffectParticles effects;ParticleClock clock;
+  struct EffectJob {std::size_t id;SceneMatrix world;std::array<AnimationVector,32> variables;std::uint32_t key;};
+  std::vector<EffectJob> jobs;
+  std::map<std::size_t,std::int32_t> effect_passes;
+  std::map<std::uint64_t,std::vector<std::pair<std::size_t,std::size_t>>> instances;
+  std::size_t instance_count{};
+  std::vector<bool> prepared;
   std::vector<std::optional<AnimationProgram>> programs;
   std::vector<std::shared_ptr<const Mesh>> meshes;
   std::vector<bool> visiting;
   std::size_t mesh_bytes{};
-  Impl(const Project& p,const Graph& g):project(p),graph(g),splines(p),materials(p,g),particles(splines),programs(p.operators.size()),meshes(programs.size()),visiting(programs.size()) {
+  Impl(const Project& p,const Graph& g):project(p),graph(g),splines(p),materials(p,g),particles(splines,random),effects(random),prepared(p.operators.size()),programs(p.operators.size()),meshes(programs.size()),visiting(programs.size()) {
     require(graph.nodes.size()==project.operators.size(),"scene graph size mismatch");
   }
   void valid(std::size_t id) const {require(id<programs.size() && graph.nodes[id].active,"invalid or inactive scene operator");}
@@ -92,6 +103,43 @@ struct ScenePlayer::Impl {
     }
     return meshes[id];
   }
+  std::size_t instance(std::size_t id,AnimationEnvironment& env) {
+    auto& cursor=*env.instances;auto& chain=instances[cursor.chain];
+    require(cursor.next<=chain.size(),"invalid particle instance chain cursor");
+    if(cursor.next==chain.size()) {require(instance_count<65536,"particle instance memory limit");chain.emplace_back(id,instance_count++);}
+    const auto [owner,token]=chain[cursor.next++];require(owner==id,"particle instance chain changed operator order");return token;
+  }
+  void prepare_effect(std::size_t id,std::span<const std::uint32_t> p) {
+    valid(id);if(project.operators[id].command!=0x64 || effect_passes.contains(id))return;
+    require(p.size()==12 && graph.nodes[id].inputs.empty() && graph.nodes[id].links.size()==1,"unsupported PartSystem layout");
+    std::int32_t pass=0;
+    if(const auto material=graph.nodes[id].links[0]) {const auto m=materials.snapshot(*material);if(!m.passes.empty())pass=m.passes[0].render_pass;}
+    effects.initialize(p[0],p[1]);effect_passes.emplace(id,pass);
+  }
+  void prepare(std::size_t id,AnimationEnvironment& env,unsigned depth=0) {
+    valid(id);if(prepared[id])return;require(depth<512,"scene preparation depth limit");
+    if(operator_info(project.operators[concrete(id)].command).category=="MATERIAL") {materials.precalculate(id,env);prepared[id]=true;return;}
+    Visit visit(visiting,id);
+    const auto& op=project.operators[id];const AnimationScope scope(program(id),splines,op.parameters,env);
+    {
+      for(auto child:graph.nodes[id].inputs)prepare(child,env,depth+1);
+      for(auto child:graph.nodes[id].links)if(child)prepare(*child,env,depth+1);
+      prepare_effect(id,scope.parameters);
+    }
+    prepared[id]=true;
+  }
+  void effect(std::size_t id,AnimationEnvironment& env,const SceneMatrix& world,SceneFrame& frame,std::uint32_t key,unsigned depth=0) {
+    valid(id);require(depth<512,"effect alias depth limit");Visit visit(visiting,id);
+    const auto& op=project.operators[id];const auto& node=graph.nodes[id];const AnimationScope scope(program(id),splines,op.parameters,env);
+    if(op.command>=1 && op.command<=3) {effect(alias(id),env,world,frame,key,depth+1);return;}
+    require(op.command==0x64,"effect alias execution is not ported");
+    // The handler reads its first cached material pass; it does not execute the
+    // material link. Later MatHack operations have already run at this point.
+    if(node.links[0]) {const auto material=materials.snapshot(*node.links[0]);if(!material.passes.empty()) {
+      auto vertices=effects.draw(scope.parameters,frame.camera,world,clock);
+      frame.effects.push_back({id,key,material.passes[0].shader,std::move(vertices)});
+    }}
+  }
   template<class F> void dispatch(std::size_t id,std::span<const std::uint32_t> p,AnimationEnvironment& env,
                                   const SceneMatrix& world,EventTimeline* timeline,F child) {
     const auto cmd=project.operators[id].command;
@@ -100,7 +148,7 @@ struct ScenePlayer::Impl {
     require((cmd==6 && p.size()==1) || (cmd==5 && p.empty()),"unsupported event layout");
     for(auto event_id:timeline->active(id)) {
       const auto& event=cmd==6 ? timeline->start(event_id,real(p,0)) : timeline->event(event_id);
-      const EventAnimationScope scope(event,timeline->beat(),splines,env);
+      const EventAnimationScope scope(event,timeline->beat(),splines,env,event_id);
       child(graph.nodes[id].inputs[0],scene_combine(world,scene_srt(event.transform)));
       if(cmd==5)break; // Time executes only FirstEvent; Event executes the list.
     }
@@ -114,6 +162,12 @@ struct ScenePlayer::Impl {
         require(project.operators[source].animations.empty(),"animated mesh alias precalculation is not ported");
       // ExecSceneInput emits cached geometry without calling mesh Exec handlers.
       frame.instances.push_back({id,geometry(target),world,env.variables[0][0],pass});return;
+    }
+    if(operator_info(project.operators[target].command).category=="EFFECT") {
+      if(project.operators[target].command!=0x64)throw std::runtime_error("scene effect "+std::to_string(target)+" ("+std::string(operator_info(project.operators[target].command).name)+") is not ported");
+      require(jobs.size()<65536,"effect job limit");
+      const auto render_pass=std::clamp(std::int64_t(effect_passes.at(target))+pass,std::int64_t(0),std::int64_t(255));
+      jobs.push_back({id,world,env.variables,(std::uint32_t(render_pass)<<24)|(7u<<16)});return;
     }
     const auto& op=project.operators[id];const auto& node=graph.nodes[id];
     const AnimationScope animation(program(id),splines,op.parameters,env);const auto& p=animation.parameters;
@@ -146,11 +200,14 @@ struct ScenePlayer::Impl {
       if(!range && (p[6]&4))for(unsigned c=0;c<3;++c)light.position[c]=light.direction[c]*1e6f;
       require(frame.lights.size()<4096,"scene light limit");frame.lights.push_back(light);break;
     }
+    case 0x63:
+      require(node.inputs.empty(),"PartEmitter mesh input is not ported");
+      effects.emit(instance(id,env),p,world,clock);break;
     case 0xc5: {
       require(node.inputs.size()==1,"Particles with a GenSpline input is not ported");
       require(op.splines.size()<=1,"unsupported Particles spline layout");std::optional<std::size_t> spline;
       if(!op.splines.empty() && !op.splines[0].empty()) {spline=splines.find(op.splines[0]);require(spline.has_value(),"unresolved particle spline");}
-      const auto instances=particles.evaluate(id,p,spline);const auto selection=env.variables[3],fraction=env.variables[11];
+      const auto instances=particles.evaluate(instance(id,env),p,spline);const auto selection=env.variables[3],fraction=env.variables[11];
       try {for(const auto& particle:instances) {
         env.variables[3].fill(float(particle.index));env.variables[11].fill(particle.fraction);
         execute(node.inputs[0],env,scene_combine(world,particle.transform),frame,timeline,depth+1,pass);
@@ -185,7 +242,17 @@ struct ScenePlayer::Impl {
     camera.center_x=real(p,11);camera.center_y=real(p,12);camera.zoom_x=real(p,13);camera.zoom_y=real(p,14)*((p[1]&0x1000) ? 1 : aspect);
     camera.fog_color=p[15];camera.fog_end=real(p,16);camera.fog_start=real(p,17);
     require(camera.near_clip>0 && camera.far_clip>camera.near_clip && camera.zoom_x>0 && camera.zoom_y>0,"invalid saved scene camera");
-    execute(node.inputs[0],env,world,frame,timeline);
+    jobs.clear();execute(node.inputs[0],env,world,frame,timeline);
+    // Engine prepends effect jobs, then performs a stable sort by pass/usage.
+    std::reverse(jobs.begin(),jobs.end());std::stable_sort(jobs.begin(),jobs.end(),[](const auto& a,const auto& b){return a.key<b.key;});
+    const auto saved_variables=env.variables;const auto saved_instances=env.instances;
+    try {for(const auto& job:jobs) {
+      env.variables=job.variables; // EventSpline deliberately stays at paint scope.
+      env.instances=std::make_shared<AnimationInstanceCursor>(AnimationInstanceCursor{(std::uint64_t(1)<<63)|job.id,0});
+      effect(job.id,env,job.world,frame,job.key);
+    }}catch(...) {env.variables=saved_variables;env.instances=saved_instances;throw;}
+    env.variables=saved_variables;env.instances=saved_instances;
+
     // Engine painting consumes material state after all scene jobs have been
     // collected, including updates executed later in the same scene traversal.
     for(const auto& instance:frame.instances)for(const auto& face:instance.mesh->faces)
@@ -208,12 +275,15 @@ struct ScenePlayer::Impl {
 ScenePlayer::ScenePlayer(const Project& p,const Graph& g):impl(std::make_unique<Impl>(p,g)) {}
 ScenePlayer::~ScenePlayer()=default;
 MaterialRuntime& ScenePlayer::materials() {return impl->materials;}
+void ScenePlayer::begin_frame(std::int32_t milliseconds) {impl->clock.advance(milliseconds);}
+void ScenePlayer::prepare_effect(std::size_t id,std::span<const std::uint32_t> p) {impl->prepare_effect(id,p);}
 SceneFrame ScenePlayer::viewport(std::size_t id,AnimationEnvironment env,float aspect,const SceneMatrix& world,EventTimeline* timeline) {
-  require(std::isfinite(aspect) && aspect>0 && aspect<=16,"invalid scene aspect");validate(world);return impl->viewport(id,env,aspect,world,timeline);
+  require(std::isfinite(aspect) && aspect>0 && aspect<=16,"invalid scene aspect");validate(world);auto initial=frame_environment(0);impl->prepare(id,initial);return impl->viewport(id,env,aspect,world,timeline);
 }
 std::vector<SceneFrame> ScenePlayer::event_viewports(std::size_t id,EventTimeline& timeline,float aspect) {
   require(std::isfinite(aspect) && aspect>0 && aspect<=16,"invalid scene aspect");
   auto env=frame_environment(timeline.beat());std::vector<SceneFrame> frames;std::size_t visits=0;
+  auto initial=frame_environment(0);impl->prepare(id,initial);
   impl->event_viewports(id,env,scene_identity(),timeline,aspect,frames,visits);return frames;
 }
 Bounds scene_bounds(const SceneFrame& frame) {
@@ -245,6 +315,8 @@ void write_scene(const std::filesystem::path& path,const SceneFrame& frame) {
     const auto& v=frame.lights[i];out<<(i ? "," : "")<<"{\"operator\":"<<v.operator_id<<",\"position\":";array(v.position);
     out<<",\"direction\":";array(v.direction);out<<",\"flags\":"<<v.flags<<",\"color\":"<<v.color<<",\"amplify\":"<<v.amplify<<",\"range\":"<<v.range<<'}';
   }
+  out<<"],\"effects\":[";
+  for(std::size_t i=0;i<frame.effects.size();++i) {const auto& e=frame.effects[i];out<<(i ? "," : "")<<"{\"operator\":"<<e.operator_id<<",\"sort_key\":"<<e.sort_key<<",\"particles\":"<<e.vertices.size()/4<<'}';}
   out<<"],\"materials\":{";bool first_material=true;
   for(const auto& [id,material]:frame.materials) {out<<(first_material ? "" : ",")<<'\"'<<id<<"\":";write_material(out,material);first_material=false;}
   out<<"}}\n";require(bool(out),"cannot write scene output");

@@ -9,6 +9,7 @@ inline void near(float a,float b,const char* message) {check(std::abs(a-b)<.0000
 inline std::uint32_t f(float v) {return std::bit_cast<std::uint32_t>(v);}
 struct FrameFixture {
   wz3::Project p;wz3::Graph g;
+  FrameFixture() {p.settings[4]=f(120); }
   std::size_t add(unsigned command,std::vector<std::uint32_t> parameters={},std::vector<std::size_t> inputs={},std::vector<std::optional<std::size_t>> links={}) {
     wz3::Operator op;op.command=command;op.parameters=std::move(parameters);p.operators.push_back(std::move(op));g.nodes.push_back({true,true,std::move(inputs),std::move(links)});return p.operators.size()-1;
   }

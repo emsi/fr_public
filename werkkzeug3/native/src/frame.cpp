@@ -2,6 +2,7 @@
 // Ordered execution follows kdoc.cpp and genoverlay.cpp. The four-size target
 // pool belongs to the .k editor/Theta path, not the later Debris player hack.
 #include "wz3/frame.hpp"
+#include "wz3/effect_particles.hpp"
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
@@ -68,7 +69,7 @@ struct FramePlayer::Impl {
     const AnimationScope scope(program(id),splines,op.parameters,env);
     for(auto child:graph.nodes[id].inputs)prepare(child,env,depth+1);
     for(auto child:graph.nodes[id].links)if(child)prepare(*child,env,depth+1);
-    previous[id]=scope.parameters;prepared[id]=true;
+    scenes.prepare_effect(id,scope.parameters);previous[id]=scope.parameters;prepared[id]=true;
   }
   void reset_pool() {for(unsigned i=0;i<12;++i)pool[i].refs=0;last.reset();}
   std::optional<unsigned> find(std::size_t id) {
@@ -152,7 +153,7 @@ struct FramePlayer::Impl {
       require(node.inputs.size()==1 && (op.command==5 ? p.empty() : p.size()==1),"invalid frame Event/Time layout");
       for(auto event_id:timeline.active(id)) {
         const auto& event=op.command==6 ? timeline.start(event_id,real(p,0)) : timeline.event(event_id);
-        const EventAnimationScope event_scope(event,timeline.beat(),splines,env);
+        const EventAnimationScope event_scope(event,timeline.beat(),splines,env,event_id);
         execute(node.inputs[0],env,scene_combine(world,scene_srt(event.transform)),depth+1);
         if(op.command==5)break;
       }
@@ -249,21 +250,27 @@ struct FramePlayer::Impl {
 };
 FramePlayer::FramePlayer(const Project& p,const Graph& g):impl(std::make_unique<Impl>(p,g)) {}
 FramePlayer::~FramePlayer()=default;
-DemoFrame FramePlayer::frame(std::size_t root,std::int32_t beat,unsigned width,unsigned height) {
+DemoFrame FramePlayer::frame(std::size_t root,std::int32_t beat,unsigned width,unsigned height,std::optional<std::int32_t> milliseconds) {
   require(width && height && width<=4096 && height<=4096,"invalid frame dimensions");auto& s=*impl;
   auto initial=frame_environment(0);s.prepare(root,initial);s.result={};s.result.beat=beat;s.result.width=width;s.result.height=height;
+  s.result.milliseconds=milliseconds.value_or(0);
+  if(!milliseconds)s.result.milliseconds=beat_milliseconds(beat,as_float(s.project.settings[4]));
+  s.scenes.begin_frame(s.result.milliseconds);
   s.result.surfaces.emplace(0,FrameSurface{width,height});
   for(unsigned i=0;i<12;++i) {const auto size=i/3;const auto shift=size==3 ? 0 : size;s.result.surfaces.emplace(i+1,FrameSurface{1024u>>shift,512u>>shift});}
   s.master=0;s.reset_pool();s.timeline.begin_frame(beat);auto env=frame_environment(beat);s.execute(root,env,scene_identity());return std::move(s.result);
 }
 void write_frame(std::ostream& out,const DemoFrame& f) {
   out<<std::setprecision(9)<<"{\"beat\":"<<double(f.beat)/65536<<",\"width\":"<<f.width<<",\"height\":"<<f.height
-    <<",\"visited_operators\":"<<f.visited_operators<<",\"cache_hits\":"<<f.cache_hits<<",\"screen_fallbacks\":"<<f.screen_fallbacks<<",\"surfaces\":{";
+    <<",\"milliseconds\":"<<f.milliseconds<<",\"visited_operators\":"<<f.visited_operators<<",\"cache_hits\":"<<f.cache_hits<<",\"screen_fallbacks\":"<<f.screen_fallbacks<<",\"surfaces\":{";
   bool first=true;for(const auto& [id,s]:f.surfaces) {out<<(first ? "" : ",")<<'\"'<<id<<"\":["<<s.width<<','<<s.height<<']';first=false;}
   out<<"},\"commands\":[";first=true;
   for(const auto& c:f.commands) {
     out<<(first ? "" : ",")<<"{\"operator\":"<<c.operator_id<<",\"target\":"<<c.target.surface<<",\"viewport\":["<<c.target.width<<','<<c.target.height<<']';first=false;
-    if(const auto* scene=std::get_if<SceneFrame>(&c.draw))out<<",\"kind\":\"scene\",\"instances\":"<<scene->instances.size()<<",\"lights\":"<<scene->lights.size();
+    if(const auto* scene=std::get_if<SceneFrame>(&c.draw)) {
+      std::size_t particles=0;for(const auto& effect:scene->effects)particles+=effect.vertices.size()/4;
+      out<<",\"kind\":\"scene\",\"instances\":"<<scene->instances.size()<<",\"lights\":"<<scene->lights.size()<<",\"effect_draws\":"<<scene->effects.size()<<",\"effect_particles\":"<<particles;
+    }
     else if(const auto* clear=std::get_if<FrameClear>(&c.draw))out<<",\"kind\":\"clear\",\"flags\":"<<clear->flags<<",\"color\":"<<clear->color;
     else {
       const auto& q=std::get<FrameQuad>(c.draw);out<<",\"kind\":\"quad\",\"rectangle\":[";

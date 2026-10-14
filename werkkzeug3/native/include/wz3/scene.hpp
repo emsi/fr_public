@@ -32,12 +32,25 @@ struct SceneLight {
   std::uint32_t flags{},color{};
   float amplify{},range{};
 };
+struct SceneEffectVertex {
+  Vec3 position{};
+  std::array<float,2> uv{};
+  std::uint32_t color{};
+};
+struct SceneEffectDraw {
+  std::size_t operator_id{};
+  std::uint32_t sort_key{};
+  MaterialShader shader;
+  // Four vertices per source quad, in perimeter order.
+  std::vector<SceneEffectVertex> vertices;
+};
 struct SceneFrame {
   std::size_t viewport_id{},visited_operators{};
   SceneCamera camera;
   std::uint32_t viewport_flags{},background=0xff000000,ambient{};
   std::vector<SceneInstance> instances;
   std::vector<SceneLight> lights;
+  std::vector<SceneEffectDraw> effects;
   std::map<std::size_t,Material> materials;
 };
 // Reuse a player across samples: static geometry and animation programs stay
@@ -56,6 +69,10 @@ public:
   // evaluates nested scene events too; IPP compositing is not bypassed.
   std::vector<SceneFrame> event_viewports(std::size_t id,EventTimeline&,float aspect);
   MaterialRuntime& materials();
+  // Required for elapsed-time simulation; a fresh standalone viewport has delta 0.
+  void begin_frame(std::int32_t milliseconds);
+  void prepare_effect(std::size_t id,std::span<const std::uint32_t> parameters);
+
 };
 Bounds scene_bounds(const SceneFrame&);
 void write_scene(const std::filesystem::path&,const SceneFrame&);
