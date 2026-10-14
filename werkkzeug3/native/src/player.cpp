@@ -21,7 +21,7 @@ void sdl_check(bool ok,const char* action) {
   if(!ok)throw std::runtime_error(std::string(action)+": "+SDL_GetError());
 }
 struct Sdl {
-  Sdl(){if(SDL_Init(SDL_INIT_VIDEO|SDL_INIT_AUDIO)!=0){const std::string error=SDL_GetError();SDL_Quit();throw std::runtime_error("SDL initialization: "+error);}}
+  explicit Sdl(bool audio){if(SDL_Init(SDL_INIT_VIDEO|(audio ? SDL_INIT_AUDIO : 0))!=0){const std::string error=SDL_GetError();SDL_Quit();throw std::runtime_error("SDL initialization: "+error);}}
   ~Sdl(){SDL_Quit();}
 };
 struct Window {
@@ -74,18 +74,20 @@ int main(int argc,char** argv) {
     std::cout<<"Usage: "<<argv[0]<<" PROJECT.k|theta.wz3r [--font-file FONT.ttf] [--music SONG.ogg]\n"
       <<"  [--width PIXELS] [--height PIXELS] [--duration SECONDS] [--mute]\n"
       <<"  [--capture LAST.ppm] [--snapshot SECONDS FRAME.ppm] (repeatable)\n"
-      <<"  [--no-preload | --preload-only]\n"
+      <<"  [--no-preload | --preload-only | --offline]\n"
+      <<"Offline mode renders the same sample timeline without an audio device or real-time pacing.\n"
       <<"Escape or close the window to exit. Music defaults to the saved song's basename beside the project.\n";
     return argc<2 ? 2 : 0;
   }
   try {
     wz3::TextureOptions options;std::filesystem::path music,capture;unsigned width=0,height=0;
-    double duration=0;bool mute=false,preload=true,preload_only=false;std::vector<Snapshot> snapshots;
+    double duration=0;bool mute=false,preload=true,preload_only=false,offline=false;std::vector<Snapshot> snapshots;
     for(int i=2;i<argc;++i) {
       const std::string_view option=argv[i];
       if(option=="--mute")mute=true;
       else if(option=="--no-preload")preload=false;
       else if(option=="--preload-only")preload_only=true;
+      else if(option=="--offline")offline=true;
       else if(option=="--music" && i+1<argc)music=argv[++i];
       else if(option=="--font-file" && i+1<argc)options.font_file=argv[++i];
       else if(option=="--capture" && i+1<argc)capture=argv[++i];
@@ -99,9 +101,11 @@ int main(int argc,char** argv) {
       }else throw std::runtime_error("unknown or incomplete player option: "+std::string(option));
     }
     require(options.font_file.empty() || std::filesystem::is_regular_file(options.font_file),"--font-file does not exist");
+    require(!offline || !preload_only,"--offline conflicts with --preload-only");
+    if(offline)preload=false;
     require(preload || !preload_only,"--no-preload conflicts with --preload-only");
     const std::filesystem::path project_path=argv[1];const auto project=wz3::read_project(project_path);const auto graph=wz3::connect(project);
-    if(project.runtime_graph)std::cerr<<"Released graph: using explicit provisional timing from the native envelope\n";
+    if(project.runtime_graph)std::cerr<<(project.release_timing ? "Released clock: 2396 samples per eighth beat; exit after beat 592\n" : "Released graph: using explicit provisional timing from the native envelope\n");
     const auto root=graph.names.find("root");require(root!=graph.names.end(),"project has no named root");
     if(!width)width=project.settings[2];
     if(!height)height=project.settings[3];
@@ -115,11 +119,11 @@ int main(int argc,char** argv) {
     wz3::PlaybackTiming timing(project,pcm.rate);auto end=timing.end_frames();
     if(duration)end=std::min(end,std::uint64_t(std::ceil(duration*pcm.rate)));
     std::cout<<"Music: "<<pcm.rate<<" Hz, "<<pcm.channels<<" channels, "<<double(pcm.frames())/pcm.rate<<" seconds\n";
-    Sdl sdl;std::unique_ptr<wz3::SdlAudio> audio;
-    if(!preload_only)audio=std::make_unique<wz3::SdlAudio>(pcm,mute);
+    Sdl sdl(!offline && !preload_only);std::unique_ptr<wz3::SdlAudio> audio;
+    if(!preload_only && !offline)audio=std::make_unique<wz3::SdlAudio>(pcm,mute);
     Window window(width,height);auto assets=std::make_shared<wz3::SceneAssets>(project,graph,options);
     wz3::FrameRenderer renderer(project,graph,options,wz3::FrameRenderer::Context::Current);
-    std::cout<<"Video: "<<SDL_GetCurrentVideoDriver()<<"; audio: "<<SDL_GetCurrentAudioDriver()
+    std::cout<<"Video: "<<SDL_GetCurrentVideoDriver()<<"; audio: "<<(SDL_GetCurrentAudioDriver() ? SDL_GetCurrentAudioDriver() : "none")
       <<"; callback: "<<(audio ? audio->buffer_frames() : 0)<<" frames; render: "<<width<<'x'<<height<<'\n';
     if(preload) {
       const auto started=Clock::now();auto progress=started;std::uint64_t frames=0,last_log=0;
@@ -160,35 +164,35 @@ int main(int argc,char** argv) {
     draw(0);window.present(renderer);SDL_SetWindowTitle(window.window,"fr-038: Theta - Escape to exit");
     // No sound advances during loading. Subsequent fixed 16 ms steps
     // retain simulation/target history, including while catching up after a stall.
-    require(audio->position()==0 && audio->callback_count()==0,"audio advanced during loading");
-    audio->start();const auto started=Clock::now();auto last_progress=started;std::uint64_t last_sample=0,last_log=0;
+    if(audio) {require(audio->position()==0 && audio->callback_count()==0,"audio advanced during loading");audio->start();}
+    const auto started=Clock::now();auto last_progress=started,next_presentation=started;std::uint64_t last_sample=0,last_log=0;
     bool running=true;while(running && current<end) {
       const auto tick=Clock::now();running=window.events();if(!running)break;
-      const auto sample=audio->position(),target=std::min(sample,end);
+      const auto sample=offline ? std::min(next_ms*pcm.rate/1000,end) : audio->position(),target=std::min(sample,end);
       if(sample!=last_sample){last_sample=sample;last_progress=tick;}
-      require(tick-last_progress<std::chrono::seconds(2),"audio clock stalled for two seconds");
+      if(!offline)require(tick-last_progress<std::chrono::seconds(2),"audio clock stalled for two seconds");
       max_lag_ms=std::max(max_lag_ms,double(target>current ? target-current : 0)*1000/pcm.rate);
       // Bound each batch so events remain responsive on a slow renderer.
       for(unsigned batch=0;batch<32 && current<target;++batch) {
         const auto next=std::min(next_ms*pcm.rate/1000,end);if(next>target)break;
         draw(next);next_ms+=16;
       }
-      window.present(renderer);++presented;
+      if(!offline || tick>=next_presentation) {window.present(renderer);++presented;next_presentation=tick+std::chrono::milliseconds(100); }
       if(sample/pcm.rate/10!=last_log) {
         last_log=sample/pcm.rate/10;
-        std::cout<<"Playback "<<timing.milliseconds(current)<<" ms, beat "<<double(timing.beat(current))/65536
+        std::cout<<(offline ? "Offline " : "Playback ")<<timing.milliseconds(current)<<" ms, beat "<<double(timing.beat(current))/65536
           <<", "<<rendered<<" rendered frames\n";
       }
       // Prevent an unbounded busy loop when the window system ignores vsync.
-      std::this_thread::sleep_until(tick+std::chrono::microseconds(16667));
+      if(!offline)std::this_thread::sleep_until(tick+std::chrono::microseconds(16667));
     }
     if(!capture.empty())wz3::write_ppm(capture,width,height,renderer.readback());
-    std::cout<<"Playback "<<(running ? "complete" : "stopped")<<": "<<rendered<<" rendered frames, "<<presented
-      <<" presentations, "<<audio->callback_count()<<" audio callbacks, "<<timing.milliseconds(current)<<" ms, beat "
+    std::cout<<(offline ? "Offline " : "Playback ")<<(running ? "complete" : "stopped")<<": "<<rendered<<" rendered frames, "<<presented
+      <<" presentations, "<<(audio ? audio->callback_count() : 0)<<" audio callbacks, "<<timing.milliseconds(current)<<" ms, beat "
       <<double(timing.beat(current))/65536<<", "<<std::chrono::duration<double>(Clock::now()-started).count()
       <<" wall seconds; max draw "<<max_draw_ms<<" ms; max catch-up "<<max_lag_ms<<" ms\n";
     const auto cpu=assets->stats();const auto gpu=renderer.stats();
-    std::cout<<"Playback allocations: "<<cpu.meshes-prepared_cpu.meshes<<" meshes, "<<cpu.fonts-prepared_cpu.fonts
+    std::cout<<(offline ? "Offline allocations: " : "Playback allocations: ")<<cpu.meshes-prepared_cpu.meshes<<" meshes, "<<cpu.fonts-prepared_cpu.fonts
       <<" fonts, "<<gpu.surface_allocations-prepared_gpu.surface_allocations<<" surfaces, "<<gpu.bitmap_uploads-prepared_gpu.bitmap_uploads
       <<" bitmaps, "<<gpu.mesh_uploads-prepared_gpu.mesh_uploads<<" mesh uploads, "<<gpu.shadow_uploads-prepared_gpu.shadow_uploads
       <<" shadow uploads, "<<gpu.program_compilations-prepared_gpu.program_compilations<<" programs, "<<gpu.lighting_uploads-prepared_gpu.lighting_uploads<<" lighting tables\n";

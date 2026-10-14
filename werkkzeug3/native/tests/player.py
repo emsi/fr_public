@@ -53,3 +53,18 @@ with tempfile.TemporaryDirectory(prefix="wz3-player-") as directory:
         raise RuntimeError(prepare.stderr)
     assert "Loading complete:" in prepare.stdout and "Playback complete:" not in prepare.stdout
     assert not (path / "prepare.f32").exists(), "preload-only opened an audio device"
+    # Offline rendering uses the same integer sample positions, but must work
+    # even when the requested audio driver does not exist.
+    offline = subprocess.run([player, project, "--font-file", font, "--width", "160",
+                              "--height", "120", "--duration", "2", "--offline",
+                              "--snapshot", "2", str(path / "offline-snapshot.ppm"),
+                              "--capture", str(path / "offline.ppm")],
+                             env=dict(env, SDL_AUDIODRIVER="nonexistent", SDL_DISKAUDIOFILE=str(path / "offline.f32")),
+                             capture_output=True, text=True, timeout=30)
+    if offline.returncode:
+        raise RuntimeError(offline.stderr)
+    assert "Offline complete:" in offline.stdout and "0 audio callbacks" in offline.stdout
+    assert "audio: none;" in offline.stdout and "Loading complete:" not in offline.stdout
+    assert image == (path / "offline.ppm").read_bytes() == (path / "offline-snapshot.ppm").read_bytes()
+    assert not (path / "offline.f32").exists(), "offline rendering opened an audio device"
+    print("Offline and callback-paced frames match without any audio driver")

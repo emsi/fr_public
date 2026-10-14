@@ -58,7 +58,7 @@ struct Spline {
 struct Project {
   std::vector<std::uint8_t> bytes;
   std::uint32_t version{};
-  bool runtime_graph{};
+  bool runtime_graph{}, release_timing{}; // final 1.01 clock profile recovered from the executable
   std::vector<std::vector<std::size_t>> runtime_inputs;
   std::array<std::size_t, 16> runtime_roots{};
   std::vector<Page> pages;

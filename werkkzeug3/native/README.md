@@ -5,16 +5,15 @@ fr-038. `wz3-player` plays the saved Theta project in an SDL2 window with Ogg
 audio and an audio-sample clock. The original Windows sources and Theta assets
 remain the reference; no Wine or Windows SDK is needed for these targets.
 
-The native frame runner now renders the complete root timeline through beat 600
-with saved materials, lighting, shadows, fog, particles, credits and image effects.
-A headless Radeon run rendered **16,306 consecutive frames at 1024×768**, advancing
-the simulation in 16 ms steps with an explicitly supplied font. The independent
-sample audit renders 52/54 positions; two late samples require an earlier render
-target and work in the continuous run. The windowed player uses the saved beat-609
-endpoint. Audible synchronization on a real sound device remains unverified.
-An initial release-reference audit found that the supplied editor project differs
-from final 1.01; see the release comparison below. Original-output fidelity is
-not yet established.
+The player renders the complete timeline with saved materials, lighting, shadows,
+fog, particles, credits and image effects. It supports both the archived editor
+project and the recovered final 1.01 release graph. The release runs through its
+verified beat-592 endpoint: **16,083 consecutive frames at 1024×768**, advancing
+in 16 ms steps. Its cached fonts need no host font substitution. Six captures
+match byte for byte between offline rendering and callback-paced playback.
+The editor project has different content and a beat-609 endpoint. Audible
+synchronization on a physical sound device and whole-demo original-output
+fidelity remain unverified; see the release comparison below.
 
 ## Play Theta on Linux
 
@@ -59,6 +58,14 @@ saves the last rendered frame; repeat `--snapshot SECONDS FRAME.ppm` to capture
 selected positions without restarting the simulation. Snapshot disk I/O can
 delay presentation. `--mute` outputs silence through the same audio device and
 clock; it does not bypass the need for a working audio backend.
+
+`--offline` renders the same sample positions and simulation history without
+opening an audio device or waiting for real time. It skips preparation, still
+decodes the song to establish its sample rate, and requires the graphics backend.
+Use `SDL_VIDEODRIVER=offscreen` for captures without a visible window. It cannot
+be combined with `--preload-only`. A complete recovered-release render took
+23.0 seconds on the tested Radeon; this is rendering throughput, not a playback
+or audio-latency measurement.
 
 Music is decoded up front to interleaved float PCM with a 256 MiB limit (Theta
 uses about 87.4 MiB). The SDL callback copies samples without allocation or
@@ -1047,7 +1054,7 @@ and original-frame comparison remain.
 
 The [final 1.01 executable on scene.org](https://files.scene.org/view/demos/groups/farbrausch/fr-038_theta_final.zip)
 contains a different project from `data/theta/theta_final.k`. The native player
-can now also load that released graph from a `.wz3r` envelope. Its credits omit the final-version and ryg
+can now also load that released graph from a `.wz3r` envelope. The editor project's credits omit the final-version and ryg
 credit lines, use size 1.0, and have an uncached atlas with an empty family name.
 The release instead contains size **1.199981689453125** (the packed F24 version
 of 1.2), a `duality` font atlas with cached metrics and pixels, and the additional
@@ -1057,9 +1064,11 @@ The release's embedded Ogg matches the repository's `theta.ogg` byte for byte.
 `tools/release_audit.py` recovers the release graph on Linux without Windows,
 Wine, a GPU or a Windows SDK. It accepts only the executable SHA-256 below,
 emulates its kkrunchy depacker in Unicorn, and stops at the first LoadLibraryA
-call. It supplies no Windows APIs and does not execute the demo. The memory
-snapshot is taken before import resolution/code unfiltering; it is not a runnable
-unpacked PE. Only the embedded static graph and asset bytes are decoded.
+call. With `--release-timing`, it separately runs the code-restoration stage,
+skipping import resolution and stopping before the application entry point.
+It then executes only the isolated integer clock fragment for comparison with
+the native formula. No Windows APIs or application entry point are executed.
+These snapshots are audit artifacts, not runnable unpacked PE files.
 
 ```sh
 mkdir -p build/reference/theta
@@ -1068,7 +1077,8 @@ curl -fL https://files.scene.org/get/demos/groups/farbrausch/fr-038_theta_final.
 unzip -j build/reference/theta/fr-038_theta_final.zip fr-038-final.exe \
   -d build/reference/theta
 uv run --no-project --with unicorn python werkkzeug3/native/tools/release_audit.py \
-  --exe build/reference/theta/fr-038-final.exe --output build/reference/theta/extracted
+  --exe build/reference/theta/fr-038-final.exe --output build/reference/theta/extracted \
+  --release-timing
 ```
 
 The ZIP SHA-256 is `5b5111affe566961274e6887443259923e47ce61c3ba3fb710514ea414107d81`;
@@ -1082,49 +1092,63 @@ All downloaded/extracted artifacts stay in ignored `build/`.
 This is a version-specific audit, not a generic `.kx` loader. The release uses
 one-byte class command IDs rather than the current archive reader's two-byte
 IDs. Its class 0x95 also packs 18 words despite declaring 17; the audit retains
-all words. No BPM or duration is inferred from the undecoded surrounding header.
-The raw `graph.bin` and audit JSON are not player inputs. To package the graph
-for playback, supply provisional timing explicitly. These values come from the
-editor project and have **not** been recovered from the release's player header:
+all words. Timing comes from restored instructions, not the undecoded surrounding
+header. At address `0x824583`, the original uses 2,396 samples per eighth beat,
+with integer divisions, and exits when the resulting 16.16 beat is **greater
+than 592**. This is the Buzz integer clock (effective 138.04257095 BPM), not a
+continuous 138 BPM clock. The first sample beyond the endpoint is **11,347,457**
+at 44,100 Hz, or **257.311950 s**. The native formula matches 1,082 sample
+positions evaluated by the restored x86 fragment, including both sides of the
+endpoint. `graph.json` records the instruction/image hashes, addresses, formula,
+oracle sample count and selected golden vectors. The former provisional
+continuous clock lagged this one by about 77 ms near the credits.
+
+The raw `graph.bin` and audit JSON are not player inputs. `--release-timing`
+packages the unchanged graph in `theta.wz3r` with the recovered clock profile:
 
 ```sh
-uv run --no-project --with unicorn python werkkzeug3/native/tools/release_audit.py \
-  --exe build/reference/theta/fr-038-final.exe --output build/reference/theta/extracted \
-  --bpm 138 --end-beat 609
 SDL_AUDIODRIVER=dummy build/native/wz3-player build/reference/theta/extracted/theta.wz3r
+SDL_VIDEODRIVER=offscreen build/native/wz3-player build/reference/theta/extracted/theta.wz3r \
+  --offline --width 1024 --height 768 --snapshot 220 build/reference/theta/native-220.ppm
 ```
 
 Omit `SDL_AUDIODRIVER=dummy` to use a working sound device. The recovered font
 atlases need no `--font-file`. The envelope defaults to 800×600; `--width` and
 `--height` on the extractor set the defaults, and player options can override
-them. `--buzz-timing` explicitly selects the alternative integer tick clock.
-`graph.json` records the supplied settings and envelope hash. The player labels
-this timing provisional at startup; endpoint/clock fidelity remains to verify.
+them. Explicit `--bpm`/`--end-beat` overrides remain available for experiments,
+with optional `--buzz-timing`; these are mutually exclusive with `--release-timing`
+and remain labeled provisional. `graph.json` records the settings and envelope
+hash. Startup distinguishes the verified release clock from overrides.
 
 `.wz3r` is a small native transport format, not an original Farbrausch format:
 8-byte magic `WZ3THR1\0`, then six little-endian 32-bit words (width, height,
-IEEE-754 BPM, endpoint in 16.16 beats, Buzz flag, graph byte count), followed by
+IEEE-754 BPM, endpoint in 16.16 beats, timing flags, graph byte count), followed by
 the unchanged graph slice. The native reader preserves packed parameter bits,
 direct ordered inputs/links, bytecode, event order, quantized splines and blobs.
 Generated operator/spline names only connect the existing native interfaces;
 they do not reconstruct an editor layout or recompile animation. Compiled
 programs are checked for bounded operands, stack balance and valid references.
 The release's extra zero word on Multiply is retained in the project and ignored
-by its existing 17-argument handler; nonzero padding is rejected.
+by its existing 17-argument handler; nonzero padding is rejected. Timing flag
+bit 0 selects Buzz arithmetic; bit 1 selects the verified release profile and
+strict endpoint. Bit 1 requires bit 0, BPM 138 and endpoint 592; inconsistent
+profiles and unknown flags are rejected. Older flags 0/1 envelopes still load
+with their explicitly supplied provisional timing.
 
-The complete released graph executes through the provisional beat-609 endpoint:
-16,550 preparation frames, 102 meshes, one font atlas, 31 bitmap uploads and
+The complete released graph executes through the verified beat-592 endpoint:
+16,083 preparation frames, 102 meshes, one font atlas, 31 bitmap uploads and
 27 shader programs. The 1,329 operator payloads/connections and 89 events match
 the independent Python decoder. All 127 animation programs execute in the audit
 (635 evaluations), with 15,677 spline samples. This establishes native graph
 execution, not final visual or physical audio synchronization fidelity.
 
-A full SDL/X11 playback of the recovered graph at 1024×768 completed 16,550
-frames, 15,719 presentations and 11,406 dummy-audio callbacks through beat 609
-(264,782 ms), with zero new static assets/uploads/programs during playback.
-This exercised the native callback clock but did not test physical audio output.
-The subsequent legacy Print alignment correction was verified with 15,626
-continuous GPU frames through beat 575, in addition to layout and sanitizer tests.
+A full SDL/X11 playback of the recovered graph at 1024×768 completed 16,083
+frames, 15,276 presentations and 11,084 dummy-audio callbacks through the recovered
+endpoint, with zero new static assets/uploads/programs during playback. Offline
+rendering produced byte-identical captures at 30, 120, 195, 220 and 250 seconds
+and the endpoint. This verifies simulation/render history independently of
+callback pacing; it does not test physical audio output. All 42 local Release
+tests pass, including 16 graphics tests.
 
 
 The [2011 Annikras video linked by Pouët](https://www.youtube.com/watch?v=rrgzBptM2bM)
@@ -1144,24 +1168,46 @@ uv run --no-project --with numpy python werkkzeug3/native/tools/reference_align.
   --output build/reference/theta/aligned --frames 30 120 195 220 250
 ```
 
-The tool records media hashes, overlap/window correlations and exact seek times.
-Frame requests use the native 16 ms simulation step. Video frame cadence and
-lossy compression still limit image comparison. Early geometry/camera captures
-correspond visually; the credits expose the confirmed project/font differences.
-This is not a pixel-fidelity pass for the whole demo.
-The released-graph comparison now provides specific remaining discrepancies:
+The tool records media hashes, overlap/window correlations and requested seek
+times. Frame requests use the native 16 ms simulation step. Audio alignment is
+not exact visual alignment: nearby-frame searches for all five native captures
+select video timestamps 33, 123, 198, 223 and 253 seconds. That is approximately
+**video time = native music time + 3.0 s**, about 67 ms earlier than the audio
+offset. The 195-second request renders at sample 8,599,852 (195.007982 s), so its
+selected visual offset is 2.992018 s. This is a measured property of this capture,
+with 30 fps quantization; its cause and physical device latency are unverified.
 
-| Music time | Observation against the aligned video |
-| --- | --- |
-| 30 s | Tunnel geometry, materials and camera closely correspond. |
-| 120 s | Cube distribution differs despite a corresponding tunnel/camera. |
-| 195 s | The creature has a different projected position/size. |
-| 220 s | Native lighting is much brighter in the sampled frame. |
-| 250 s | Recovered glyphs, credits and centered layout closely correspond. |
+Use `tools/reference_compare.py` to repeat the visual search. It disables FFmpeg
+frame duplication, records actual integer video timestamps and the stream time
+base, and exports the selected full-resolution frames. Crop the native 1024×768
+captures to their 1024×614 picture at (0,77) before comparison:
 
-Frame phase, original timing, random precalculation and legacy engine behavior
-still need to be separated before assigning causes to those differences.
- The native Text decoder
+```sh
+uv run --no-project --with numpy python werkkzeug3/native/tools/reference_compare.py \
+  build/reference/theta/annikras-reference.mp4 \
+  --alignment build/reference/theta/aligned/alignment.json \
+  --crop 1024 614 0 77 --output build/reference/theta/compared \
+  --snapshot 220 build/reference/theta/native-220.ppm
+```
+
+Repeat `--snapshot SECONDS IMAGE` for each continuous-player capture. The tool
+records hashes, all candidate errors and selected timestamps. Errors below are
+mean squared differences of bicubic-resized 240×144 RGB images, useful for
+selecting frame phase, not an acceptance threshold. Resolution, filtering,
+simulation cadence and video compression still limit this comparison.
+
+| Music time | Best RGB MSE | Observation at the matched video timestamp |
+| --- | ---: | --- |
+| 30 s | 724.92 | Tunnel geometry, materials and camera closely correspond. |
+| 120 s | 7106.40 | Cube distribution still differs despite a corresponding tunnel/camera. |
+| 195 s | 1613.85 | Creature position/pose is closer; residual differences remain. |
+| 220 s | 419.22 | Both images show the same bright lighting phase; geometry closely corresponds. |
+| 250 s | 38.09 | Recovered glyphs, credits and centered layout closely correspond. |
+
+The earlier bright-versus-dark 220-second mismatch was a frame-selection issue;
+it does not justify changing the renderer's lighting. Random precalculation,
+simulation cadence and legacy engine behavior still need to be separated before
+assigning causes to the remaining differences. The native Text decoder
 now accepts the release's cached font atlases, preserving all metrics through
 Blur/Merge/Store. The recovered `duality` atlas contains 73 glyph records and
 `Droid` four; decoding both needs no installed font. Verify the real blobs after
@@ -1180,8 +1226,8 @@ release-versus-video comparisons possible without the editor-project differences
 
 ## Next steps
 
-1. Recover/verify release timing and investigate the observed cube distribution,
-   creature motion and late lighting differences against the aligned reference.
+1. Investigate cube distribution and remaining creature motion differences
+   against reference frames using actual visual timestamps and the verified clock.
 2. Reproduce the editor's operator type checking and version migrations.
 3. Compare saved material shading against original frames and extend remaining
    shader/format support where the comparison exposes a difference.

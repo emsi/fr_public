@@ -31,6 +31,7 @@ public:
 class PlaybackTiming {
   std::int32_t bpm_fixed{},end_beat{};
   unsigned rate{},buzz_tick{};
+  bool strict_endpoint{};
 public:
   PlaybackTiming(const Project&,unsigned sample_rate);
   std::int32_t beat(std::uint64_t frames) const;

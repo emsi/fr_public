@@ -69,6 +69,11 @@ void test_project() {
   for(auto at:{8,12,16,20}) {bad=data;replace_word(bad,at,0);rejects([&]{wz3::parse_project(bad);});}
   bad=data;replace_word(bad,24,2);rejects([&]{wz3::parse_project(bad);});
   bad=data;bad[34]=3;rejects([&]{wz3::parse_project(bad);});
+  bad=data;replace_word(bad,24,3);rejects([&]{wz3::parse_project(bad);}); // wrong verified endpoint
+  replace_word(bad,20,592u<<16);const auto verified=wz3::parse_project(bad);
+  check(verified.release_timing && verified.settings[9]==1,"verified clock profile flag");
+  replace_word(bad,16,std::bit_cast<unsigned>(139.f));rejects([&]{wz3::parse_project(bad);});
+
 }
 void test_bytecode() {
   const auto p=wz3::parse_project(fixture());const wz3::SplineLibrary splines(p);

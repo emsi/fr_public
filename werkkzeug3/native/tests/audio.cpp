@@ -37,6 +37,21 @@ void timing(const wz3::Project& project) {
   check(timing.beat(timing.end_frames())>=609*65536 && timing.beat(timing.end_frames()-1)<609*65536,"Buzz endpoint rounding");
   wz3::PlaybackTiming resampled(buzz,48000);
   check(resampled.beat(48000)==timing.beat(44100),"Buzz reference sample rate");
+  auto release=buzz;release.release_timing=true;release.settings[6]=592u<<16;
+  const wz3::PlaybackTiming original(release,44100);
+  // Expected values come from the restored 2005 executable's x86 fragment
+  // at 0x824583, independently executed by release_audit.clock_oracle.
+  constexpr std::array<std::array<std::uint64_t,2>,11> vectors{{
+    {0,0},{1,3},{2396,8192},{44100,150779},{1323000,4523378},{5292000,18093515},
+    {8599852,29403166},{9702000,33171445},{11025000,37694824},
+    {11347456,38797312},{11347457,38797315}}};
+  for(const auto& pair:vectors)check(original.beat(pair[0])==std::int32_t(pair[1]),"released x86 clock mismatch");
+  check(original.end_frames()==11347457 && original.beat(original.end_frames()-1)==592*65536 &&
+        original.beat(original.end_frames())>592*65536,"released strict exit condition");
+  const wz3::PlaybackTiming converted(release,48000);
+  check(converted.beat(converted.end_frames())>592*65536 && converted.beat(converted.end_frames()-1)<=592*65536,
+        "resampled release endpoint");
+
 }
 void device(const wz3::PcmAudio& pcm) {
   check(SDL_Init(SDL_INIT_AUDIO)==0,SDL_GetError());

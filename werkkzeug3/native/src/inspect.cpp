@@ -26,6 +26,7 @@ int main(int argc, char** argv) {
     const auto bpm = wz3::as_float(project.settings[4]);
     std::cout << "{\n  \"version\": " << project.version
       << ",\n  \"runtime_graph\": " << (project.runtime_graph ? "true" : "false")
+      << ",\n  \"release_timing\": " << (project.release_timing ? "true" : "false")
       << ",\n  \"runtime_animation_programs\": " << runtime_programs
       << ",\n  \"bytes\": " << project.bytes.size()
       << ",\n  \"demo\": " << quote(project.demo_name)

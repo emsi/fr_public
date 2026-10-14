@@ -72,10 +72,11 @@ Project parse_release_project(std::vector<std::uint8_t> bytes) {
   for(auto value:magic)if(r.byte()!=value)r.fail("incorrect native release envelope");
   p.settings[2]=r.word();p.settings[3]=r.word();p.settings[4]=r.word();p.settings[6]=r.word();p.settings[9]=r.word();
   const auto graph_size=r.word();const auto bpm=as_float(p.settings[4]);
+  const auto flags=p.settings[9];p.release_timing=(flags&2)!=0;p.settings[9]=flags&1;
   if(graph_size!=p.bytes.size()-r.at || p.settings[2]<64 || p.settings[2]>4096 ||
      p.settings[3]<64 || p.settings[3]>4096 || !std::isfinite(bpm) || bpm<1 || bpm>1000 ||
-     !p.settings[6] || p.settings[6]>0x7fffffff || p.settings[9]>1)r.fail("invalid runtime envelope settings/length");
-  p.demo_name="fr-038: theta final 1.01 (provisional timing)";p.song_name="theta.ogg";
+     !p.settings[6] || p.settings[6]>0x7fffffff || flags>3 || (p.release_timing && (flags!=3 || bpm!=138.f || p.settings[6]!=(592u<<16))))r.fail("invalid runtime envelope settings/length");
+  p.demo_name=p.release_timing ? "fr-038: theta final 1.01" : "fr-038: theta final 1.01 (provisional timing)";p.song_name="theta.ogg";
   p.pages.resize(1);p.pages[0].name="Released runtime graph";
   const auto count=r.short_value(),spline_count=r.short_value();
   if(!count || count>32767 || spline_count>32767)r.fail("invalid graph counts");

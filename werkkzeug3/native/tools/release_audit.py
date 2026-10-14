@@ -3,8 +3,9 @@
 
 This deliberately supports one SHA-256-pinned executable, not arbitrary PE files
 or a generic .kx format. Unicorn runs only its kkrunchy depacker, stopping before
-the first loader API. No Windows API is forwarded and no demo code is run.
-The optional .wz3r envelope adds explicit provisional timing for native playback.
+the first loader API. No Windows API or application entry point is executed.
+--release-timing also restores code and checks its isolated clock arithmetic.
+The optional .wz3r envelope supports recovered release timing or explicit overrides.
 
 Graph layout reference: KDoc::Init in ../kdoc.cpp; packed numbers: ../_types.cpp.
 This older release uses one-byte class IDs and has no current .kx timing header
@@ -19,6 +20,8 @@ import struct
 
 EXE_SHA256 = "c11f0fbc6aa65776ea6ec706d8de0777b0f7d94a32378df484cb05ccc6847d8a"
 IMAGE_SHA256 = "08f26849fc3f94bc6118dbaa6d5292ed95bbcd2c6ff9f93305726ea26455657c"
+RESTORED_SHA256 = "e651f4303804431c95e139d16a73ebc9b87e05335d1dddc449ad1bf2f1f22b57"
+TIMING_SHA256 = "cff2f3d0b24f9cb2733f78f1a51f2e0ee856c6537a1b55f7906277490f4603ff"
 SONG_SHA256 = "1784669a4ee4dc53651e1452480e8bddc908fdb0d00cc2a8339b2c3b64c065d2"
 GRAPH_START, GRAPH_END = 0xBECE4C, 0xCC6D29
 SONG_START, SONG_SIZE = 0x80E3F4, 4057682
@@ -78,6 +81,74 @@ def unpack(executable):
     if sha256(image) != IMAGE_SHA256:
         raise ValueError("unexpected depacker output")
     return image
+
+
+def restore_timing(image):
+    """Restore code only, stopping before the original PE entry point."""
+    from unicorn import Uc, UC_ARCH_X86, UC_MODE_32, UC_HOOK_BLOCK
+    from unicorn.x86_const import UC_X86_REG_EBP, UC_X86_REG_ESI, UC_X86_REG_EIP
+    if sha256(image) != IMAGE_SHA256:
+        raise ValueError("unexpected first-stage image")
+    base = 0x3A0000
+    machine = Uc(UC_ARCH_X86, UC_MODE_32)
+    machine.mem_map(base, (len(image) + 4095) & ~4095)
+    machine.mem_write(base, image)
+    # After the import-name table comes the code filter's 21 input streams.
+    # The pinned image fixes these offsets. Import resolution is unnecessary:
+    # the restorer copies instruction bytes and never calls their target APIs.
+    machine.reg_write(UC_X86_REG_EBP, 0x7BB808)
+    machine.reg_write(UC_X86_REG_ESI, 0x7C515B)
+
+    def restrict_execution(uc, address, size, user_data):
+        if not 0x7C46BC <= address < 0x7C48BD:
+            raise ValueError("code restoration left its expected instruction range")
+
+    machine.hook_add(UC_HOOK_BLOCK, restrict_execution)
+    machine.emu_start(0x7C46BC, 0x8251D7, timeout=10_000_000)
+    if machine.reg_read(UC_X86_REG_EIP) != 0x8251D7:
+        raise ValueError("code restoration did not reach the application entry boundary")
+    restored = bytes(machine.mem_read(base, len(image)))
+    if sha256(restored) != RESTORED_SHA256:
+        raise ValueError("unexpected restored code image")
+    clock = restored[0x824583 - base:0x8245B4 - base]
+    if sha256(clock) != TIMING_SHA256:
+        raise ValueError("unexpected release clock instructions")
+    tick = struct.unpack_from("<I", clock, 3)[0]
+    end = struct.unpack_from("<I", clock, 0x27)[0]
+    if tick != 2396 or end != 592 << 16:
+        raise ValueError("unexpected clock constants")
+    return restored, dict(restored_image_sha256=RESTORED_SHA256, code_sha256=TIMING_SHA256,
+        code_address="0x824583", end_compare_address="0x8245a8", sample_rate=44100,
+        samples_per_eighth_beat=tick, end_beat_fixed=end, exit_condition="beat > endpoint",
+        formula="max(0, ((sample << 16) / 2396) / 8) with signed integer division",
+        effective_bpm=60 * 44100 / (tick * 8), end_frames=592 * tick * 8 + 1)
+
+
+def clock_oracle(restored, samples):
+    """Execute only the isolated integer clock fragment, with no API calls."""
+    from unicorn import Uc, UC_ARCH_X86, UC_MODE_32
+    from unicorn.x86_const import UC_X86_REG_EBP, UC_X86_REG_EBX, UC_X86_REG_ESI, UC_X86_REG_EIP
+    if sha256(restored) != RESTORED_SHA256:
+        raise ValueError("unexpected restored image")
+    machine = Uc(UC_ARCH_X86, UC_MODE_32)
+    machine.mem_map(0x824000, 4096)
+    machine.mem_write(0x824583, restored[0x824583 - 0x3A0000:0x8245A8 - 0x3A0000])
+    machine.mem_map(0xBAB000, 4096)
+    machine.mem_map(0x20000000, 8192)
+    from unicorn.x86_const import UC_X86_REG_ESP
+    result = []
+    for sample in samples:
+        if not 0 <= sample <= 13_230_000:
+            raise ValueError("clock oracle supports the first 300 seconds")
+        machine.reg_write(UC_X86_REG_EBP, 0x20001000)
+        machine.reg_write(UC_X86_REG_ESP, 0x20001000)
+        machine.reg_write(UC_X86_REG_EBX, 0)
+        machine.mem_write(0xBAB86C, struct.pack("<I", sample))
+        machine.emu_start(0x824583, 0x8245A8, count=100)
+        if machine.reg_read(UC_X86_REG_EIP) != 0x8245A8:
+            raise ValueError("clock fragment did not terminate")
+        result.append(machine.reg_read(UC_X86_REG_ESI))
+    return result
 
 
 class Reader:
@@ -241,18 +312,21 @@ def main():
     source.add_argument("--exe", type=Path, help="SHA-pinned fr-038-final.exe; requires Unicorn")
     source.add_argument("--image", type=Path, help="SHA-pinned image from an earlier depack")
     ap.add_argument("--output", required=True, type=Path)
+    ap.add_argument("--release-timing", action="store_true", help="recover the released clock and endpoint; requires Unicorn")
     ap.add_argument("--bpm", type=float, help="explicit provisional BPM for a native playback envelope")
     ap.add_argument("--end-beat", type=float, help="explicit provisional endpoint; requires --bpm")
     ap.add_argument("--width", type=int, default=800)
     ap.add_argument("--height", type=int, default=600)
     ap.add_argument("--buzz-timing", action="store_true")
     args = ap.parse_args()
+    if args.release_timing and (args.bpm is not None or args.end_beat is not None or args.buzz_timing):
+        ap.error("--release-timing cannot be combined with timing overrides")
     if (args.bpm is None) != (args.end_beat is None):
         ap.error("--bpm and --end-beat must be supplied together")
     if not 64 <= args.width <= 4096 or not 64 <= args.height <= 4096:
         ap.error("dimensions must be in [64,4096]")
     if args.bpm is not None and (not math.isfinite(args.bpm) or not 1 <= args.bpm <= 1000 or
-                                 not math.isfinite(args.end_beat) or not 0 < args.end_beat < 32768):
+                                 not math.isfinite(args.end_beat) or not 1/65536 <= args.end_beat < 32768):
         ap.error("BPM must be in [1,1000] and endpoint in (0,32768)")
     image = unpack(args.exe) if args.exe else pinned(args.image, IMAGE_SHA256)
     graph_bytes = image[GRAPH_START:GRAPH_END]
@@ -264,7 +338,23 @@ def main():
                                unpacked_image_sha256=IMAGE_SHA256, graph_sha256=sha256(graph_bytes),
                                graph_image_offset=GRAPH_START, song_sha256=SONG_SHA256,
                                timing="not decoded; no BPM or duration inferred")
+    if args.release_timing:
+        restored, timing = restore_timing(image)
+        samples = sorted(set(range(0, 13_230_001, 12345)) |
+                         {0, 1, 2396, 44100, 1323000, 5292000, 8599852, 9702000, 11025000,
+                          timing["end_frames"] - 1, timing["end_frames"]})
+        values = clock_oracle(restored, samples)
+        if any(value != ((sample << 16) // 2396) // 8 for sample, value in zip(samples, values)):
+            raise ValueError("clock arithmetic differs from the restored x86 instructions")
+        timing["x86_oracle_samples"] = len(samples)
+        timing["oracle_vectors"] = [[sample, value] for sample, value in zip(samples, values)
+                                   if sample in {0, 1, 2396, 44100, 1323000, 5292000, 8599852,
+                                                 9702000, 11025000, timing["end_frames"] - 1, timing["end_frames"]}]
+        graph["provenance"]["timing"] = timing
+        args.bpm, args.end_beat, args.buzz_timing = 138, 592, True
     args.output.mkdir(parents=True, exist_ok=True)
+    if args.release_timing:
+        (args.output / "restored-code-image.bin").write_bytes(restored)
     for op in graph["operators"]:
         if op.get("blob_size", 0):
             start = op["blob_offset"]
@@ -273,11 +363,12 @@ def main():
     (args.output / "theta.ogg").write_bytes(song)
     if args.bpm is not None:
         envelope = struct.pack("<8sIIfIII", b"WZ3THR1\0", args.width, args.height, args.bpm,
-                               int(args.end_beat * 65536), args.buzz_timing, len(graph_bytes)) + graph_bytes
+                               int(args.end_beat * 65536), int(args.buzz_timing) | (2 if args.release_timing else 0), len(graph_bytes)) + graph_bytes
         (args.output / "theta.wz3r").write_bytes(envelope)
         graph["provenance"]["native_envelope"] = dict(width=args.width, height=args.height,
             bpm=args.bpm, end_beat=args.end_beat, buzz_timing=args.buzz_timing,
-            timing="explicit provisional values; not recovered release header", sha256=sha256(envelope))
+            timing="verified release clock" if args.release_timing else "explicit provisional values; not recovered release header",
+            sha256=sha256(envelope))
     (args.output / "graph.json").write_text(json.dumps(graph, indent=2, allow_nan=False) + "\n")
     print(json.dumps(dict(operators=len(graph["operators"]), classes=len(graph["classes"]),
                           events=len(graph["events"]), splines=len(graph["splines"]),

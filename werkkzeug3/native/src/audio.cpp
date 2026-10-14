@@ -65,6 +65,8 @@ PlaybackTiming::PlaybackTiming(const Project& project,unsigned sample_rate):rate
   require(rate>=8000 && rate<=192000,"invalid playback sample rate");
   require(project.settings[6]>0 && project.settings[6]<=std::uint32_t(std::numeric_limits<std::int32_t>::max()),"invalid saved demo endpoint");
   bpm_fixed=std::int32_t(bpm*65536);end_beat=std::int32_t(project.settings[6]);
+  strict_endpoint=project.release_timing;
+  if(strict_endpoint)require(bpm_fixed==138*65536 && end_beat==592*65536 && project.settings[9]==1,"invalid released clock profile");
   if(project.settings[9])buzz_tick=60*44100/((bpm_fixed>>16)*8);
 }
 std::int32_t PlaybackTiming::beat(std::uint64_t frames) const {
@@ -77,11 +79,13 @@ std::int32_t PlaybackTiming::milliseconds(std::uint64_t frames) const {
   require(frames<=std::uint64_t(rate)*24*60*60,"playback time exceeds 24 hours");return std::int32_t(frames*1000/rate);
 }
 std::uint64_t PlaybackTiming::end_frames() const {
-  // First sample at or after the saved endpoint, using the same integer formula.
+  // The recovered release exits on beat > 592. Editor/provisional projects
+  // retain their existing first-sample-at-or-after endpoint convention.
+  const auto threshold=std::uint64_t(end_beat)+(strict_endpoint ? 1 : 0);
   if(buzz_tick) {
-    const auto samples44100=(std::uint64_t(end_beat)*buzz_tick*8+65535)/65536;
+    const auto samples44100=(threshold*buzz_tick*8+65535)/65536;
     return (samples44100*rate+44099)/44100;
   }
-  return (std::uint64_t(end_beat)*rate*60+bpm_fixed-1)/bpm_fixed;
+  return (threshold*rate*60+bpm_fixed-1)/bpm_fixed;
 }
 } // namespace wz3
