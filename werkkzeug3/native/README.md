@@ -180,20 +180,20 @@ edge and vertex PRNG draws before selecting faces.
 Supported operations include Cube, Grid, Cylinder (including radial subdivisions and
 arcs), Torus, Sphere (at least four sides), Select Cube/Sphere/Face/Random,
 Select Logic, Subdivide, Triangulate, Extrude, Transform, TransEx, Add, deterministic Multiply with normal
-extrusion, MatLink, Invert, UVProject, SmAngle, both Bend operators, Color,
+extrusion, MatLink, Invert, UVProject, SmAngle, both Bend operators, Displace,
+Perlin Displace, Color,
 ShadowEnable, Center and Load/Store/Nop.
 MatLink retains operator IDs and passes; it does not execute material shaders.
-Thirty-one of the 32 reachable named Theta meshes evaluate, including the subdivided
+All 32 reachable named Theta meshes evaluate, including the subdivided
 star geometry, layered fireballs, bridges, city components and long tube
-assemblies. The remaining named recipe needs Displace.
-Other unnamed operators, animation and full scene playback remain pending.
-An audit of all 752 reachable MESH operators currently evaluates 731; remaining
-dependencies are Displace and Perlin Displace. Named-output coverage alone is not full demo
-coverage. To reproduce the broader CPU audit:
+assemblies and displaced band. All **752 of 752** reachable MESH operators in
+`theta_final.k` evaluate and export under Release and Clang ASan/UBSan builds.
+This completes coverage of Theta's static mesh recipes; animation, materials,
+scene rendering and full playback remain pending. To reproduce the broader CPU audit:
 
 ```sh
 python3 werkkzeug3/native/tools/mesh_audit.py --all-operators \
-  --output build/native/theta-mesh-operators --expect-supported 731 --expect-unsupported 21
+  --output build/native/theta-mesh-operators --expect-supported 752 --expect-unsupported 0
 ```
 
 The compatibility layer replaces Win32 argument-stack assumptions with explicit
@@ -207,8 +207,8 @@ export/preview representation; their original topology remains in the core.
 
 Tests check analytical primitive volumes, winding, UV wedges, source cube face
 indices, signed-seed selection goldens, region/individual extrusion, subdivision
-weights and boundaries, transform order, normals, material bindings and all 31
-supported named recipes. These pass with Clang ASan/UBSan. All exported normals
+weights and boundaries, transform order, normals, material bindings and all 32
+named recipes. These pass with Clang ASan/UBSan. All exported normals
 come from the original `CalcNormals` algorithm, including its unusual inverse
 squared-edge-product weights and degenerate `(1,0,0)` fallback. The OBJ exporter
 writes per-corner `vn` indices. Linear HDR vertex colors and tangent vectors are
@@ -218,6 +218,16 @@ directional, point and ambient lighting; Grid tests check side/boundary masks. P
 SSE approximation; frame-level comparison with the original player is still
 needed to establish visual fidelity.
 
+Bitmap displacement samples the blue channel with the original fixed-point
+bilinear arithmetic and averages normal offsets across each vertex's UV/normal
+seams. Large coordinates use the 64-bit conversion and low-word wrap documented
+by `player_intro/minirtl.asm`; a direct out-of-range C++ float-to-int32 cast would
+be undefined and breaks the band. Perlin displacement interpolates vectors from
+the archived seed-one permutation table. The native code retains its downward
+binary32 rounding and restores the caller's floating-point environment even on
+failure. Tests check independent rational-arithmetic goldens, selection, lattice
+periodicity, channel mapping, seam continuity and large positive/negative UVs.
+
 With `WZ3_BUILD_RENDERER=ON`, `wz3-mesh-render` draws the geometry through native
 EGL/GLES using an orthographic inspection camera, interpolated native normals and a UV checker:
 
@@ -225,12 +235,12 @@ EGL/GLES using an orthographic inspection camera, interpolated native normals an
 build/native/wz3-mesh-render werkkzeug3/data/theta/theta_final.k mesh.flatfractal build/native/fractal.ppm
 python3 werkkzeug3/native/tools/mesh_audit.py \
   --renderer build/native/wz3-mesh-render --output build/native/theta-mesh-gallery \
-  --expect-supported 31 --expect-unsupported 1
+  --expect-supported 32 --expect-unsupported 0
 ```
 
 The audit writes an HTML/PNG gallery, OBJ downloads, hashes and a JSON report
 with each unsupported dependency and graphics driver output. Omit `--renderer`
-for an export-only audit without a GPU. All 31 supported outputs were exported
+for an export-only audit without a GPU. All 32 named outputs were exported
 under ASan/UBSan and rendered on the Radeon RX 7900 XT. The graphics tests also
 pass with llvmpipe. The renderer checks framebuffer/depth availability, GL errors
 and nonempty readback; a separate occlusion test reverses polygon submission
@@ -239,8 +249,8 @@ not equality with Theta's original camera, materials or shading.
 
 ## Next steps
 
-1. Add remaining mesh operators and attributes, then verify native font metrics
-   against GDI.
+1. Build scene and material evaluation on the completed static mesh coverage;
+   verify native font metrics against GDI.
 2. Reproduce the editor's operator type checking and version migrations.
 3. Implement materials and postprocessing shaders, checking output against the
    reference rather than treating a successful graphics upload as visual fidelity.

@@ -8,6 +8,7 @@
 #include <cstring>
 #include <stdexcept>
 
+namespace wz3 {struct Texture;}
 namespace wz3::legacy {
 using sInt=int; using sU32=std::uint32_t; using sF32=float; using sU8=std::uint8_t; using sBool=bool;
 constexpr bool sTRUE=true,sFALSE=false;
@@ -155,6 +156,8 @@ public:
   void FixVertCycle(int);void Crease(int=0,sU32=0,int=0,int=0xfe);void UnCrease(bool=false,int=0xfe);
   void CalcNormals(int=0,int=3);void NeedAllNormals();void Triangulate(int=5,sU32=0,int=0,int=0);
   void DeleteFaces();void ExtrudeNormal(float);
+  void Displace(const Texture&,float,float,float);
+  void Perlin(const sMatrix&,const sVector&);
   void CubicProjection(const sMatrix&,int=0,int=sGMI_UV0,bool=false);
   void append(const GenMesh&);
   void validate() const;

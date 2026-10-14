@@ -1,11 +1,14 @@
 // Distributed under the BSD license in werkkzeug3/LICENSE.txt.
 #include "wz3/mesh.hpp"
+#include "wz3/texture.hpp"
 #include "../src/mesh_topology.hpp"
 #include "../src/mesh_kernel.hpp"
 #include <algorithm>
 #include <bit>
+#include <cfenv>
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <numbers>
 #include <stdexcept>
 
@@ -342,21 +345,107 @@ void attributes_and_grids() {
     }
   }
 }
+void displacement() {
+  Fixture p;const auto base=p.add(0x81,cube(1,1,1,1));
+  const auto original=p.get(base);
+  // Blue alone controls height. At a hard cube corner, three normal wedges
+  // contribute one third each; all three copies must move together.
+  for(auto color:{0xff0000ffu,0xffffffffu,0xff00ff00u}) {
+    const auto bitmap=p.add(0x21,{2,2,color});
+    const auto mesh=p.get(p.add(0x8f,{0,f(3),f(3),f(3)},{base,bitmap}));
+    const float height=((color&255) ? 16383.0f : -16384.0f)/32767;
+    for(std::size_t i=0;i<mesh->vertices.size();++i)for(unsigned c=0;c<3;++c)
+      near(mesh->vertices[i].position[c],original->vertices[i].position[c]*(1+2*height),"blue displacement and corner averaging");
+    seams(*mesh);
+  }
+  const auto bitmap=p.add(0x21,{2,2,0xff0000ff});
+  const auto selected=p.add(0x86,{0x400000,2,0,f(.5f),0,f(2),f(.01f),f(2)},{base});
+  const auto partial=p.get(p.add(0x8f,{64,f(3),0,0},{selected,bitmap}));
+  for(std::size_t i=0;i<partial->vertices.size();++i) {
+    const auto& a=original->vertices[i].position;const auto& b=partial->vertices[i].position;
+    near(b[0],a[0]*(a[1]>0 ? 1+2*(16383.0f/32767) : 1),"masked displacement");
+    near(b[1],a[1],"zero Y displacement amplitude");near(b[2],a[2],"zero Z displacement amplitude");
+  }
+  seams(*partial);
+  rejects([&]{p.get(p.add(0x8f,{0,f(1),f(1),f(1)},{base}));});
+
+  wz3::Texture texture;texture.width=4;texture.height=2;
+  for(unsigned i=0;i<8;++i)texture.pixels.push_back({32767,32767,std::uint16_t(i*1024),32767});
+  for(auto [u,x]:{std::pair{8192.25f,1},std::pair{-8192.25f,3},std::pair{65536.25f,1},std::pair{-65536.25f,3}}) {
+    wz3::legacy::GenMesh mesh;mesh.Init(wz3::legacy::sGMF_DEFAULT,1);const auto v=mesh.AddNewVert();
+    mesh.VertNorm(v).Init(1,0,0);mesh.buffer[v*5+4].Init(u,16384.5f,0);mesh.All2Sel();
+    mesh.Displace(texture,1,1,1);
+    near(mesh.VertPos(v).x,((x+4)*1024.0f-16384)/32767,"64-bit conversion must wrap large positive and negative UVs");
+    check(!mesh.Vert[v].Select,"displacement must consume vertex selection");
+    mesh.buffer[v*5+4].x=std::numeric_limits<float>::infinity();mesh.All2Sel();
+    rejects([&]{mesh.Displace(texture,1,1,1);});
+  }
+}
+void noise_displacement() {
+  // Goldens calculated with exact rational arithmetic, rounding each scalar
+  // operation down to binary32, using the archived seed-one permutation.
+  // These are vector lattice noise, not scalar dot-product Perlin noise.
+  struct Sample {wz3::Vec3 p;std::array<std::uint32_t,3> bits;};
+  const Sample samples[]={
+    {{0,0,0},{0x3f800000,0xbf800000,0}},
+    {{-1,0,0},{0,0,0xbf800000}},
+    {{1,2,3},{0,0x40400000,0x40400000}},
+    {{.25f,.5f,.75f},{0x3f941f20,0x3f02be40,0x3f400000}},
+    {{-.25f,-.5f,-.75f},{0xbf007e40,0xbf0a81c0,0xbf941f20}},
+    {{.1f,-1.2f,3.4f},{0x3f398ae7,0xc00969bc,0x40444fb9}},
+    {{12.345f,-.123f,6.789f},{0x41397693,0x3ee28596,0x40e061d7}}};
+  std::fenv_t previous;std::fegetenv(&previous);
+  for(auto rounding:{FE_TONEAREST,FE_UPWARD})for(const auto& sample:samples) {
+    wz3::legacy::GenMesh mesh;mesh.Init(wz3::legacy::sGMF_DEFAULT,2);
+    const auto v=mesh.AddNewVert();mesh.VertPos(v).Init(sample.p[0],sample.p[1],sample.p[2]);mesh.Vert[v].Select=1;
+    const auto untouched=mesh.AddNewVert();mesh.VertPos(untouched).Init(7,8,9);
+    wz3::legacy::sMatrix matrix;matrix.Init();
+    std::fesetround(rounding);std::feclearexcept(FE_ALL_EXCEPT);std::feraiseexcept(FE_DIVBYZERO);
+    mesh.Perlin(matrix,{1,1,1,0});
+    check(std::fegetround()==rounding,"Perlin must restore caller rounding mode");
+    check(std::fetestexcept(FE_ALL_EXCEPT)==FE_DIVBYZERO,"Perlin must restore caller exception flags");
+    for(unsigned c=0;c<3;++c) {
+      const auto value=mesh.VertPos(v)[c];
+      check((value==0 ? 0 : f(value))==sample.bits[c],"Perlin downward binary32 golden");
+      check(mesh.VertPos(untouched)[c]==float(7+c),"Perlin changed unselected vertex");
+    }
+    // Exact quarter-grid inputs avoid losing fractional bits when translating
+    // the sampling frame by hundreds of units in binary32.
+    if(&sample<samples+5) {
+      mesh.VertPos(v).Init(sample.p[0],sample.p[1],sample.p[2]);matrix.l.Init(256,-256,512);
+      mesh.Perlin(matrix,{1,1,1,0});
+      for(unsigned c=0;c<3;++c) {
+        const auto value=mesh.VertPos(v)[c];
+        check((value==0 ? 0 : f(value))==sample.bits[c],"Perlin lattice must repeat every 256 units");
+      }
+    }
+    matrix.l.x=std::numeric_limits<float>::infinity();
+    rejects([&]{mesh.Perlin(matrix,{1,1,1,0});});
+    check(std::fegetround()==rounding,"Perlin must restore rounding after an exception");
+  }
+  std::fesetenv(&previous);
+  Fixture p;const auto base=p.add(0x81,cube(1,1,1,1));
+  const auto a=p.get(base);
+  const auto b=p.get(p.add(0x91,{0,0,0,0,0,0,0,0,0,0,f(1),f(2),f(3)},{base}));
+  for(std::size_t i=0;i<a->vertices.size();++i)for(unsigned c=0;c<3;++c) {
+    near(b->vertices[i].position[c],a->vertices[i].position[c]+(c==0 ? 1 : c==1 ? -2 : 0),"Perlin sampling SRT and per-axis amplitude");
+  }
+  seams(*b);
+}
 }
 int main(int argc,char** argv) {
   try {
-    check(argc==2,"expected Theta project");primitives();operators();normals();bends();indexed_operations();attributes_and_grids();
+    check(argc==2,"expected Theta project");primitives();operators();normals();bends();indexed_operations();attributes_and_grids();displacement();noise_displacement();
     const auto project=wz3::read_project(argv[1]);const auto graph=wz3::connect(project);
     for (const auto* name : {"mesh.cube","mesh.bwflattorus","mesh.LineCircle","mesh.FireGradientCircle",
         "mesh.bwflattorus8","mesh.bwflattorus4","mesh.flatfractal","mesh.g4flat","mesh.citybridge",
         "mesh.cityblock","mesh.rohrcylin120","mesh.rohrcylin32","msh.wfl1","mesh.tetra","mesh.tetra2","mesh.Arrow",
         "mesh.fireball","mesh.fireball2","mesh.highway1","mesh.highway2","mesh.stars","mesh.fireballBlackBody",
-        "mesh.bridge2","mesh.citycomp","mesh.5roehrenstart","mesh.rohr160_1","mesh.rohr160_2","mesh.rohr160_3","mesh.rohr160_4","mesh.rohr160_5","mesh.g10walls"}) {
+        "mesh.bridge2","mesh.citycomp","mesh.5roehrenstart","mesh.rohr160_1","mesh.rohr160_2","mesh.rohr160_3","mesh.rohr160_4","mesh.rohr160_5","mesh.g10walls","mesh.band"}) {
       const auto mesh=wz3::evaluate_mesh(project,graph,graph.names.at(name));
       wz3::validate_mesh(*mesh);check(!mesh->faces.empty(),"empty Theta mesh");
       wz3::mesh_normals(*mesh);
     }
-    rejects([&]{wz3::evaluate_mesh(project,graph,graph.names.at("mesh.band"));});
-    std::cout << "indexed mesh geometry, attributes and 31 real Theta recipes passed\n";
+    std::cout << "indexed mesh geometry, attributes, displacement and all 32 real Theta recipes passed\n";
   } catch(const std::exception& error) {std::cerr<<error.what()<<'\n';return 1;}
 }

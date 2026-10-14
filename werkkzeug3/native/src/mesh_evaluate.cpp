@@ -1,5 +1,6 @@
 // Distributed under the BSD license in werkkzeug3/LICENSE.txt.
 #include "mesh_kernel.hpp"
+#include "wz3/texture.hpp"
 #include <bit>
 
 namespace wz3::legacy {
@@ -73,6 +74,12 @@ public:
       }else if(op.command==0x9d) {
         require(op,3);if(!node.inputs.empty())throw std::runtime_error("Grid has unexpected inputs");
         mesh.reset(Mesh_Grid(integer(op,0,3),integer(op,1,256,1),integer(op,2,256,1)));
+      }else if(op.command==0x8f) {
+        require(op,4);if(node.inputs.size()!=2)throw std::runtime_error("Displace needs mesh and bitmap inputs");
+        mesh=std::make_shared<GenMesh>(*get(node.inputs[0],depth+1));
+        const auto bitmap=evaluate_texture(project,graph,node.inputs[1]);
+        const auto mask=integer(op,0);if(mask)mesh->Mask2Sel(mask<<16);else mesh->All2Sel();
+        mesh->NeedAllNormals();mesh->Displace(*bitmap,real(op,1),real(op,2),real(op,3));mesh->GotNormals=false;
       }else if(op.command==0x92) {
         require(op,0);if(node.inputs.empty())throw std::runtime_error("mesh Add requires inputs");
         mesh=std::make_shared<GenMesh>();mesh->Init(sGMF_DEFAULT,0);
@@ -96,6 +103,11 @@ public:
           require(op,3);Mesh_Subdivide(nullptr,mesh.get(),integer(op,0),real(op,1),integer(op,2,8,1));break;
         case 0x8c:
           require(op,3);Mesh_Triangulate(mesh.get(),integer(op,0),integer(op,1,256,3),integer(op,2,2));break;
+        case 0x91: {
+          require(op,13);const auto mask=integer(op,0);if(mask)mesh->Mask2Sel(mask<<16);else mesh->All2Sel();
+          // Mesh_Perlin leaves GotNormals unchanged in the archive.
+          sMatrix m;const auto value=srt(op,1);m.InitSRT(value.v);mesh->Perlin(m,vector(op,10));break;
+        }
         case 0xa1:
           require(op,4);Mesh_SelectLogic(mesh.get(),integer(op,0,0xffffff),integer(op,1,0xffffff),integer(op,2,0xffffff),integer(op,3,63));break;
         case 0x9a:

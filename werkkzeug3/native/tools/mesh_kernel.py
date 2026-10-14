@@ -79,6 +79,13 @@ def main():
     Path(sys.argv[2]).write_text(
         "// Generated from genmesh.cpp, distributed under werkkzeug3/LICENSE.txt.\n" +
         "\n\n".join(bodies) + "\n")
+    if len(sys.argv) > 3:
+        noise = extract(source, "GenMesh::Perlin")
+        noise = re.sub(r"__asm\s*\{[^}]*\}", "", noise)
+        noise = noise.replace("sInt oldcw;", "const DownwardRounding rounding; const auto& data=noise_data();")
+        noise = noise.replace("sFtol(t0[j])", "floor_coordinate(t0[j])")
+        noise = noise.replace("sPerlinPermute", "data.permutation").replace("sPerlinGradient3D", "data.gradient")
+        Path(sys.argv[3]).write_text("// Generated from genmesh.cpp; see werkkzeug3/LICENSE.txt.\n" + noise + "\n")
 
 
 if __name__ == "__main__":
