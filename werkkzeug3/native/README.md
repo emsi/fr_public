@@ -9,7 +9,7 @@ The player renders the complete timeline with saved materials, lighting, shadows
 fog, particles, credits and image effects. It supports both the archived editor
 project and the recovered final 1.01 release graph. The release runs through its
 verified beat-592 endpoint: **16,083 consecutive frames at 1024×768**, advancing
-in 16 ms steps. Its cached fonts need no host font substitution. Seven captures
+in 16 ms steps. Its cached fonts need no host font substitution. Five captures
 match byte for byte between offline rendering and callback-paced playback.
 The editor project has different content and a beat-609 endpoint. Audible
 synchronization on a physical sound device and whole-demo original-output
@@ -86,7 +86,7 @@ build/native/wz3-frame-render build/reference/theta/extracted/theta.wz3r root \
 
 After **13,751 consecutive frames**, this output is byte-identical to the native
 player's 220-second snapshot (SHA-256
-`301322e0f6abf77830e29cbedc48358921b748e3a2e9cf03e20bafeb40026cfd`).
+`b2585853d15476f19a2b9e88e713decf2b82da29d19dcede757f3f837ab231ff`).
 Preroll draws intermediate frames entirely on the GPU; only the final image is
 read back. The inverse-clock tests check both timing modes at 8, 44.1, 48 and
 192 kHz, recovered x86 vectors, endpoint boundaries and frame-time overrides.
@@ -1217,6 +1217,43 @@ example, the released title fade at time 0.5 writes `0x80808080`, not
 stores and comparisons against previous animated values. Local tests cover
 signed halfway values, color saturation and restoration of caller rounding.
 
+The release also calls the older Hermite spline kernel. The archive's later
+Horner rewrite is algebraically equivalent but rounds differently. The runtime
+profile now preserves the original basis evaluation, reflected endpoint keys
+and accumulation order. Editor projects retain their later formula. A small
+nonuniform spline fixture checks eight original x86 outputs without requiring
+the downloaded release.
+
+`tools/release_animation_oracle.py` executes the restored release's animation
+interpreter (`0x8215ba..0x821d6a`), original spline/vector/remainder arithmetic,
+and variable restoration. Its only hook skips dependency bookkeeping; no
+Windows APIs, application entry point or renderer execute. Generate a native
+trace and compare it locally:
+
+```sh
+build/native/wz3-animation-tests --release-trace \
+  build/reference/theta/extracted/theta.wz3r build/reference/theta/animation-native.txt
+uv run --no-project --with unicorn python werkkzeug3/native/tools/release_animation_oracle.py \
+  build/reference/theta/extracted/restored-code-image.bin \
+  build/reference/theta/animation-native.txt --output build/reference/theta/animation-comparison.json
+```
+
+The interpreter slice has SHA-256
+`181fa3aa951b47e9359a144c92f94e2a9cb2e6e2841351f876cc3e61ee55c148`.
+All **127 released programs** match across **16,764 evaluations**: 65 normalized
+time samples plus the exact 36-second event phase, each with default variables
+or nonzero selection/scale/translation/feet and an event spline. Both GCC
+Release and Clang ASan/UBSan traces have **zero differing output words**, and
+both interpreters restore saved variables. The report separately counts exact
+integer/color mismatches and floating-point errors, using an absolute tolerance
+of 0.00002 plus relative tolerance 0.000002 for the latter. Each isolated call
+starts with an empty x87 stack and control word `0x103f`. This verifies sampled
+interpreter arithmetic, not ancestor traversal, event dispatch, continuous x87
+state or complete scene/output fidelity.
+As negative controls, restoring truncating stores produces 752 exact-word
+mismatches; restoring the Horner spline produces 7,356 differing words, four
+outside the floating-point tolerance. Both comparisons fail as expected.
+
 The release's extra zero word on Multiply is retained in the project and ignored
 by its existing 17-argument handler; nonzero padding is rejected. Timing flag
 bit 0 selects Buzz arithmetic; bit 1 selects the verified release profile and
@@ -1231,10 +1268,10 @@ the independent Python decoder. All 127 animation programs execute in the audit
 (635 evaluations), with 15,677 spline samples. This establishes native graph
 execution, not final visual or physical audio synchronization fidelity.
 
-A full SDL/X11 playback after the released rendering-phase correction at 1024×768 completed 16,083
-frames, 15,275 presentations and 11,084 dummy-audio callbacks through the recovered
+A full SDL/X11 playback after the released animation corrections at 1024×768 completed 16,083
+frames, 15,278 presentations and 11,085 dummy-audio callbacks through the recovered
 endpoint, with zero new static assets/uploads/programs during playback. Offline
-rendering produced byte-identical captures at 4, 12, 16, 120, 195, 220 and 250 seconds.
+rendering produced byte-identical captures at 36, 120, 195, 220 and 250 seconds.
 The endpoint remains black. This verifies simulation/render history independently of
 callback pacing; it does not test physical audio output. All 43 local Release
 tests pass, including 16 graphics tests.
@@ -1298,11 +1335,11 @@ python werkkzeug3/native/tools/reference_gallery.py build/reference/theta/compar
 
 | Music time | Best RGB MSE | Observation at the matched video timestamp |
 | --- | ---: | --- |
-| 30 s | 724.92 | Tunnel geometry, materials and camera closely correspond. |
-| 120 s | 2732.10 | Cube sequence now corresponds; residual geometry/frame-phase differences remain. |
-| 195 s | 1535.49 | Creature position/pose is closer; residual differences remain. |
-| 220 s | 149.93 | Bright lighting phase, geometry and floating particles closely correspond. |
-| 250 s | 32.27 | Recovered glyphs, credits and centered layout closely correspond. |
+| 30 s | 724.88 | Tunnel geometry, materials and camera closely correspond. |
+| 120 s | 2728.87 | Cube sequence now corresponds; residual geometry/frame-phase differences remain. |
+| 195 s | 1535.60 | Creature position/pose is closer; residual differences remain. |
+| 220 s | 151.30 | Bright lighting phase, geometry and floating particles closely correspond. |
+| 250 s | 32.42 | Recovered glyphs, credits and centered layout closely correspond. |
 
 A broader sweep of **148 continuous-playback snapshots**, covering event
 midpoints and regular four-second samples, exposed a large opening-scene bug
@@ -1343,12 +1380,28 @@ Other sweep positions still differ substantially, including the scene around
 36–44 seconds. The wider comparison is diagnostic coverage, not full-demo
 acceptance.
 
-The corrected full sweep completes all 16,083 frames and 148 snapshots. Of the
+The phase-corrected full sweep completed all 16,083 frames and 148 snapshots. Of the
 148 nearest-frame comparisons, 21 improve and none worsen; median RGB MSE falls
-from 444.47 to 416.41. The unchanged five checkpoints above still apply. The
+from 444.47 to 416.41. The
 largest remaining differences are now at 36, 40, 44 and 41.726 seconds, followed
 by event midpoints near 111.270 and 146.042 seconds. Regression checks pass on
 Radeon RX 7900 XT, llvmpipe and Clang ASan/UBSan; all 43 local Release tests pass.
+
+After restoring released animation rounding and Hermite arithmetic, another
+complete 148-snapshot sweep changes 132 image hashes. Its nearest-video errors
+improve at 70 positions, increase at 60 and remain equal at 18; the median stays
+416.41 to two decimals. The table above reflects this newer sweep. These small
+changes do not resolve the large 36–44 second scene mismatch. The arithmetic
+corrections follow direct original-code comparisons, not optimization of the
+lossy-video metric. The current full offline render takes 25.18 seconds on the
+tested Radeon.
+
+At 36 seconds, the native graph selects event 4 (beats 80–112), targeting
+operator 423 and viewport 422. The isolated interpreter check includes that
+event's exact normalized time, 0.08829784393310547, and global beat
+82.825531005859375. The next investigation must distinguish event/ancestor
+traversal, geometry/scene-handler differences and reference-version differences;
+the sampled camera arithmetic alone does not explain the mismatch.
 
 The earlier bright-versus-dark 220-second mismatch was a frame-selection issue;
 it does not justify changing the renderer's lighting. The later release-specific

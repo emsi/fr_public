@@ -47,7 +47,7 @@ unsigned union_kind(unsigned cmd) {
   if(cmd>=0x16 && cmd<=0x19)return cmd-0x15;
   return cmd==0x1d ? 6 : cmd==0x1e ? 7 : 0;
 }
-float curve_value(const std::vector<std::array<float,2>>& keys,float time,unsigned mode) {
+float curve_value(const std::vector<std::array<float,2>>& keys,float time,unsigned mode,bool release) {
   if(keys.empty())return 0;
   if(time<=keys.front()[0])return keys.front()[1];
   if(time>=keys.back()[0])return keys.back()[1];
@@ -56,6 +56,23 @@ float curve_value(const std::vector<std::array<float,2>>& keys,float time,unsign
     const auto t=(time-keys[k][0])/tdif;
     if(mode==1)return t*dif+keys[k][1];
     if(mode==2)return keys[k][1];
+    if(release) {
+      // Final 1.01 calls the older sHermite kernel. Its basis, endpoint
+      // reflection and accumulation order differ from the archive's Horner
+      // replacement below, even though the formulas agree algebraically.
+      const auto& p1=keys[k];const auto& p2=keys[k+1];
+      const bool first=k==0,last=k+2==keys.size();
+      const auto& p0=first ? p2 : keys[k-1];const auto& p3=last ? p1 : keys[k+2];
+      const float t0=first ? p1[0]+(p1[0]-p2[0]) : p0[0];
+      const float t3=last ? p2[0]+(p2[0]-p1[0]) : p3[0];
+      const float square=t*t,cube=square*t;
+      const float f1=2*cube-3*square+1,f2=(3-2*t)*t*t;
+      const float f3=(cube-2*square+t)*tdif/(tdif+(p1[0]-t0));
+      const float f4=(cube-square)*tdif/((t3-p2[0])+tdif);
+      const float a=(p1[1]-p0[1])*(first ? -1.f : 1.f)+dif;
+      const float b=(p3[1]-p2[1])*(last ? -1.f : 1.f)+dif;
+      return ((a*f3+b*f4)+f2*p2[1])+f1*p1[1];
+    }
     const auto d0=k==0 ? dif : tdif*(keys[k+1][1]-keys[k-1][1])/(keys[k+1][0]-keys[k-1][0]);
     const auto d1=k==keys.size()-2 ? dif : tdif*(keys[k+2][1]-keys[k][1])/(keys[k+2][0]-keys[k][0]);
     return (((d0+d1-2*dif)*t+3*dif-2*d0-d1)*t+d0)*t+keys[k][1];
@@ -70,7 +87,7 @@ struct Reader {
 };
 }
 
-SplineLibrary::SplineLibrary(const Project& project) {
+SplineLibrary::SplineLibrary(const Project& project):release_profile(project.runtime_graph) {
   for(const auto& source:project.splines) {
     require(source.channels.size()<=4 && source.interpolation<=2,"unsupported spline layout");
     names.emplace(source.name,curves.size()); // FindSpline selects the first match, including duplicate names.
@@ -96,7 +113,7 @@ std::optional<std::size_t> SplineLibrary::find(std::string_view name) const {
 AnimationVector SplineLibrary::evaluate(std::size_t id,float time) const {
   require(id<curves.size() && std::isfinite(time),"invalid spline sample");
   const NearestRounding rounding;AnimationVector value{};const auto& curve=curves[id];
-  for(std::size_t i=0;i<curve.channels.size();++i)value[i]=curve_value(curve.channels[i],time,curve.interpolation);
+  for(std::size_t i=0;i<curve.channels.size();++i)value[i]=curve_value(curve.channels[i],time,curve.interpolation,release_profile);
   return value;
 }
 

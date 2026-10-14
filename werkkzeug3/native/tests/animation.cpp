@@ -4,6 +4,7 @@
 #include <bit>
 #include <cfenv>
 #include <cmath>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -163,9 +164,58 @@ void theta(const char* file) {
   const float expected[]={.0900000073f,.0790000036f,0,-5.252972126f,2.3540000916f,-9.3050251007f};
   for(unsigned i=0;i<6;++i)near(wz3::as_float(pose.parameters[3+i]),expected[i],"Theta camera midpoint from saved two-key splines");
 }
+void release_spline() {
+  wz3::Project p;p.runtime_graph=true;wz3::Spline curve;
+  curve.channels={{{f(0),f(.25f)},{f(.2f),f(7.5f)},{f(.7f),f(-3.25f)},{f(1),f(4.75f)}}};
+  p.splines.push_back(curve);const wz3::SplineLibrary splines(p);
+  // Original x86 KSpline::Eval/sHermite outputs, including reflected endpoints
+  // and nonuniform interior tangents. The newer Horner kernel differs here.
+  for(const auto& [time,bits]:std::vector<std::pair<float,std::uint32_t>>{
+      {-.1f,0x3e800000},{0,0x3e800000},{.125f,0x40bfac00},{.375f,0x4087a09c},
+      {.625f,0xc01d57bf},{.875f,0x3f0085f0},{1,0x40980000},{1.1f,0x40980000}}) {
+    const auto value=splines.evaluate(0,time);
+    check(f(value[0])==bits,"released Hermite differs from original x86 instructions");
+    check(value[1]==0 && value[2]==0 && value[3]==0,"release spline missing channels");
+  }
+}
+void release_trace(const char* project_file,const char* output_file) {
+  const auto p=wz3::read_project(project_file);check(p.runtime_graph,"release trace requires a runtime graph");
+  const wz3::SplineLibrary splines(p);check(splines.size()>2,"release trace requires the gait spline");
+  std::ofstream out(output_file);check(bool(out),"cannot open release animation trace");out<<"theta-animation-v1\n";
+  unsigned programs=0,rows=0;
+  for(std::size_t id=0;id<p.operators.size();++id) {
+    const auto& op=p.operators[id];if(!op.has_animation())continue;
+    const auto program=wz3::compile_animation(op,splines);++programs;
+    for(unsigned sample=0;sample<=65;++sample)for(int event_spline:{-1,2}) {
+      auto env=wz3::frame_environment(sample<65 ? sample*1024 : 0);
+      env.variables[15].fill(sample<65 ? sample*9.25f : 82.825531005859375f);
+      // One extra input is the exact camera/event phase at the 36-second capture.
+      if(sample==65)env.variables[0].fill((82.825531005859375f-80)/32);
+      if(event_spline>=0) {
+        env.event_spline=event_spline;env.variables[3].fill(3);
+        env.variables[4]={1,2,3,1};env.variables[6]={-2,.5f,3,1};
+        for(unsigned foot=0;foot<4;++foot)env.variables[16+foot]={float(foot)-1.5f,.25f*(foot+1),foot&1 ? 2.f : -2.f,1};
+      }
+      const auto before=env.variables;
+      {
+        const wz3::AnimationScope value(program,splines,op.parameters,env);
+        out<<id<<' '<<sample<<' '<<event_spline<<' '<<value.changed<<' '<<value.parameters.size();
+        for(auto word:value.parameters)out<<' '<<word;
+        for(const auto& v:env.variables)for(auto lane:v)out<<' '<<std::bit_cast<std::uint32_t>(lane);
+        out<<'\n';++rows;
+      }
+      check(env.variables==before,"release animation leaked scoped variables");
+    }
+  }
+  check(programs==127 && rows==16764,"unexpected release animation coverage");
+  out.close();check(bool(out),"cannot finish release animation trace");
+  std::cout<<programs<<" released programs, "<<rows<<" evaluations and scope restorations recorded\n";
+}
 }
 int main(int argc,char** argv) {
-  try {check(argc==2,"expected Theta project");compiler();scope_and_storage();math();curves_and_events();theta(argv[1]);
+  try {
+    if(argc==4 && std::string_view(argv[1])=="--release-trace") {release_trace(argv[2],argv[3]);return 0;}
+    check(argc==2,"expected Theta project, or --release-trace PROJECT OUTPUT");compiler();scope_and_storage();math();curves_and_events();release_spline();theta(argv[1]);
     std::cout<<"animation compilation, scoped execution, events and all 141 Theta programs passed\n";
   }catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}
 }

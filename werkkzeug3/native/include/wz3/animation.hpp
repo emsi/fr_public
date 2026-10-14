@@ -12,6 +12,7 @@ class SplineLibrary {
   struct Curve {unsigned interpolation;std::vector<std::vector<std::array<float,2>>> channels;};
   std::vector<Curve> curves;
   std::map<std::string,std::size_t,std::less<>> names;
+  bool release_profile{};
 public:
   explicit SplineLibrary(const Project&);
   std::optional<std::size_t> find(std::string_view name) const;
