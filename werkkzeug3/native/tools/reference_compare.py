@@ -76,6 +76,11 @@ def main():
             ap.error("snapshot time must be in [0,600)")
         step_ms = math.ceil(seconds * 1000 / 16) * 16
         sample = step_ms * 44100 // 1000
+        # A 16 ms boundary may fall between 44.1 kHz samples. The player saves
+        # on the first sample at or beyond the request, not at nominal step time.
+        if sample / 44100 < seconds:
+            step_ms += 16
+            sample = step_ms * 44100 // 1000
         native_time = sample / 44100
         center, start = native_time + offset, max(0, native_time + offset - args.radius)
         frames, stamps = candidates(args.video, start, math.ceil(2 * args.radius * fps) + 3, args.size)

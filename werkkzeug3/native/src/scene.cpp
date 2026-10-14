@@ -96,7 +96,7 @@ struct ScenePlayer::Impl {
   std::vector<bool> prepared;
   std::vector<std::optional<AnimationProgram>> programs;
   std::vector<bool> visiting;
-  Impl(const Project& p,const Graph& g,const TextureOptions& options,std::shared_ptr<SceneAssets> shared):project(p),graph(g),splines(p),materials(p,g),particles(splines,random),effects(random),walker(splines),assets(shared ? std::move(shared) : std::make_shared<SceneAssets>(p,g,options)),prepared(p.operators.size()),programs(p.operators.size()),visiting(programs.size()) {
+  Impl(const Project& p,const Graph& g,const TextureOptions& options,std::shared_ptr<SceneAssets> shared):project(p),graph(g),splines(p),materials(p,g),particles(splines,random,p.runtime_graph),effects(random),walker(splines),assets(shared ? std::move(shared) : std::make_shared<SceneAssets>(p,g,options)),prepared(p.operators.size()),programs(p.operators.size()),visiting(programs.size()) {
     require(graph.nodes.size()==project.operators.size(),"scene graph size mismatch");
     require(assets->matches(p,g,options),"scene assets belong to a different project, graph or font");
   }
@@ -246,7 +246,8 @@ struct ScenePlayer::Impl {
       if(!op.splines.empty() && !op.splines[0].empty()) {spline=splines.find(op.splines[0]);require(spline.has_value(),"unresolved particle spline");}
       const auto instances=particles.evaluate(instance(id,env),p,spline);const auto selection=env.variables[3],fraction=env.variables[11];
       try {for(const auto& particle:instances) {
-        env.variables[3].fill(float(particle.index));env.variables[11].fill(particle.fraction);
+        // The released handler predates KV_SELECT/KV_FRACTION publication.
+        if(!project.runtime_graph) {env.variables[3].fill(float(particle.index));env.variables[11].fill(particle.fraction);}
         execute(node.inputs[0],env,scene_combine(world,particle.transform),frame,timeline,depth+1,pass);
       }}catch(...) {env.variables[3]=selection;env.variables[11]=fraction;throw;}
       env.variables[3]=selection;env.variables[11]=fraction;break;

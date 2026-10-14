@@ -16,7 +16,7 @@ class SceneParticles {
   struct Impl;
   std::unique_ptr<Impl> impl;
 public:
-  explicit SceneParticles(const SplineLibrary&,std::shared_ptr<ParticleRandom> random={});
+  explicit SceneParticles(const SplineLibrary&,std::shared_ptr<ParticleRandom> random={},bool released_handler=false);
   ~SceneParticles();
   std::vector<SceneParticle> evaluate(std::size_t operator_id,
       std::span<const std::uint32_t> parameters,std::optional<std::size_t> spline={});

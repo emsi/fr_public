@@ -3,6 +3,7 @@
 #include "wz3/particles.hpp"
 #include "mesh_kernel.hpp"
 #include <cfenv>
+#include <fstream>
 #include <iostream>
 
 namespace source {
@@ -119,6 +120,56 @@ void scene_variables() {
   const auto scene=player.viewport(view,env,1);check(scene.instances.size()==5,"particle child scene instancing");
   for(unsigned i=0;i<4;++i) {near(scene.instances[i].world[12],1+2*i,"particle parent transform");near(scene.instances[i].world[13],.125f+.25f*i,"child reads KV_FRACTION");near(scene.instances[i].world[14],float(i),"child reads KV_SELECT");check(scene.instances[i].mesh==scene.instances[4].mesh,"particles share static geometry");}
   near(scene.instances[4].world[13],.875f,"fraction restored before sibling");near(scene.instances[4].world[14],23,"selection restored before sibling");
+  x.p.runtime_graph=true;wz3::ScenePlayer released(x.p,x.g);
+  env=wz3::frame_environment(0);env.variables[3].fill(23);env.variables[11].fill(.875f);
+  const auto old=released.viewport(view,env,1);
+  for(unsigned i=0;i<4;++i) {
+    near(old.instances[i].world[13],.875f,"released particles leave KV_FRACTION unchanged");
+    near(old.instances[i].world[14],23,"released particles leave KV_SELECT unchanged");
+  }
+}
+void released() {
+  const auto p=splined();const wz3::SplineLibrary splines(p);wz3::SceneParticles native(splines,{},true);
+  // First three positions of release operator 133, independently obtained
+  // from x86 0x820782..0x820895 by release_particle_oracle.py (seed zero).
+  const std::array<std::array<float,4>,3> expected{{
+    {.8926759362220764f,1.5656044483184814f,-.03581085801124573f,.2251311093568802f},
+    {1.2234467267990112f,.8877468705177307f,.438912570476532f,.592547595500946f},
+    {-1.1036046743392944f,1.3614574670791626f,.49032723903656006f,.5563706159591675f}}};
+  std::array<std::uint32_t,16> values{0,150,0,f(2.76953125f),f(4.28125f),f(1)};
+  const auto cloud=native.evaluate(0,values);
+  for(unsigned i=0;i<expected.size();++i) {
+    for(unsigned c=0;c<3;++c)near(cloud[i].transform[12+c],expected[i][c],"released x86 particle position");
+    near(cloud[i].fraction,expected[i][3],"released x86 particle phase");
+  }
+  values={0x31,4,0};values[12]=f(.125f);values[13]=f(100);values[11]=f(5);
+  const auto line=native.evaluate(1,values),curve=native.evaluate(2,values,0);
+  for(unsigned i=0;i<4;++i) {
+    const auto phase=.125f+.25f*i;
+    near(line[i].transform[12],100*phase,"released line placement");
+    near(curve[i].transform[12],4*phase,"released spline excludes line displacement");
+    near(curve[i].transform[8],1,"released spline orientation");
+    near(line[i].transform[0],1,"released handler ignores later angular velocities");
+  }
+}
+void released_oracle(const char* path) {
+  std::ifstream in(path);unsigned cases=0,total=0;float max_error=0;in>>cases;check(in.good() && cases>0 && cases<=100,"invalid released cloud oracle");
+  wz3::Project p;const wz3::SplineLibrary splines(p);wz3::SceneParticles native(splines,{},true);
+  for(unsigned id=0;id<cases;++id) {
+    std::array<std::uint32_t,16> values{};in>>values[0]>>values[1]>>values[2];
+    for(unsigned c=3;c<6;++c){float v=0;in>>v;values[c]=f(v);}
+    check(in.good() && values[1]>0 && values[1]<=16384,"invalid released cloud parameters");
+    const auto result=native.evaluate(id,values);total+=result.size();
+    for(const auto& particle:result) {
+      std::array<float,4> expected{};for(auto& value:expected)in>>value;
+      check(in.good(),"truncated released cloud oracle");
+      for(unsigned c=0;c<3;++c)max_error=std::max(max_error,std::abs(particle.transform[12+c]-expected[c]));
+      max_error=std::max(max_error,std::abs(particle.fraction-expected[3]));
+    }
+  }
+  in>>std::ws;check(in.eof(),"trailing released cloud data");
+  check(max_error<=1e-6f,"native/cloud x86 values differ by more than 1e-6");
+  std::cout<<total<<" particles in "<<cases<<" released clouds match isolated x86 initializer; max absolute error "<<max_error<<'\n';
 }
 void theta(const char* path) {
   const auto p=wz3::read_project(path);const auto g=wz3::connect(p);const wz3::SplineLibrary splines(p);wz3::SceneParticles native(splines);unsigned count=0;
@@ -135,6 +186,9 @@ void theta(const char* path) {
 }
 }
 int main(int argc,char** argv) {
-  try {oracle();analytic();scene_variables();if(argc>1)theta(argv[1]);}
+  try {
+    if(argc==3 && std::string_view(argv[1])=="--release-oracle")released_oracle(argv[2]);
+    else {oracle();analytic();released();scene_variables();if(argc>1)theta(argv[1]);}
+  }
   catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}
 }

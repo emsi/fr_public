@@ -516,6 +516,35 @@ restoration and shared geometry. The oracle shares portable matrix and spline
 primitives, so it is not a comparison with the original SSE trigonometry or a
 Windows executable capture.
 
+The recovered final 1.01 graph uses its older handler at `0x8206ed`, which differs
+from this archived editor version. Its initializer draws only XYZ position and
+phase. Drawing the later random speed/rotation values, even when their parameters
+are zero, changes every subsequent particle's random sequence. Its spline branch
+also excludes line displacement, its rotation flag only orients along the spline,
+and it does not publish particle index/phase into animation variables. The native
+runtime graph selects these older semantics; editor projects retain the archived
+handler and its source-oracle coverage.
+
+`tools/release_particle_oracle.py` executes the isolated restored initializer
+and RNG, with the original `0x103f` FPU control word. It supplies preallocated
+memory and stops before motion/child execution; no Windows APIs or application
+entry point run. All **1,974 XYZ/phase records in nine released clouds** match the
+native initializer with **zero absolute error**. Three original position/phase
+records are included in the standard tests, along with spline/line exclusivity,
+orientation and preserved animation-variable checks. Reproduce the full optional
+audit after extracting the release with `--release-timing`:
+
+```sh
+uv run --no-project --with unicorn python werkkzeug3/native/tools/release_particle_oracle.py \
+  build/reference/theta/extracted/restored-code-image.bin --output build/reference/theta/particles
+build/native/wz3-particle-tests --release-oracle build/reference/theta/particles/particles.txt
+```
+
+The JSON report retains the restored image/handler hashes, executed instruction
+ranges, source parameters and position-array hashes. This independently verifies
+the distributions used by the release; motion, spline primitives and the final
+render still have their separate comparison limits.
+
 Four additional root midpoint scenes now emit 333 instances at beat 96, 185 at
 120, 645 at 184 and 754 at 256. They render through the native compositor on
 Radeon and llvmpipe using diagnostic geometry shading. A full audit renders
@@ -1199,15 +1228,18 @@ simulation cadence and video compression still limit this comparison.
 | Music time | Best RGB MSE | Observation at the matched video timestamp |
 | --- | ---: | --- |
 | 30 s | 724.92 | Tunnel geometry, materials and camera closely correspond. |
-| 120 s | 7106.40 | Cube distribution still differs despite a corresponding tunnel/camera. |
-| 195 s | 1613.85 | Creature position/pose is closer; residual differences remain. |
-| 220 s | 419.22 | Both images show the same bright lighting phase; geometry closely corresponds. |
-| 250 s | 38.09 | Recovered glyphs, credits and centered layout closely correspond. |
+| 120 s | 2732.10 | Cube sequence now corresponds; residual geometry/frame-phase differences remain. |
+| 195 s | 1535.49 | Creature position/pose is closer; residual differences remain. |
+| 220 s | 149.93 | Bright lighting phase, geometry and floating particles closely correspond. |
+| 250 s | 32.27 | Recovered glyphs, credits and centered layout closely correspond. |
 
 The earlier bright-versus-dark 220-second mismatch was a frame-selection issue;
-it does not justify changing the renderer's lighting. Random precalculation,
-simulation cadence and legacy engine behavior still need to be separated before
-assigning causes to the remaining differences. The native Text decoder
+it does not justify changing the renderer's lighting. The later release-specific
+particle correction lowered the 120-second RGB MSE from 7106.40 to 2732.10 and
+the 220-second error from 419.22 to 149.93. It corrects an independently verified
+engine-version difference, rather than tuning geometry to a video. Simulation
+cadence, precalculation and other legacy engine behavior still need to be
+separated before assigning causes to the remaining differences. The native Text decoder
 now accepts the release's cached font atlases, preserving all metrics through
 Blur/Merge/Store. The recovered `duality` atlas contains 73 glyph records and
 `Droid` four; decoding both needs no installed font. Verify the real blobs after
@@ -1226,7 +1258,7 @@ release-versus-video comparisons possible without the editor-project differences
 
 ## Next steps
 
-1. Investigate cube distribution and remaining creature motion differences
+1. Investigate remaining geometry/frame-phase and creature motion differences
    against reference frames using actual visual timestamps and the verified clock.
 2. Reproduce the editor's operator type checking and version migrations.
 3. Compare saved material shading against original frames and extend remaining
