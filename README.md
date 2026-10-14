@@ -2,7 +2,8 @@
 
 This fork has an ongoing **native Linux port of fr-038: Theta** on the
 `native-linux` branch. See [the native build instructions](werkkzeug3/native/README.md)
-for the project reader, graph inspector and procedural texture/GPU previews.
+for the project reader, graph inspector, procedural textures, font atlases and
+native GPU mesh previews.
 Full demo playback is still in development. The original archive follows below.
 
 This is it. Pretty much a history of Farbrausch tools 2001-2011. We've been

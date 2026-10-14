@@ -1,10 +1,12 @@
 // Distributed under the BSD license in werkkzeug3/LICENSE.txt.
 // Headless native Linux graphics path; no X server or Windows runtime required.
 #include "wz3/texture.hpp"
+#include "wz3/mesh.hpp"
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <GLES3/gl3.h>
 #include <algorithm>
+#include <cmath>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
@@ -22,7 +24,7 @@ struct Context {
   EGLDisplay display = EGL_NO_DISPLAY;
   EGLContext context = EGL_NO_CONTEXT;
   EGLSurface surface = EGL_NO_SURFACE;
-  Context(unsigned width, unsigned height) {
+  Context(unsigned width, unsigned height, bool depth = false) {
     try {
       const char* extensions = eglQueryString(EGL_NO_DISPLAY, EGL_EXTENSIONS);
       if (!extensions || std::string_view(extensions).find("EGL_MESA_platform_surfaceless") == std::string_view::npos)
@@ -35,6 +37,7 @@ struct Context {
       const EGLint attributes[] = {
         EGL_SURFACE_TYPE, EGL_PBUFFER_BIT, EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
         EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8,
+        EGL_DEPTH_SIZE, depth ? 24 : 0,
         EGL_SAMPLE_BUFFERS, 0, EGL_SAMPLES, 0, EGL_NONE
       };
       EGLConfig config;
@@ -138,6 +141,105 @@ std::vector<std::uint8_t> render_texture(const Texture& texture) {
     throw std::runtime_error("GPU readback differs at channel " + std::to_string(mismatch.first - output.begin()));
   }
   std::cerr << "GPU readback: all " << output.size() / 4 << " RGBA pixels match CPU texture\n";
+  return output;
+}
+
+std::vector<std::uint8_t> render_mesh(const Mesh& mesh, unsigned width, unsigned height) {
+  validate_mesh(mesh);
+  if (mesh.faces.empty() || width < 16 || height < 16 || width > 4096 || height > 4096)
+    throw std::runtime_error("invalid mesh preview size or empty geometry");
+  const auto bounds = mesh_bounds(mesh);
+  Vec3 center{}, extent{};
+  for (unsigned c = 0; c < 3; ++c) {
+    center[c] = bounds.min[c]*0.5f + bounds.max[c]*0.5f;
+    extent[c] = bounds.max[c]*0.5f - bounds.min[c]*0.5f;
+  }
+  const double radius = std::hypot(double(extent[0]),double(extent[1]),double(extent[2]));
+  if (!std::isfinite(radius) || radius < 1e-12) throw std::runtime_error("mesh preview needs finite, nonzero extent");
+  Context context(width,height,true);
+  std::cerr << "GL vendor: " << glGetString(GL_VENDOR) << "\nGL renderer: " << glGetString(GL_RENDERER)
+            << "\nGL version: " << glGetString(GL_VERSION) << '\n';
+  GLint depth_bits = 0;
+  glGetIntegerv(GL_DEPTH_BITS,&depth_bits);
+  if (depth_bits < 16) throw std::runtime_error("mesh preview needs a depth buffer");
+  std::vector<std::uint32_t> indices;
+  indices.reserve(mesh.faces.size()*6);
+  for (const auto& face : mesh.faces) for (unsigned i = 1; i+1 < face.count; ++i) {
+    indices.push_back(face.vertices[0]); indices.push_back(face.vertices[i]); indices.push_back(face.vertices[i+1]);
+  }
+  const auto vertex = shader(GL_VERTEX_SHADER,R"(#version 300 es
+    layout(location=0) in vec3 position;
+    layout(location=1) in vec3 uv;
+    uniform vec3 center;
+    uniform vec3 scale;
+    out vec3 world_position;
+    out vec2 texcoord;
+    void main() {
+      vec3 p = position - center;
+      vec3 view = vec3(dot(p,vec3(0.8,0.0,-0.6)),
+                       dot(p,vec3(-0.3,0.8660254,-0.4)),
+                       -dot(p,vec3(0.5196152,0.5,0.6928203)));
+      gl_Position = vec4(view * scale,1.0);
+      world_position = p;
+      texcoord = uv.xy;
+    })");
+  const auto fragment = shader(GL_FRAGMENT_SHADER,R"(#version 300 es
+    precision highp float;
+    in vec3 world_position;
+    in vec2 texcoord;
+    out vec4 color;
+    void main() {
+      vec3 normal = normalize(cross(dFdx(world_position),dFdy(world_position)));
+      float light = 0.3 + 0.7*abs(dot(normal,normalize(vec3(-0.4,0.8,0.5))));
+      float checker = mod(floor(texcoord.x*8.0)+floor(texcoord.y*8.0),2.0);
+      vec3 base = mix(vec3(0.16,0.38,0.58),vec3(0.55,0.8,0.95),checker);
+      color = vec4(base*light,1.0);
+    })");
+  const auto program = glCreateProgram();
+  glAttachShader(program,vertex); glAttachShader(program,fragment); glLinkProgram(program);
+  glDeleteShader(vertex); glDeleteShader(fragment);
+  GLint linked = 0; glGetProgramiv(program,GL_LINK_STATUS,&linked);
+  if (!linked) {
+    char log[4096]{}; glGetProgramInfoLog(program,sizeof(log),nullptr,log);
+    throw std::runtime_error(std::string("mesh shader link failed: ")+log);
+  }
+  GLuint vao = 0, vertex_buffer = 0, index_buffer = 0;
+  glGenVertexArrays(1,&vao); glBindVertexArray(vao);
+  glGenBuffers(1,&vertex_buffer); glBindBuffer(GL_ARRAY_BUFFER,vertex_buffer);
+  glBufferData(GL_ARRAY_BUFFER,mesh.vertices.size()*sizeof(MeshVertex),mesh.vertices.data(),GL_STATIC_DRAW);
+  glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,sizeof(MeshVertex),reinterpret_cast<void*>(offsetof(MeshVertex,position)));
+  glVertexAttribPointer(1,3,GL_FLOAT,GL_FALSE,sizeof(MeshVertex),reinterpret_cast<void*>(offsetof(MeshVertex,uv)));
+  glEnableVertexAttribArray(0); glEnableVertexAttribArray(1);
+  glGenBuffers(1,&index_buffer); glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,index_buffer);
+  glBufferData(GL_ELEMENT_ARRAY_BUFFER,indices.size()*sizeof(std::uint32_t),indices.data(),GL_STATIC_DRAW);
+  glUseProgram(program);
+  glUniform3fv(glGetUniformLocation(program,"center"),1,center.data());
+  const float fit = 0.85 / radius, aspect = float(width)/height;
+  glUniform3f(glGetUniformLocation(program,"scale"),fit/std::max(1.0f,aspect),fit*std::min(1.0f,aspect),fit*0.5f);
+  glViewport(0,0,width,height);
+  glDisable(GL_DITHER); glDisable(GL_BLEND); glDisable(GL_CULL_FACE);
+  glEnable(GL_DEPTH_TEST); glDepthFunc(GL_LEQUAL);
+  glClearColor(12.0f/255,15.0f/255,21.0f/255,1); glClearDepthf(1);
+  glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+  if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+    throw std::runtime_error("incomplete mesh framebuffer");
+  glDrawElements(GL_TRIANGLES,indices.size(),GL_UNSIGNED_INT,nullptr);
+  std::vector<std::uint8_t> output(std::size_t(width)*height*4);
+  glReadPixels(0,0,width,height,GL_RGBA,GL_UNSIGNED_BYTE,output.data());
+  const auto error = glGetError();
+  glDeleteBuffers(1,&vertex_buffer); glDeleteBuffers(1,&index_buffer);
+  glDeleteVertexArrays(1,&vao); glDeleteProgram(program);
+  if (error != GL_NO_ERROR) throw std::runtime_error("mesh GPU render/readback error " + std::to_string(error));
+  std::size_t visible = 0;
+  for (std::size_t i = 0; i < output.size(); i += 4)
+    visible += output[i] != 12 || output[i+1] != 15 || output[i+2] != 21;
+  if (!visible) throw std::runtime_error("mesh GPU preview produced only background pixels");
+  // Readback rows start at the lower left; PPM consumers expect top to bottom.
+  for (unsigned y = 0; y < height/2; ++y)
+    std::swap_ranges(output.begin()+std::size_t(y)*width*4,output.begin()+std::size_t(y+1)*width*4,
+                     output.begin()+std::size_t(height-y-1)*width*4);
+  std::cerr << "Mesh GPU readback: " << indices.size()/3 << " triangles, " << visible
+            << " visible pixels, " << depth_bits << "-bit depth buffer\n";
   return output;
 }
 } // namespace wz3
