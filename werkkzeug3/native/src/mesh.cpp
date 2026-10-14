@@ -1,6 +1,7 @@
 // Distributed under the BSD license in werkkzeug3/LICENSE.txt.
 // Static geometry formulas and masks from ../genmesh.cpp; SRT from _types.cpp.
 #include "wz3/mesh.hpp"
+#include "mesh_topology.hpp"
 #include <algorithm>
 #include <bit>
 #include <cmath>
@@ -8,6 +9,7 @@
 #include <iomanip>
 #include <numbers>
 #include <stdexcept>
+#include <unordered_map>
 
 namespace wz3 {
 namespace {
@@ -57,9 +59,9 @@ void reserve(Mesh& mesh, std::size_t vertices, std::size_t faces) {
   if (vertices > element_limit || faces > element_limit) throw std::runtime_error("mesh exceeds one-million element limit");
   mesh.vertices.reserve(vertices); mesh.faces.reserve(faces);
 }
-std::uint32_t vertex(Mesh& mesh, Vec3 p, Vec3 uv, unsigned mask = 0) {
+std::uint32_t vertex(Mesh& mesh, Vec3 p, Vec3 uv, unsigned mask = 0, std::uint32_t point = mesh_no_point) {
   if (mesh.vertices.size() == element_limit) throw std::runtime_error("mesh vertex limit exceeded");
-  mesh.vertices.push_back({p, uv, static_cast<std::uint8_t>(mask)});
+  mesh.vertices.push_back({p, uv, static_cast<std::uint8_t>(mask), point == mesh_no_point ? std::uint32_t(mesh.vertices.size()) : point});
   return mesh.vertices.size() - 1;
 }
 void face(Mesh& mesh, std::array<std::uint32_t, 4> corners, unsigned count = 4, unsigned mask = 0) {
@@ -88,6 +90,7 @@ Mesh cube(const Operator& op) {
           2*(t[0]*t[1]+t[0]*t[2]+t[1]*t[2]));
   const auto matrix = srt(op, 4);
   const Vec3 uv_scale = flags & 8 ? Vec3{number(op,4),number(op,5),number(op,6)} : Vec3{1,1,1};
+  std::unordered_map<unsigned,std::uint32_t> points;
   for (unsigned side = 0; side < 6; ++side) {
     const unsigned axis = side / 2, u = axis == 0 ? 2 : 0, v = axis == 1 ? 2 : 1;
     const float sign = side & 1 ? 1 : -1;
@@ -95,9 +98,13 @@ Mesh cube(const Operator& op) {
     const float vdirection = axis == 1 ? -sign : 1;
     const auto first = mesh.vertices.size();
     for (unsigned y = 0; y <= t[v]; ++y) for (unsigned x = 0; x <= t[u]; ++x) {
-      Vec3 p{}; p[axis] = sign * 0.5f;
-      p[u] = (float(x)/t[u] - 0.5f) * direction;
-      p[v] = (float(y)/t[v] - 0.5f) * vdirection;
+      unsigned coordinate[3]{}; coordinate[axis] = sign > 0 ? t[axis] : 0;
+      coordinate[u] = direction > 0 ? x : t[u]-x;
+      coordinate[v] = vdirection > 0 ? y : t[v]-y;
+      const auto key = (coordinate[0]*(t[1]+1)+coordinate[1])*(t[2]+1)+coordinate[2];
+      const auto point = points.try_emplace(key,mesh.vertices.size()).first->second;
+      Vec3 p{};
+      for (unsigned c=0;c<3;++c) p[c]=float(coordinate[c])/t[c]-0.5f;
       Vec3 scaled{p[0]*uv_scale[0], p[1]*uv_scale[1], p[2]*uv_scale[2]};
       auto uv = project_uv(scaled, axis, sign);
       uv[0] += std::abs(uv_scale[u]) * 0.5f; uv[1] += std::abs(uv_scale[v]) * 0.5f;
@@ -107,20 +114,21 @@ Mesh cube(const Operator& op) {
         if (side == 5) uv[0] += 2*uv_scale[2] + uv_scale[0];
       }
       if (flags & 4) p[1] += 0.5f;
-      vertex(mesh, transform(matrix,p), uv, 1u << side);
+      vertex(mesh, transform(matrix,p), uv, 1u << side, point);
     }
     for (unsigned y = 0; y < t[v]; ++y) for (unsigned x = 0; x < t[u]; ++x) {
       const auto a = std::uint32_t(first + y*(t[u]+1) + x), b = a + t[u] + 1;
       face(mesh, {a,a+1,b+1,b}, 4, 1u << side);
     }
   }
+  crease_mesh_seams(mesh, flags & 1 ? 0xfe : crease_uv);
   return mesh;
 }
-void cap(Mesh& mesh, std::span<const Vec3> ring, bool reverse, unsigned mask) {
+void cap(Mesh& mesh, std::span<const Vec3> ring, bool reverse, unsigned mask, std::uint32_t first_point) {
   std::vector<std::uint32_t> corners;
   Vec3 center{};
   for (const auto& p : ring) {
-    corners.push_back(vertex(mesh,p,{p[0]+0.5f, (reverse ? -p[2] : p[2])+0.5f,0}, mask));
+    corners.push_back(vertex(mesh,p,{p[0]+0.5f, (reverse ? -p[2] : p[2])+0.5f,0}, mask, first_point+corners.size()));
     for (unsigned c = 0; c < 3; ++c) center[c] += p[c] / ring.size();
   }
   if (ring.size() == 3) {
@@ -149,7 +157,7 @@ Mesh cylinder(const Operator& op) {
   }
   for (unsigned y = 0; y <= ty; ++y) for (unsigned x = 0; x <= tx; ++x) {
     auto p = ring[x%tx]; p[1] = 0.5f - float(y)/ty + ((mode & 2) ? 0.5f : 0);
-    vertex(mesh,p,{float(x)/tx,float(y)/ty,0},(y == 0 || y == ty) ? 1 : 0);
+    vertex(mesh,p,{float(x)/tx,float(y)/ty,0},(y == 0 || y == ty) ? 1 : 0,y*(tx+1)+x%tx);
   }
   for (unsigned y = 0; y < ty; ++y) for (unsigned x = 0; x < tx; ++x) {
     const auto a = y*(tx+1)+x, b = a+tx+1;
@@ -157,8 +165,9 @@ Mesh cylinder(const Operator& op) {
   }
   if (!(mode & 1)) for (unsigned bottom = 0; bottom < 2; ++bottom) {
     for (auto& p : ring) p[1] = 0.5f - bottom + ((mode & 2) ? 0.5f : 0);
-    cap(mesh,ring,!bottom,1);
+    cap(mesh,ring,!bottom,1,bottom*ty*(tx+1));
   }
+  crease_mesh_seams(mesh,0xfe);
   return mesh;
 }
 Mesh torus(const Operator& op) {
@@ -182,7 +191,7 @@ Mesh torus(const Operator& op) {
     for (unsigned y = 0; y <= ty; ++y) {
       auto p = (x == tx ? original : ring)[y%ty];
       if (flags & 2) p[1] += ri;
-      vertex(mesh,p,{float(y)/ty,float(x)/tx,0});
+      vertex(mesh,p,{float(y)/ty,float(x)/tx,0},0,(x%tx)*(ty+1)+y%ty);
     }
     for (auto& p : ring) p = transform(step,p);
   }
@@ -190,12 +199,15 @@ Mesh torus(const Operator& op) {
     const auto a = x*(ty+1)+y, b = a+ty+1;
     face(mesh,{a,a+1,b+1,b});
   }
+  crease_mesh_seams(mesh,0);
   return mesh;
 }
 void append(Mesh& dest, const Mesh& source) {
   reserve(dest,dest.vertices.size()+source.vertices.size(),dest.faces.size()+source.faces.size());
   const auto offset = dest.vertices.size();
-  dest.vertices.insert(dest.vertices.end(),source.vertices.begin(),source.vertices.end());
+  for (std::uint32_t i=0;i<source.vertices.size();++i) {
+    auto v=source.vertices[i]; v.point=mesh_point(source,i)+offset; dest.vertices.push_back(v);
+  }
   for (auto f : source.faces) {
     for (unsigned i = 0; i < f.count; ++i) f.vertices[i] += offset;
     dest.faces.push_back(f);
@@ -255,7 +267,7 @@ public:
         require(op,0);
         if (node.inputs.empty()) throw std::runtime_error("mesh Add requires inputs");
         for (const auto source : node.inputs) append(*mesh,*evaluate(source,depth+1));
-      } else if (op.command == 0x86 || op.command == 0x88 || op.command == 0x89 || op.command == 0x96 || op.command == 0xa3 || op.command == 0xa5 || op.command == 0xa6 || op.command == 0x95) {
+      } else if (op.command == 0x86 || op.command == 0x88 || op.command == 0x89 || op.command == 0x96 || op.command == 0xa3 || op.command == 0xa5 || op.command == 0xa6 || op.command == 0x95 || op.command == 0xac) {
         *mesh = *input();
         if (op.command == 0x86) select_cube(*mesh,op);
         else if (op.command == 0x88 || op.command == 0x89) {
@@ -275,7 +287,13 @@ public:
           }
         } else if (op.command == 0xa3) {
           require(op,0);
-          for (auto& f : mesh->faces) std::reverse(f.vertices.begin(),f.vertices.begin()+f.count);
+          for (auto& f : mesh->faces) {
+            const auto old=f.crease;
+            std::reverse(f.vertices.begin(),f.vertices.begin()+f.count);
+            for (unsigned c=0;c<f.count;++c) f.crease[c]=old[(2*f.count-2-c)%f.count];
+          }
+        } else if (op.command == 0xac) {
+          require(op,1); smooth_mesh_angle(*mesh,number(op,0));
         } else if (op.command == 0xa5) uv_project(*mesh,op);
         else if (op.command == 0xa6) {
           require(op,2);
@@ -327,6 +345,7 @@ private:
     } else {
       // Separate polygon corners for projection seams, retaining face masks.
       Mesh out; reserve(out,mesh.faces.size()*4,mesh.faces.size());
+      std::unordered_map<std::uint32_t,std::uint32_t> points;
       for (const auto& f : mesh.faces) {
         auto copy = f;
         const auto n = normal(mesh,f);
@@ -336,11 +355,13 @@ private:
         for (unsigned k = 0; k < f.count; ++k) {
           auto v = mesh.vertices[f.vertices[k]];
           if (!mask || (f.mask & mask)) v.uv = project_uv(transform(matrix,v.position),axis,type == 3 || n[axis] > 0 ? 1 : -1);
-          copy.vertices[k] = vertex(out,v.position,v.uv,v.mask);
+          const auto point=points.try_emplace(mesh_point(mesh,f.vertices[k]),out.vertices.size()).first->second;
+          copy.vertices[k] = vertex(out,v.position,v.uv,v.mask,point);
         }
         out.faces.push_back(copy);
       }
       mesh = std::move(out);
+      crease_mesh_seams(mesh,0);
     }
   }
   static Mesh repeat(const Mesh& source, const Operator& op) {
@@ -377,6 +398,8 @@ void validate_mesh(const Mesh& mesh) {
   if (mesh.vertices.size() > element_limit || mesh.faces.size() > element_limit) throw std::runtime_error("mesh resource limit exceeded");
   for (const auto& v : mesh.vertices) for (unsigned c = 0; c < 3; ++c)
     if (!std::isfinite(v.position[c]) || !std::isfinite(v.uv[c])) throw std::runtime_error("non-finite mesh geometry");
+  for (const auto& v:mesh.vertices) if (v.point!=mesh_no_point && v.point>=mesh.vertices.size())
+    throw std::runtime_error("mesh topological point out of bounds");
   for (const auto& f : mesh.faces) {
     if (f.count < 3 || f.count > 4) throw std::runtime_error("invalid mesh polygon");
     for (unsigned i = 0; i < f.count; ++i) if (f.vertices[i] >= mesh.vertices.size()) throw std::runtime_error("mesh index out of bounds");
@@ -387,19 +410,24 @@ std::shared_ptr<const Mesh> evaluate_mesh(const Project& project, const Graph& g
 }
 void write_obj(const std::filesystem::path& path, const Mesh& mesh) {
   validate_mesh(mesh);
+  const auto normals=mesh_normals(mesh);
   std::ofstream out(path);
   if (!out) throw std::runtime_error("cannot open mesh output");
   out << "# Native Theta geometry preview; material operator IDs are metadata.\n" << std::setprecision(9);
   for (const auto& v : mesh.vertices) out << "v " << v.position[0] << ' ' << v.position[1] << ' ' << v.position[2] << '\n';
   for (const auto& v : mesh.vertices) out << "vt " << v.uv[0] << ' ' << v.uv[1] << ' ' << v.uv[2] << '\n';
+  for (std::size_t f=0;f<mesh.faces.size();++f) for (unsigned c=0;c<mesh.faces[f].count;++c) {
+    const auto& n=normals[f][c]; out << "vn " << n[0] << ' ' << n[1] << ' ' << n[2] << '\n';
+  }
   std::optional<std::size_t> previous; std::int32_t pass = 0; bool first = true;
+  std::size_t normal_index=1;
   for (const auto& f : mesh.faces) {
     if (first || previous != f.material || pass != f.pass) {
       out << "g material_" << (f.material ? std::to_string(*f.material) : "default") << "_pass_" << f.pass << '\n';
       first = false; previous = f.material; pass = f.pass;
     }
     out << 'f';
-    for (unsigned i = 0; i < f.count; ++i) out << ' ' << f.vertices[i]+1 << '/' << f.vertices[i]+1;
+    for (unsigned i = 0; i < f.count; ++i) out << ' ' << f.vertices[i]+1 << '/' << f.vertices[i]+1 << '/' << normal_index++;
     out << '\n';
   }
   if (!out) throw std::runtime_error("cannot write mesh output");

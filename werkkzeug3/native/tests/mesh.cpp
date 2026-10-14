@@ -1,5 +1,6 @@
 // Distributed under the BSD license in werkkzeug3/LICENSE.txt.
 #include "wz3/mesh.hpp"
+#include "../src/mesh_topology.hpp"
 #include <algorithm>
 #include <bit>
 #include <cmath>
@@ -97,18 +98,69 @@ void operators() {
   const auto animated = p.add(0x88,{0,f(1),f(1),f(1),0,0,0,0,0,0},{base});
   p.project.operators[animated].animations.push_back({});rejects([&]{p.get(animated);});
 }
+void normals() {
+  // Two unequal triangles: area weighting would favor Y by 4:1. GenMesh's
+  // inverse squared-edge-product weighting instead favors Z by 4:1.
+  wz3::Mesh weighted;
+  weighted.vertices={{{0,0,0},{0,0,0},0},{{2,0,0},{1,0,0},0},
+                     {{0,1,0},{0,1,0},0},{{0,0,4},{0,1,0},0},{{0,0,0},{1,1,0},0,0}};
+  weighted.faces={{{0,1,2,0},3,0,{},0},{{1,4,3,0},3,0,{},0}};
+  auto n=wz3::mesh_normals(weighted);
+  near(n[0][0][1],1/std::sqrt(17.0f),"GenMesh inverse edge weight Y");
+  near(n[0][0][2],4/std::sqrt(17.0f),"GenMesh inverse edge weight Z");
+  check(n[0][0]==n[1][1],"UV seam broke smoothing");
+  wz3::smooth_mesh_angle(weighted,0.5f);
+  n=wz3::mesh_normals(weighted);
+  near(n[0][0][2],1,"SmAngle did not crease sharp corner");
+  near(n[1][1][1],1,"SmAngle reverse edge crease");
+  wz3::smooth_mesh_angle(weighted,1.0f);
+  check(wz3::mesh_normals(weighted)==n,"SmAngle removed existing crease");
+  weighted.faces.push_back(weighted.faces[0]);
+  rejects([&]{wz3::mesh_normals(weighted);});
+
+  Fixture p;
+  const auto soft=p.add(0x81,cube());
+  auto mesh=p.get(soft); n=wz3::mesh_normals(*mesh);
+  for (std::size_t i=0;i<mesh->faces.size();++i) for (unsigned c=0;c<4;++c)
+    for (unsigned k=0;k<3;++k)
+      near(n[i][c][k],mesh->vertices[mesh->faces[i].vertices[c]].position[k]*2/std::sqrt(3.0f),"smooth cube corner");
+  const auto hard=p.add(0x81,cube(2,3,4,1));
+  mesh=p.get(hard); n=wz3::mesh_normals(*mesh);
+  for (std::size_t i=0;i<mesh->faces.size();++i) for (unsigned c=0;c<4;++c) {
+    unsigned side=0; while (!(mesh->faces[i].mask&(1u<<side))) ++side;
+    for (unsigned k=0;k<3;++k) near(n[i][c][k],k==side/2 ? (side&1 ? 1 : -1) : 0,"hard cube face normal");
+  }
+  const auto inverted=p.get(p.add(0xa3,{}, {hard}));
+  const auto inverted_normals=wz3::mesh_normals(*inverted);
+  for (std::size_t i=0;i<n.size();++i) for (unsigned c=0;c<4;++c) for (unsigned k=0;k<3;++k)
+    near(inverted_normals[i][3-c][k],-n[i][c][k],"Invert must reverse crease edges and normals");
+  const auto projected=p.get(p.add(0xa5,{0,f(1),f(1),f(1),0,0,0,0,0,0,0},{hard}));
+  check(wz3::mesh_normals(*projected)==n,"UV projection lost topology/creases");
+  const auto doubled=p.get(p.add(0x92,{}, {hard,hard}));
+  const auto both=wz3::mesh_normals(*doubled);
+  for (std::size_t i=0;i<n.size();++i) check(both[i]==n[i] && both[i+n.size()]==n[i],"Add welded coincident components");
+  const auto cylinder=p.get(p.add(0x82,{8,2,0,1})); n=wz3::mesh_normals(*cylinder);
+  for (std::size_t i=0;i<cylinder->faces.size();++i) for (unsigned c=0;c<cylinder->faces[i].count;++c) {
+    const auto& v=cylinder->vertices[cylinder->faces[i].vertices[c]];
+    if (cylinder->faces[i].mask) near(n[i][c][1],v.position[1]*2,"cap must stay flat");
+    else { near(n[i][c][1],0,"cap normal leaked into cylinder side");
+           near(n[i][c][0],v.position[0]*2,"cylinder side smooth X");
+           near(n[i][c][2],v.position[2]*2,"cylinder side smooth Z"); }
+  }
+}
 }
 int main(int argc,char** argv) {
   try {
-    check(argc==2,"expected Theta project");primitives();operators();
+    check(argc==2,"expected Theta project");primitives();operators();normals();
     const auto project=wz3::read_project(argv[1]);const auto graph=wz3::connect(project);
     for (const auto* name : {"mesh.cube","mesh.bwflattorus","mesh.LineCircle","mesh.FireGradientCircle",
         "mesh.bwflattorus8","mesh.bwflattorus4","mesh.flatfractal","mesh.g4flat","mesh.citybridge",
-        "mesh.cityblock","mesh.rohrcylin120","mesh.rohrcylin32","msh.wfl1"}) {
+        "mesh.cityblock","mesh.rohrcylin120","mesh.rohrcylin32","msh.wfl1","mesh.tetra","mesh.tetra2","mesh.Arrow"}) {
       const auto mesh=wz3::evaluate_mesh(project,graph,graph.names.at(name));
       wz3::validate_mesh(*mesh);check(!mesh->faces.empty(),"empty Theta mesh");
+      wz3::mesh_normals(*mesh);
     }
     rejects([&]{wz3::evaluate_mesh(project,graph,graph.names.at("mesh.stars"));});
-    std::cout << "mesh geometry, masks, transforms and 13 real Theta recipes passed\n";
+    std::cout << "mesh geometry, topology, weighted normals and 16 real Theta recipes passed\n";
   } catch(const std::exception& error) {std::cerr<<error.what()<<'\n';return 1;}
 }

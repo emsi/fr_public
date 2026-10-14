@@ -32,6 +32,6 @@ int main(int argc, char** argv) {
     for (unsigned c = 0; c < 3; ++c) std::cout << (c ? ", " : "") << bounds.min[c];
     std::cout << "] .. [";
     for (unsigned c = 0; c < 3; ++c) std::cout << (c ? ", " : "") << bounds.max[c];
-    std::cout << "]\nGeometry preview: material shaders, original smoothing and scene animation are not evaluated.\n";
+    std::cout << "]\nGeometry preview: material shaders and scene animation are not evaluated.\n";
   } catch (const std::exception& error) { std::cerr << "mesh preview: " << error.what() << '\n'; return 1; }
 }

@@ -163,16 +163,29 @@ std::vector<std::uint8_t> render_mesh(const Mesh& mesh, unsigned width, unsigned
   glGetIntegerv(GL_DEPTH_BITS,&depth_bits);
   if (depth_bits < 16) throw std::runtime_error("mesh preview needs a depth buffer");
   std::vector<std::uint32_t> indices;
+  struct Vertex { Vec3 position,uv,normal; };
+  std::vector<Vertex> vertices;
+  const auto normals=mesh_normals(mesh);
+  vertices.reserve(mesh.faces.size()*4);
   indices.reserve(mesh.faces.size()*6);
-  for (const auto& face : mesh.faces) for (unsigned i = 1; i+1 < face.count; ++i) {
-    indices.push_back(face.vertices[0]); indices.push_back(face.vertices[i]); indices.push_back(face.vertices[i+1]);
+  for (std::size_t f=0;f<mesh.faces.size();++f) {
+    const auto& face=mesh.faces[f];
+    const auto first=std::uint32_t(vertices.size());
+    for (unsigned c=0;c<face.count;++c) {
+      const auto& v=mesh.vertices[face.vertices[c]];
+      vertices.push_back({v.position,v.uv,normals[f][c]});
+    }
+    for (unsigned i = 1; i+1 < face.count; ++i) {
+      indices.push_back(first); indices.push_back(first+i); indices.push_back(first+i+1);
+    }
   }
   const auto vertex = shader(GL_VERTEX_SHADER,R"(#version 300 es
     layout(location=0) in vec3 position;
     layout(location=1) in vec3 uv;
+    layout(location=2) in vec3 normal;
     uniform vec3 center;
     uniform vec3 scale;
-    out vec3 world_position;
+    out vec3 world_normal;
     out vec2 texcoord;
     void main() {
       vec3 p = position - center;
@@ -180,16 +193,16 @@ std::vector<std::uint8_t> render_mesh(const Mesh& mesh, unsigned width, unsigned
                        dot(p,vec3(-0.3,0.8660254,-0.4)),
                        -dot(p,vec3(0.5196152,0.5,0.6928203)));
       gl_Position = vec4(view * scale,1.0);
-      world_position = p;
+      world_normal = normal;
       texcoord = uv.xy;
     })");
   const auto fragment = shader(GL_FRAGMENT_SHADER,R"(#version 300 es
     precision highp float;
-    in vec3 world_position;
+    in vec3 world_normal;
     in vec2 texcoord;
     out vec4 color;
     void main() {
-      vec3 normal = normalize(cross(dFdx(world_position),dFdy(world_position)));
+      vec3 normal = normalize(world_normal);
       float light = 0.3 + 0.7*abs(dot(normal,normalize(vec3(-0.4,0.8,0.5))));
       float checker = mod(floor(texcoord.x*8.0)+floor(texcoord.y*8.0),2.0);
       vec3 base = mix(vec3(0.16,0.38,0.58),vec3(0.55,0.8,0.95),checker);
@@ -206,10 +219,11 @@ std::vector<std::uint8_t> render_mesh(const Mesh& mesh, unsigned width, unsigned
   GLuint vao = 0, vertex_buffer = 0, index_buffer = 0;
   glGenVertexArrays(1,&vao); glBindVertexArray(vao);
   glGenBuffers(1,&vertex_buffer); glBindBuffer(GL_ARRAY_BUFFER,vertex_buffer);
-  glBufferData(GL_ARRAY_BUFFER,mesh.vertices.size()*sizeof(MeshVertex),mesh.vertices.data(),GL_STATIC_DRAW);
-  glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,sizeof(MeshVertex),reinterpret_cast<void*>(offsetof(MeshVertex,position)));
-  glVertexAttribPointer(1,3,GL_FLOAT,GL_FALSE,sizeof(MeshVertex),reinterpret_cast<void*>(offsetof(MeshVertex,uv)));
-  glEnableVertexAttribArray(0); glEnableVertexAttribArray(1);
+  glBufferData(GL_ARRAY_BUFFER,vertices.size()*sizeof(Vertex),vertices.data(),GL_STATIC_DRAW);
+  glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,sizeof(Vertex),reinterpret_cast<void*>(offsetof(Vertex,position)));
+  glVertexAttribPointer(1,3,GL_FLOAT,GL_FALSE,sizeof(Vertex),reinterpret_cast<void*>(offsetof(Vertex,uv)));
+  glVertexAttribPointer(2,3,GL_FLOAT,GL_FALSE,sizeof(Vertex),reinterpret_cast<void*>(offsetof(Vertex,normal)));
+  glEnableVertexAttribArray(0); glEnableVertexAttribArray(1); glEnableVertexAttribArray(2);
   glGenBuffers(1,&index_buffer); glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,index_buffer);
   glBufferData(GL_ELEMENT_ARRAY_BUFFER,indices.size()*sizeof(std::uint32_t),indices.data(),GL_STATIC_DRAW);
   glUseProgram(program);
