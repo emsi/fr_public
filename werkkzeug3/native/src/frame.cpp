@@ -32,7 +32,7 @@ struct FramePlayer::Impl {
   std::array<Target,13> pool;
   std::optional<unsigned> last;
   std::size_t master{};DemoFrame result;
-  Impl(const Project& p,const Graph& g,const TextureOptions& options):project(p),graph(g),splines(p),scenes(p,g,options),timeline(p,g),
+  Impl(const Project& p,const Graph& g,const TextureOptions& options,std::shared_ptr<SceneAssets> assets):project(p),graph(g),splines(p),scenes(p,g,options,std::move(assets)),timeline(p,g),
       programs(p.operators.size()),previous(programs.size()),visiting(programs.size()),prepared(programs.size()),outputs(programs.size()) {
     require(g.nodes.size()==programs.size(),"frame graph size mismatch");
     for(const auto& node:g.nodes)if(node.active) {
@@ -247,7 +247,7 @@ struct FramePlayer::Impl {
     }
   }
 };
-FramePlayer::FramePlayer(const Project& p,const Graph& g,const TextureOptions& options):impl(std::make_unique<Impl>(p,g,options)) {}
+FramePlayer::FramePlayer(const Project& p,const Graph& g,const TextureOptions& options,std::shared_ptr<SceneAssets> assets):impl(std::make_unique<Impl>(p,g,options,std::move(assets))) {}
 FramePlayer::~FramePlayer()=default;
 DemoFrame FramePlayer::frame(std::size_t root,std::int32_t beat,unsigned width,unsigned height,std::optional<std::int32_t> milliseconds) {
   require(width && height && width<=4096 && height<=4096,"invalid frame dimensions");auto& s=*impl;

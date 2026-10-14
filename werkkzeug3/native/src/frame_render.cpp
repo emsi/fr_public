@@ -122,6 +122,7 @@ struct FrameRenderer::Impl {
   std::size_t geometry_bytes{};
   GLuint vao{},particle_buffer{};std::array<GLuint,4> samplers{};
   std::size_t surface_bytes{},bitmap_bytes{};
+  FrameRenderer::Stats stats;
   Impl(const Project& p,const Graph& g,const TextureOptions& options,FrameRenderer::Context mode):project(p),graph(g),texture_options(options) {
     if(mode==FrameRenderer::Context::Headless)context=std::make_unique<gles::Context>(1,1);
     require(glGetString(GL_VERSION)!=nullptr,"FrameRenderer needs a current GLES3 context");
@@ -154,6 +155,7 @@ struct FrameRenderer::Impl {
     glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,s.color,0);
     glFramebufferRenderbuffer(GL_FRAMEBUFFER,GL_DEPTH_STENCIL_ATTACHMENT,GL_RENDERBUFFER,s.depth);
     require(glCheckFramebufferStatus(GL_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE,"incomplete frame surface");
+    ++stats.surface_allocations;
     // Original allocation contents are unspecified. Start deterministically;
     // subsequent frames/allocations retain contents until the graph clears them.
     glDisable(GL_SCISSOR_TEST);clear({3,0xff000000});glClearStencil(0);glStencilMask(255);glClear(GL_STENCIL_BUFFER_BIT);
@@ -170,10 +172,11 @@ struct FrameRenderer::Impl {
     GLuint texture=0;if(found!=bitmaps.end())texture=found->second;else glGenTextures(1,&texture);glBindTexture(GL_TEXTURE_2D,texture);
     if(levels.empty()){glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,t->width,t->height,0,GL_RGBA,GL_UNSIGNED_BYTE,pixels.data());glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAX_LEVEL,1000);glGenerateMipmap(GL_TEXTURE_2D);}
     else {for(std::size_t i=0;i<levels.size();++i){const auto& level=levels[i];glTexImage2D(GL_TEXTURE_2D,GLint(i),GL_RGBA8_SNORM,level.width,level.height,0,GL_RGBA,GL_BYTE,level.pixels.data());}glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAX_LEVEL,GLint(levels.size()-1));}
-    bitmap_bytes=bitmap_bytes-previous+bytes;bitmap_sizes[id]=bytes;bitmaps[id]=texture;if(supplied)supplied_bitmaps[id]=std::move(supplied);return texture;
+    bitmap_bytes=bitmap_bytes-previous+bytes;bitmap_sizes[id]=bytes;bitmaps[id]=texture;if(supplied)supplied_bitmaps[id]=std::move(supplied);++stats.bitmap_uploads;return texture;
   }
   void light_tables(GLuint p) {
     if(!normal_cube) {
+      ++stats.lighting_uploads;
       const auto tables=lighting_tables();glGenTextures(1,&normal_cube);glActiveTexture(GL_TEXTURE4);glBindTexture(GL_TEXTURE_CUBE_MAP,normal_cube);
       for(unsigned f=0;f<6;++f)glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X+f,0,GL_RGBA8,64,64,0,GL_RGBA,GL_UNSIGNED_BYTE,tables.cube.data()+f*64*64*4);
       glTexParameteri(GL_TEXTURE_CUBE_MAP,GL_TEXTURE_MIN_FILTER,GL_LINEAR);glTexParameteri(GL_TEXTURE_CUBE_MAP,GL_TEXTURE_MAG_FILTER,GL_LINEAR);glTexParameteri(GL_TEXTURE_CUBE_MAP,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);glTexParameteri(GL_TEXTURE_CUBE_MAP,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);glTexParameteri(GL_TEXTURE_CUBE_MAP,GL_TEXTURE_WRAP_R,GL_CLAMP_TO_EDGE);
@@ -193,7 +196,7 @@ struct FrameRenderer::Impl {
     const auto p=glCreateProgram();glAttachShader(p,vertex);glAttachShader(p,fragment);glLinkProgram(p);glDeleteShader(vertex);glDeleteShader(fragment);
     GLint ok=0;glGetProgramiv(p,GL_LINK_STATUS,&ok);
     if(!ok) {char log[4096]{};glGetProgramInfoLog(p,sizeof(log),nullptr,log);glDeleteProgram(p);throw std::runtime_error(std::string("frame shader link failed: ")+log);}
-    programs.emplace(key,p);return p;
+    programs.emplace(key,p);++stats.program_compilations;return p;
   }
   void quad(const FrameQuad& q,std::size_t destination,const SceneEffectDraw* effect=nullptr,const SceneMatrix* projection=nullptr,const MeshDraw* mesh=nullptr,const LightDraw* light=nullptr,const SceneFog* fog=nullptr) {
     const auto& s=q.shader;const auto flags=s.words[0];
@@ -310,7 +313,7 @@ struct FrameRenderer::Impl {
       data.batches.emplace_back(first,GLsizei(triangles.size()-first));
     }
     glGenBuffers(1,&data.buffer);glBindBuffer(GL_ARRAY_BUFFER,data.buffer);glBufferData(GL_ARRAY_BUFFER,bytes,triangles.data(),GL_STATIC_DRAW);
-    geometry_bytes+=bytes;return geometry.emplace(mesh.get(),std::move(data)).first->second;
+    geometry_bytes+=bytes;++stats.mesh_uploads;return geometry.emplace(mesh.get(),std::move(data)).first->second;
   }
   const ShadowGeometry& shadow_geometry(const std::shared_ptr<const Mesh>& mesh,const SceneFrame& scene) {
     auto mask=shadow_face_mask(*mesh,scene.materials);auto found=shadows.find(mesh.get());
@@ -323,6 +326,7 @@ struct FrameRenderer::Impl {
     for(const auto& v:data.mesh.vertices)for(float w:{1.f,0.f})vertices.push_back({v[0],v[1],v[2],w});
     glGenBuffers(1,&data.buffer);glBindBuffer(GL_ARRAY_BUFFER,data.buffer);glBufferData(GL_ARRAY_BUFFER,vertices.size()*sizeof(vertices[0]),vertices.data(),GL_STATIC_DRAW);
     geometry_bytes=geometry_bytes-previous+data.bytes;
+    ++stats.shadow_uploads;
     if(found!=shadows.end()){glDeleteBuffers(1,&found->second.buffer);found->second=std::move(data);return found->second;}
     return shadows.emplace(mesh.get(),std::move(data)).first->second;
   }
@@ -333,7 +337,7 @@ struct FrameRenderer::Impl {
     if(!shadow_program) {
       const auto v=gles::shader(GL_VERTEX_SHADER,shadow_vertex),f=gles::shader(GL_FRAGMENT_SHADER,"#version 300 es\nprecision highp float;out vec4 color;void main(){color=vec4(0.0);}");
       const auto p=glCreateProgram();glAttachShader(p,v);glAttachShader(p,f);glLinkProgram(p);glDeleteShader(v);glDeleteShader(f);
-      GLint ok=0;glGetProgramiv(p,GL_LINK_STATUS,&ok);if(!ok){glDeleteProgram(p);throw std::runtime_error("shadow shader link failed");}shadow_program=p;
+      GLint ok=0;glGetProgramiv(p,GL_LINK_STATUS,&ok);if(!ok){glDeleteProgram(p);throw std::runtime_error("shadow shader link failed");}shadow_program=p;++stats.program_compilations;
     }
     glUseProgram(shadow_program);glBindVertexArray(vao);glBindBuffer(GL_ARRAY_BUFFER,data.buffer);glVertexAttribPointer(0,4,GL_FLOAT,GL_FALSE,4*sizeof(float),nullptr);glEnableVertexAttribArray(0);
     for(unsigned i=1;i<5;++i)glDisableVertexAttribArray(i);
@@ -391,6 +395,16 @@ struct FrameRenderer::Impl {
 };
 FrameRenderer::FrameRenderer(const Project& p,const Graph& g,const TextureOptions& options,Context mode):impl(std::make_unique<Impl>(p,g,options,mode)) {}
 FrameRenderer::~FrameRenderer()=default;
+FrameRenderer::Stats FrameRenderer::stats() const {return impl->stats;}
+void FrameRenderer::reset_targets() {
+  auto& s=*impl;s.activate();glDisable(GL_SCISSOR_TEST);
+  glClearStencil(0);glStencilMask(255);
+  for(const auto& [id,surface]:s.surfaces) {
+    static_cast<void>(id);glBindFramebuffer(GL_FRAMEBUFFER,surface.fbo);
+    clear({3,0xff000000});glClear(GL_STENCIL_BUFFER_BIT);
+  }
+  glFinish();require(glGetError()==GL_NO_ERROR,"frame target reset failed");
+}
 std::vector<std::uint8_t> FrameRenderer::render(const DemoFrame& frame,bool diagnostic) {
   draw(frame,diagnostic);return readback();
 }

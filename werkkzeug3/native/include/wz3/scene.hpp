@@ -57,13 +57,28 @@ struct SceneFrame {
   std::vector<SceneEffectDraw> effects;
   std::map<std::size_t,Material> materials;
 };
+// Immutable geometry/font data may survive a loading pass. Simulation, RNG,
+// material animation and event state always belong to each separate player.
+class SceneAssets {
+  const Project& project;const Graph& graph;TextureOptions options;
+  std::map<std::size_t,std::shared_ptr<const Mesh>> meshes;
+  std::map<std::size_t,std::shared_ptr<const Texture>> fonts;
+  std::size_t mesh_bytes{},font_bytes{};
+public:
+  struct Stats {std::size_t meshes{},fonts{},mesh_bytes{},font_bytes{};};
+  SceneAssets(const Project&,const Graph&,const TextureOptions& = {});
+  bool matches(const Project&,const Graph&,const TextureOptions&) const;
+  std::shared_ptr<const Mesh> mesh(std::size_t);
+  std::shared_ptr<const Texture> font(std::size_t);
+  Stats stats() const {return {meshes.size(),fonts.size(),mesh_bytes,font_bytes};}
+};
 // Reuse a player across samples: static geometry and animation programs stay
 // cached, while transforms/variables are evaluated for every instance and frame.
 class ScenePlayer {
   struct Impl;
   std::unique_ptr<Impl> impl;
 public:
-  ScenePlayer(const Project&,const Graph&,const TextureOptions& = {}); // References must outlive the player.
+  ScenePlayer(const Project&,const Graph&,const TextureOptions& = {},std::shared_ptr<SceneAssets> = {}); // References must outlive the player/cache.
   ~ScenePlayer();
   ScenePlayer(const ScenePlayer&)=delete;
   ScenePlayer& operator=(const ScenePlayer&)=delete;

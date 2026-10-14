@@ -29,6 +29,19 @@ void targets() {
   }
   // Cropped pool targets must remain correct when the output resolution changes.
   const auto resized=renderer.render(player.frame(root,2*65536,48,32));pixel(resized,48,2,2,{255,0,0});pixel(resized,48,45,29,{0,0,255});
+  const auto cached=renderer.stats();renderer.reset_targets();
+  pixel(renderer.readback(),48,2,2,{0,0,0});
+  // Sample the retained bitmap target without writing it again. A loading pass
+  // must leave no old colors in the screen, pool or named render targets.
+  auto replay=player.frame(root,3*65536,48,32);const auto last=replay.commands.back();replay.commands={last};
+  const auto cleared=renderer.render(replay);pixel(cleared,48,2,2,{0,0,0});pixel(cleared,48,45,29,{0,0,0});
+  check(renderer.stats()==cached,"reset targets destroyed cached resources");
+  auto& q=std::get<wz3::FrameQuad>(replay.commands[0].draw);q.shader.words[0]|=0x300;renderer.render(replay);
+  q.depth=.5f;q.shader.textures={};q.textures={};
+  std::fill(q.shader.words.begin()+8,q.shader.words.begin()+21,0);q.shader.words[9]=0x10;q.shader.words[23]=8;q.shader.words[28]=0xff00ff00;
+  // Previous Layer2D writes have much nearer depth; this needs a depth reset too.
+  pixel(renderer.render(replay),48,20,15,{0,0,0});
+  renderer.reset_targets();pixel(renderer.render(replay),48,20,15,{0,255,0});
 }
 void blur_and_merge() {
   FrameFixture x;const auto base=x.layer(x.material(0xff111111));

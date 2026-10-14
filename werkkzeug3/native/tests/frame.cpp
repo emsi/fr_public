@@ -67,6 +67,27 @@ void events_and_failures() {
   wz3::FramePlayer starts(zero.p,zero.g);check(starts.frame(demo,5*65536,64,48).commands.size()==1,"zero-length event starts at dispatch");
   check(starts.frame(demo,6*65536,64,48).commands.size()==1 && starts.frame(demo,7*65536,64,48).commands.empty(),"event runtime duration must persist between frames");
 }
+void shared_assets() {
+  FrameFixture x;const auto viewport=x.viewport(),event=x.event(viewport,"zero",0,0,1),root=x.add(0x0d,{}, {event});
+  const auto assets=std::make_shared<wz3::SceneAssets>(x.p,x.g);
+  std::shared_ptr<const wz3::Mesh> loaded_mesh;
+  {
+    wz3::FramePlayer loading(x.p,x.g,{},assets);
+    const auto loaded=loading.frame(root,5*65536,64,48,2500);
+    loaded_mesh=std::get<wz3::SceneFrame>(loaded.commands[0].draw).instances[0].mesh;
+    check(loading.frame(root,6*65536,64,48,3000).commands.empty(),"loading must reach an expired dynamic event");
+  }
+  wz3::FramePlayer fresh(x.p,x.g,{},assets),cold(x.p,x.g);
+  const auto a=fresh.frame(root,0,64,48,0),b=cold.frame(root,0,64,48,0);
+  check(!a.commands.empty() && a.commands.size()==b.commands.size(),"loading leaked dynamic event times into playback");
+  check(std::get<wz3::SceneFrame>(a.commands[0].draw).instances[0].mesh==loaded_mesh,"fresh playback regenerated cached geometry");
+  std::ostringstream warm_json,cold_json;wz3::write_frame(warm_json,a);wz3::write_frame(cold_json,b);
+  check(warm_json.str()==cold_json.str(),"shared assets changed initial frame execution");
+  check(assets->stats().meshes==1 && assets->stats().mesh_bytes>0,"asset cache accounting");
+  wz3::Project other=x.p;
+  rejects([&]{wz3::FramePlayer wrong(other,x.g,{},assets);},"different project");
+  rejects([&]{wz3::FramePlayer wrong(x.p,x.g,{"another-font.ttf"},assets);},"different project");
+}
 void theta(const char* path) {
   const auto p=wz3::read_project(path);const auto g=wz3::connect(p);wz3::FramePlayer player(p,g);const auto root=g.names.at("root");
   for(auto beat:{56,72,144,216,384}) {
@@ -89,6 +110,6 @@ void theta(const char* path) {
 }
 }
 int main(int argc,char** argv) {
-  try {order_and_scopes();fanout_and_blur();nested_targets_and_capacity();events_and_failures();if(argc>1)theta(argv[1]);}
+  try {order_and_scopes();fanout_and_blur();nested_targets_and_capacity();events_and_failures();shared_assets();if(argc>1)theta(argv[1]);}
   catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}
 }

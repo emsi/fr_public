@@ -35,7 +35,7 @@ class FramePlayer {
   struct Impl;
   std::unique_ptr<Impl> impl;
 public:
-  FramePlayer(const Project&,const Graph&,const TextureOptions& = {});
+  FramePlayer(const Project&,const Graph&,const TextureOptions& = {},std::shared_ptr<SceneAssets> = {});
   ~FramePlayer();
   FramePlayer(const FramePlayer&)=delete;
   FramePlayer& operator=(const FramePlayer&)=delete;
@@ -52,6 +52,10 @@ class FrameRenderer {
   std::unique_ptr<Impl> impl;
 public:
   enum class Context { Headless, Current };
+  struct Stats {
+    std::size_t surface_allocations{},bitmap_uploads{},mesh_uploads{},shadow_uploads{},program_compilations{},lighting_uploads{};
+    bool operator==(const Stats&) const = default;
+  };
   // Current borrows the caller's GLES3 context. Keep it current for every call,
   // including destruction, and keep it alive longer than the renderer.
   FrameRenderer(const Project&,const Graph&,const TextureOptions& = {},Context=Context::Headless);
@@ -62,5 +66,9 @@ public:
   // Blit the last screen to framebuffer 0, preserving aspect with black bars.
   // The caller owns the window/swap; this does not read pixels back to the CPU.
   void present(unsigned drawable_width,unsigned drawable_height);
+  // Discard all image/depth/stencil history after a loading pass, preserving
+  // static uploads and shaders. Waits for pending GPU work before returning.
+  void reset_targets();
+  Stats stats() const;
 };
 } // namespace wz3

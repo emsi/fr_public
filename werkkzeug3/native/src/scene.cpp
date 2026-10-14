@@ -62,6 +62,26 @@ SceneMatrix scene_view_projection(const SceneCamera& camera,unsigned width,unsig
   return scene_combine(projection,view);
 }
 
+SceneAssets::SceneAssets(const Project& p,const Graph& g,const TextureOptions& o):project(p),graph(g),options(o) {
+  require(g.nodes.size()==p.operators.size(),"scene asset graph size mismatch");
+}
+bool SceneAssets::matches(const Project& p,const Graph& g,const TextureOptions& o) const {
+  return &project==&p && &graph==&g && options.font_file==o.font_file;
+}
+std::shared_ptr<const Mesh> SceneAssets::mesh(std::size_t id) {
+  if(const auto found=meshes.find(id);found!=meshes.end())return found->second;
+  auto value=evaluate_mesh(project,graph,id);
+  const auto bytes=value->vertices.size()*sizeof(MeshVertex)+value->faces.size()*sizeof(MeshFace)+value->kernel->bytes();
+  require(bytes<=256u*1024*1024-mesh_bytes,"scene mesh cache budget exceeded");
+  meshes.emplace(id,value);mesh_bytes+=bytes;return value;
+}
+std::shared_ptr<const Texture> SceneAssets::font(std::size_t id) {
+  if(const auto found=fonts.find(id);found!=fonts.end())return found->second;
+  auto value=evaluate_texture(project,graph,id,options);const auto bytes=value->pixels.size()*sizeof(Pixel);
+  require(bytes<=64u*1024*1024-font_bytes,"Print texture cache limit");
+  fonts.emplace(id,value);font_bytes+=bytes;return value;
+}
+
 struct ScenePlayer::Impl {
   const Project& project;const Graph& graph;SplineLibrary splines;MaterialRuntime materials;
   std::shared_ptr<ParticleRandom> random=std::make_shared<ParticleRandom>();
@@ -70,18 +90,15 @@ struct ScenePlayer::Impl {
   std::vector<EffectJob> jobs;
   struct EffectOrder {std::int32_t pass{};unsigned usage=7;};
   std::map<std::size_t,EffectOrder> effect_order;
-  TextureOptions texture_options;
-  std::map<std::size_t,std::shared_ptr<const Texture>> print_textures;
-  std::size_t texture_bytes{};
+  std::shared_ptr<SceneAssets> assets;
   std::map<std::uint64_t,std::vector<std::pair<std::size_t,std::size_t>>> instances;
   std::size_t instance_count{};
   std::vector<bool> prepared;
   std::vector<std::optional<AnimationProgram>> programs;
-  std::vector<std::shared_ptr<const Mesh>> meshes;
   std::vector<bool> visiting;
-  std::size_t mesh_bytes{};
-  Impl(const Project& p,const Graph& g,const TextureOptions& options):project(p),graph(g),splines(p),materials(p,g),particles(splines,random),effects(random),walker(splines),texture_options(options),prepared(p.operators.size()),programs(p.operators.size()),meshes(programs.size()),visiting(programs.size()) {
+  Impl(const Project& p,const Graph& g,const TextureOptions& options,std::shared_ptr<SceneAssets> shared):project(p),graph(g),splines(p),materials(p,g),particles(splines,random),effects(random),walker(splines),assets(shared ? std::move(shared) : std::make_shared<SceneAssets>(p,g,options)),prepared(p.operators.size()),programs(p.operators.size()),visiting(programs.size()) {
     require(graph.nodes.size()==project.operators.size(),"scene graph size mismatch");
+    require(assets->matches(p,g,options),"scene assets belong to a different project, graph or font");
   }
   void valid(std::size_t id) const {require(id<programs.size() && graph.nodes[id].active,"invalid or inactive scene operator");}
   std::size_t alias(std::size_t id) const {
@@ -102,12 +119,7 @@ struct ScenePlayer::Impl {
     return *programs[id];
   }
   std::shared_ptr<const Mesh> geometry(std::size_t id) {
-    if(!meshes[id]) {
-      auto mesh=evaluate_mesh(project,graph,id);
-      const auto bytes=mesh->vertices.size()*sizeof(MeshVertex)+mesh->faces.size()*sizeof(MeshFace)+mesh->kernel->bytes();
-      require(bytes<=256u*1024*1024-mesh_bytes,"scene mesh cache budget exceeded");mesh_bytes+=bytes;meshes[id]=std::move(mesh);
-    }
-    return meshes[id];
+    return assets->mesh(id);
   }
   std::size_t instance(std::size_t id,AnimationEnvironment& env) {
     auto& cursor=*env.instances;auto& chain=instances[cursor.chain];
@@ -124,9 +136,7 @@ struct ScenePlayer::Impl {
     effect_order.emplace(id,EffectOrder{pass,usage});
   }
   std::shared_ptr<const Texture> print_texture(std::size_t id) {
-    if(auto found=print_textures.find(id);found!=print_textures.end())return found->second;
-    auto texture=evaluate_texture(project,graph,id,texture_options);const auto bytes=texture->pixels.size()*sizeof(Pixel);
-    require(bytes<=64u*1024*1024-texture_bytes,"Print texture cache limit");texture_bytes+=bytes;print_textures.emplace(id,texture);return texture;
+    return assets->font(id);
   }
   void prepare(std::size_t id,AnimationEnvironment& env,unsigned depth=0) {
     valid(id);if(prepared[id])return;require(depth<512,"scene preparation depth limit");
@@ -317,7 +327,7 @@ struct ScenePlayer::Impl {
     else throw std::runtime_error("event viewport path contains unsupported operator "+std::to_string(id)+" ("+std::string(operator_info(op.command).name)+")");
   }
 };
-ScenePlayer::ScenePlayer(const Project& p,const Graph& g,const TextureOptions& options):impl(std::make_unique<Impl>(p,g,options)) {}
+ScenePlayer::ScenePlayer(const Project& p,const Graph& g,const TextureOptions& options,std::shared_ptr<SceneAssets> assets):impl(std::make_unique<Impl>(p,g,options,std::move(assets))) {}
 ScenePlayer::~ScenePlayer()=default;
 MaterialRuntime& ScenePlayer::materials() {return impl->materials;}
 void ScenePlayer::begin_frame(std::int32_t milliseconds) {impl->clock.advance(milliseconds);}
