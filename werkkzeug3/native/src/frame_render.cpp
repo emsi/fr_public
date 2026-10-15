@@ -136,6 +136,22 @@ constexpr const char* generated_uv_vertex=R"(#version 300 es
     }
     material_vertex_color=color.bgra;
   })";
+// InstancingInner transformed vertices before the ordinary material shader.
+// Keep the parent model/light/fog space, and do not normalize transformed axes.
+std::string instance_vertex(std::string source) {
+  const auto start=source.find('\n');require(start!=std::string::npos,"missing shader version");
+  source.insert(start+1,"layout(location=5) in mat4 instance_transform;\n");
+  std::string assignments;
+  for(const std::string name:{"position","normal","tangent"}) {
+    const auto declaration="in vec3 "+name+";";const auto at=source.find(declaration);
+    if(at==std::string::npos){require(name!="position","instance shader needs positions");continue;}
+    source.replace(at,declaration.size(),"in vec3 source_"+name+"; vec3 "+name+";");
+    assignments+=name+"="+(name=="position" ? "(instance_transform*vec4(source_position,1.0)).xyz;" : "mat3(instance_transform)*source_"+name+";");
+  }
+  const auto main=source.find("void main()");require(main!=std::string::npos,"instance shader needs main");
+  source.replace(main,11,"void instance_main()");
+  return source+"\nvoid main(){"+assignments+"instance_main();}\n";
+}
 constexpr const char* shadow_vertex=R"(#version 300 es
   layout(location=0) in vec4 position;
   uniform mat4 view_projection;
@@ -200,9 +216,16 @@ struct FrameRenderer::Impl {
     std::shared_ptr<const Mesh> owner;GLuint buffer{};
     std::size_t bytes{};
     std::vector<std::pair<GLint,GLsizei>> batches;
+    std::vector<std::size_t> instance_limits;
   };
   struct MeshVertex {SceneEffectVertex vertex;Vec3 normal,tangent;};
-  struct MeshDraw {GLuint buffer;GLint first;GLsizei count;SceneMatrix model;};
+  struct MeshDraw {GLuint buffer;GLint first;GLsizei count;SceneMatrix model;bool instanced{};GLuint instance_buffer{};GLsizei instance_count{};};
+  struct MeshInstances {
+    std::shared_ptr<const Mesh> owner;
+    std::shared_ptr<const std::vector<SceneMatrix>> matrices;
+    GLuint buffer{};std::size_t bytes{};
+  };
+  std::map<const Mesh*,MeshInstances> instance_buffers;
   SceneMatrix last_model=scene_identity();
   struct LightDraw {Vec3 position,eye;std::array<float,4> attenuation,color;std::array<float,2> specular;bool directional;};
   struct ShadowGeometry {
@@ -235,6 +258,7 @@ struct FrameRenderer::Impl {
     for(const auto& [source,p]:programs) {static_cast<void>(source);glDeleteProgram(p);}
     for(const auto& [id,g]:geometry) {static_cast<void>(id);glDeleteBuffers(1,&g.buffer);}
     for(const auto& [id,g]:shadows) {static_cast<void>(id);glDeleteBuffers(1,&g.buffer);}
+    for(const auto& [id,g]:instance_buffers) {static_cast<void>(id);glDeleteBuffers(1,&g.buffer);}
     glDeleteProgram(shadow_program);glDeleteBuffers(1,&shadow_index_buffer);
     glDeleteTextures(1,&normal_cube);glDeleteTextures(1,&attenuation_volume);
     glDeleteBuffers(1,&particle_buffer);glDeleteSamplers(4,samplers.data());glDeleteVertexArrays(1,&vao);
@@ -402,14 +426,16 @@ struct FrameRenderer::Impl {
     glActiveTexture(GL_TEXTURE4);glBindTexture(GL_TEXTURE_CUBE_MAP,normal_cube);glBindSampler(4,0);glUniform1i(glGetUniformLocation(p,"normal_cube"),4);
     glActiveTexture(GL_TEXTURE5);glBindTexture(GL_TEXTURE_3D,attenuation_volume);glBindSampler(5,0);glUniform1i(glGetUniformLocation(p,"attenuation_volume"),5);
   }
-  GLuint program(const MaterialShader& s,bool particle,bool mesh=false) {
+  GLuint program(const MaterialShader& s,bool particle,bool mesh=false,bool instanced=false) {
     const bool lit=(s.words[2]&7)!=0;require(!lit || particle,"lighting needs mesh vertex data");
     const bool generated=(s.words[1]&0xf30)!=0;
     require(!generated || (mesh && !lit),"generated environment/projection UVs need an unlit mesh shader");
     auto source=lit ? material_light_fragment_shader(s) : material_fragment_shader(s);if(s.words[0]&0x40)source=fog_fragment_shader(std::move(source));
-    const auto key=(generated ? "generated:" : lit ? "light:" : particle ? "particle:" : "quad:")+source;if(auto found=programs.find(key);found!=programs.end())return found->second;
+    const auto key=std::string(instanced ? "instanced:" : "")+(generated ? "generated:" : lit ? "light:" : particle ? "particle:" : "quad:")+source;if(auto found=programs.find(key);found!=programs.end())return found->second;
     require(programs.size()<4096,"frame shader cache limit");
-    const auto vertex=gles::shader(GL_VERTEX_SHADER,generated ? generated_uv_vertex : lit ? light_vertex : particle ? particle_vertex : quad_vertex);GLuint fragment;
+    std::string vertex_source=generated ? generated_uv_vertex : lit ? light_vertex : particle ? particle_vertex : quad_vertex;
+    if(instanced)vertex_source=instance_vertex(std::move(vertex_source));
+    const auto vertex=gles::shader(GL_VERTEX_SHADER,vertex_source.c_str());GLuint fragment;
     try {fragment=gles::shader(GL_FRAGMENT_SHADER,source.c_str());}catch(...) {glDeleteShader(vertex);throw;}
     const auto p=glCreateProgram();glAttachShader(p,vertex);glAttachShader(p,fragment);glLinkProgram(p);glDeleteShader(vertex);glDeleteShader(fragment);
     GLint ok=0;glGetProgramiv(p,GL_LINK_STATUS,&ok);
@@ -423,7 +449,7 @@ struct FrameRenderer::Impl {
     const auto& s=q.shader;const auto flags=s.words[0];
     require(!(flags&(light ? 0xcc0018u : 0xfc0018u)),"draw shadow state or depth bias is not ported");
     require(!(flags&0x700000) || (light && (flags&0x700000)==0x300000),"unsupported stencil material operation");
-    const bool vertices=effect || mesh;require(!(s.words[2]&7) || light,"missing scene light uniforms");require(!(flags&0x40) || (vertices && fog),"fog requires a scene camera");const auto p=program(s,vertices,mesh!=nullptr);glUseProgram(p);glBindVertexArray(vao);
+    const bool vertices=effect || mesh;require(!(s.words[2]&7) || light,"missing scene light uniforms");require(!(flags&0x40) || (vertices && fog),"fog requires a scene camera");const auto p=program(s,vertices,mesh!=nullptr,mesh && mesh->instanced);glUseProgram(p);glBindVertexArray(vao);
     std::array<float,36> matrices{};std::array<float,16> rects{},colors{};std::array<float,4> flip{};
     for(unsigned i=0;i<4;++i) {
       auto uv_shader=s;if(!vertices)uv_shader.words[4+i]&=~0x10u; // Quad UV0 and UV1 are supplied explicitly.
@@ -484,6 +510,7 @@ struct FrameRenderer::Impl {
     last_model=mesh ? mesh->model : effect ? effect->material_model : scene_identity();
     if(!vertices)glDrawArrays(GL_TRIANGLE_STRIP,0,4);
     else {
+      if(mesh && mesh->instanced && !mesh->instance_count)return;
       require(projection,"missing mesh/effect projection");
       GLint first=0;GLsizei count=0;
       if(mesh) {glBindBuffer(GL_ARRAY_BUFFER,mesh->buffer);first=mesh->first;count=mesh->count;}
@@ -500,7 +527,12 @@ struct FrameRenderer::Impl {
       glVertexAttribPointer(2,4,GL_UNSIGNED_BYTE,GL_TRUE,stride,reinterpret_cast<void*>(offsetof(SceneEffectVertex,color)));
       glEnableVertexAttribArray(0);glEnableVertexAttribArray(1);glEnableVertexAttribArray(2);
       if(mesh){glVertexAttribPointer(3,3,GL_FLOAT,GL_FALSE,stride,reinterpret_cast<void*>(offsetof(MeshVertex,normal)));glVertexAttribPointer(4,3,GL_FLOAT,GL_FALSE,stride,reinterpret_cast<void*>(offsetof(MeshVertex,tangent)));glEnableVertexAttribArray(3);glEnableVertexAttribArray(4);}else {glDisableVertexAttribArray(3);glDisableVertexAttribArray(4);}
-      glDrawArrays(GL_TRIANGLES,first,count);
+      if(mesh && mesh->instanced) {
+        glBindBuffer(GL_ARRAY_BUFFER,mesh->instance_buffer);
+        for(unsigned c=0;c<4;++c){glVertexAttribPointer(5+c,4,GL_FLOAT,GL_FALSE,sizeof(SceneMatrix),reinterpret_cast<void*>(c*4*sizeof(float)));glEnableVertexAttribArray(5+c);glVertexAttribDivisor(5+c,1);}
+        glDrawArraysInstanced(GL_TRIANGLES,first,count,mesh->instance_count);
+        for(unsigned c=0;c<4;++c){glVertexAttribDivisor(5+c,0);glDisableVertexAttribArray(5+c);}
+      }else glDrawArrays(GL_TRIANGLES,first,count);
     }
   }
   FrameTexture resolve_texture(std::size_t id,const SceneEffectDraw* effect=nullptr) {
@@ -645,6 +677,7 @@ struct FrameRenderer::Impl {
         }
       }
       data.batches.emplace_back(first,GLsizei(triangles.size()-first));
+      data.instance_limits.push_back(scene_instance_limit(*mesh,batch));
     }
     if(found==geometry.end()){glGenBuffers(1,&data.buffer);++stats.mesh_uploads;}
     else {data.buffer=found->second.buffer;++stats.mesh_updates;}
@@ -654,6 +687,20 @@ struct FrameRenderer::Impl {
     geometry_bytes=geometry_bytes-previous+bytes;
     if(found!=geometry.end()){found->second=std::move(data);return found->second;}
     return geometry.emplace(key,std::move(data)).first->second;
+  }
+  GLuint instance_buffer(const SceneInstance& instance) {
+    const auto& matrices=instance.particle_matrices;require(matrices && !matrices->empty() && matrices->size()<=16384,"invalid mesh instance array");
+    const auto owner=instance.mesh->animation_source ? instance.mesh->animation_source : instance.mesh;
+    auto& data=instance_buffers[owner.get()];if(data.matrices==matrices)return data.buffer;
+    for(const auto& m:*matrices){for(auto x:m)require(std::isfinite(x),"nonfinite instance matrix");require(m[3]==0 && m[7]==0 && m[11]==0 && m[15]==1,"nonaffine instance matrix");}
+    const auto bytes=matrices->size()*sizeof(SceneMatrix);
+    if(!data.buffer){glGenBuffers(1,&data.buffer);data.owner=owner;++stats.instance_uploads;}
+    glBindBuffer(GL_ARRAY_BUFFER,data.buffer);
+    if(bytes>data.bytes) {
+      require(bytes-data.bytes<=512u*1024*1024-geometry_bytes,"scene instance buffer budget exceeded");
+      glBufferData(GL_ARRAY_BUFFER,bytes,matrices->data(),GL_DYNAMIC_DRAW);geometry_bytes+=bytes-data.bytes;data.bytes=bytes;
+    }else glBufferSubData(GL_ARRAY_BUFFER,0,bytes,matrices->data());
+    data.matrices=matrices;++stats.instance_updates;return data.buffer;
   }
   const ShadowGeometry& shadow_geometry(const std::shared_ptr<const Mesh>& mesh,const SceneFrame& scene) {
     const auto key=mesh->animation_source ? mesh->animation_source.get() : mesh.get();
@@ -729,7 +776,13 @@ struct FrameRenderer::Impl {
           require(job.light.has_value(),"shadow job needs a light");shadow(instance,scene,pass.shader,projection,draws.lights[*job.light].light,job.shadow_zfail);return;
         }
         const auto& data=mesh_geometry(instance.mesh,batches);const auto [first,count]=data.batches[job.batch];
-        const auto matrix=scene_combine(projection,instance.world);const MeshDraw mesh{data.buffer,first,count,instance.world};
+        const auto matrix=scene_combine(projection,instance.world);MeshDraw mesh{data.buffer,first,count,instance.world};
+        if(pass.program==MaterialProgram::instances) {
+          require(!pass.shader.material20,"Material 2.0 instance finalizer is not supported");
+          mesh.instanced=true;
+          mesh.instance_count=GLsizei(std::min(instance.particle_matrices ? instance.particle_matrices->size() : 0,data.instance_limits[job.batch]));
+          if(mesh.instance_count)mesh.instance_buffer=instance_buffer(instance);
+        }
         if(pass.shader.material20){material20(*pass.shader.material20,target,mesh,matrix,scene,job.light ? &draws.lights[*job.light].light : nullptr);return;}
         std::optional<LightDraw> setup;
         if(job.light) {

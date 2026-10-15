@@ -27,6 +27,8 @@ struct MeshFace {
   // Attribute crease bits on the outgoing edge of each corner, as in GenMesh.
   std::array<std::uint8_t, 4> crease{};
   bool casts_shadow=true;
+  // Original material cluster identity, including clusters with equal bindings.
+  std::uint32_t cluster{};
 };
 // Polygon view of the immutable indexed core used by the evaluator. Hand-built
 // diagnostics can omit the core. Point identity comes from the appropriate

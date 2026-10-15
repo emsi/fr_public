@@ -9,6 +9,8 @@ struct SceneMeshBatch {
   std::vector<std::uint32_t> faces;
 };
 std::vector<SceneMeshBatch> scene_mesh_batches(const Mesh&);
+// Archived dynamic vertex/index buffer cap for one MPP_INSTANCES paint job.
+std::size_t scene_instance_limit(const Mesh&,const SceneMeshBatch&);
 std::uint32_t mesh_vertex_color(const std::array<float,4>&);
 struct SceneDrawJob {
   std::uint32_t sort_key{};

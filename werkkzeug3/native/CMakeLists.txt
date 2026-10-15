@@ -443,6 +443,17 @@ if(BUILD_TESTING)
     target_link_libraries(wz3-glare-render-tests PRIVATE wz3_project PkgConfig::EGL PkgConfig::GLES)
     add_test(NAME gpu_glare COMMAND wz3-glare-render-tests)
     set_tests_properties(gpu_glare PROPERTIES LABELS graphics)
+    add_custom_command(
+      OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/instances_oracle.inc"
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/instances_oracle.py"
+              "${CMAKE_CURRENT_SOURCE_DIR}/../engine.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/instances_oracle.inc"
+      DEPENDS tools/instances_oracle.py tools/particles_oracle.py ../engine.cpp VERBATIM)
+    add_executable(wz3-instance-render-tests tests/render_instances.cpp src/frame_render.cpp src/render.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/instances_oracle.inc")
+    target_include_directories(wz3-instance-render-tests PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    target_compile_options(wz3-instance-render-tests PRIVATE -ffp-contract=off)
+    target_link_libraries(wz3-instance-render-tests PRIVATE wz3_project PkgConfig::EGL PkgConfig::GLES)
+    add_test(NAME gpu_mesh_instances COMMAND wz3-instance-render-tests)
+    set_tests_properties(gpu_mesh_instances PROPERTIES LABELS graphics)
     add_executable(wz3-environment-render-tests tests/render_environment.cpp src/frame_render.cpp src/render.cpp)
     target_include_directories(wz3-environment-render-tests PRIVATE src)
     target_link_libraries(wz3-environment-render-tests PRIVATE wz3_project PkgConfig::EGL PkgConfig::GLES)

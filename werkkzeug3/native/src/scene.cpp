@@ -110,6 +110,7 @@ struct ScenePlayer::Impl {
   std::shared_ptr<SceneAssets> assets;
   std::map<std::uint64_t,std::vector<std::pair<std::size_t,std::size_t>>> instances;
   std::size_t instance_count{};
+  std::map<const Mesh*,std::shared_ptr<const std::vector<SceneMatrix>>> mesh_instances;
   std::vector<bool> prepared;
   std::vector<std::optional<AnimationProgram>> programs;
   std::vector<bool> visiting;
@@ -139,6 +140,19 @@ struct ScenePlayer::Impl {
   }
   std::shared_ptr<const Mesh> geometry(std::size_t id) {
     return assets->mesh(id);
+  }
+  std::shared_ptr<const Mesh> cached_draw_mesh(std::size_t id,unsigned depth=0) {
+    require(depth<512,"cached scene mesh alias depth limit");valid(id);
+    const auto cmd=project.operators[id].command;
+    const auto category=operator_info(cmd).category;
+    if(category=="MESH" || category=="MINMESH")return geometry(id);
+    // MakeScene keeps a Scene node's own DrawMesh. Transform/Add/Multiply and
+    // other scene wrappers have children but no DrawMesh of their own.
+    if((cmd>=1 && cmd<=3) || cmd==5 || cmd==6 || cmd==0x16 || cmd==0x180)
+      return cached_draw_mesh(alias(id),depth+1);
+    if(cmd==0xc0 && graph.nodes[id].inputs.size()==1)
+      return cached_draw_mesh(graph.nodes[id].inputs[0],depth+1);
+    return {};
   }
   std::size_t instance(std::size_t id,AnimationEnvironment& env) {
     auto& cursor=*env.instances;auto& chain=instances[cursor.chain];
@@ -288,7 +302,17 @@ struct ScenePlayer::Impl {
       if(!op.splines.empty() && !op.splines[0].empty()) {spline=splines.find(op.splines[0]);require(spline.has_value(),"unresolved particle spline");}
       ParticleSpatialPath path;
       if(node.inputs.size()==2)path=[&](float time){return spatial.evaluate(node.inputs[1],time,0,env,timeline).world;};
-      const auto instances=particles.evaluate(instance(id,env),p,spline,path);const auto selection=env.variables[3],fraction=env.variables[11];
+      const auto instances=particles.evaluate(instance(id,env),p,spline,path);
+      if(p[0]&0x100)if(const auto mesh=cached_draw_mesh(node.inputs[0])) {
+        auto matrices=std::make_shared<std::vector<SceneMatrix>>();matrices->reserve(instances.size());
+        for(const auto& particle:instances)matrices->push_back(particle.transform);
+        mesh_instances[mesh.get()]=std::move(matrices);
+        require(frame.instances.size()<65536,"scene instance limit");
+        // The archived optimized path skips child execution and explicitly
+        // submits zero mesh time and pass adjustment, retaining the parent.
+        frame.instances.push_back({id,mesh,world,0,0});break;
+      }
+      const auto selection=env.variables[3],fraction=env.variables[11];
       try {for(const auto& particle:instances) {
         // The released handler predates KV_SELECT/KV_FRACTION publication.
         if(!project.runtime_graph) {env.variables[3].fill(float(particle.index));env.variables[11].fill(particle.fraction);}
@@ -367,6 +391,11 @@ struct ScenePlayer::Impl {
     }}catch(...) {env.variables=saved_variables;env.instances=saved_instances;throw;}
     env.variables=saved_variables;env.instances=saved_instances;
 
+    // Later particle operators can overwrite a mesh's array. All paint jobs,
+    // including ordinary mesh submissions, read that final persistent state.
+    for(auto& draw:frame.instances)if(auto found=mesh_instances.find(draw.mesh.get());found!=mesh_instances.end())
+      draw.particle_matrices=found->second;
+
     // Engine painting consumes material state after all scene jobs have been
     // collected, including updates executed later in the same scene traversal.
     for(const auto& instance:frame.instances)for(const auto& face:instance.mesh->faces)
@@ -424,7 +453,7 @@ void write_scene(const std::filesystem::path& path,const SceneFrame& frame) {
     <<",\"fog_color\":"<<frame.camera.fog_color<<",\"fog_start\":"<<frame.camera.fog_start<<",\"fog_end\":"<<frame.camera.fog_end<<"},\"instances\":[";
   for(std::size_t i=0;i<frame.instances.size();++i) {
     const auto& v=frame.instances[i];out<<(i ? "," : "")<<"{\"operator\":"<<v.operator_id<<",\"world\":";array(v.world);
-    out<<",\"time\":"<<v.time<<",\"pass_adjust\":"<<v.pass_adjust<<",\"vertices\":"<<v.mesh->vertices.size()<<",\"faces\":"<<v.mesh->faces.size()<<'}';
+    out<<",\"time\":"<<v.time<<",\"pass_adjust\":"<<v.pass_adjust<<",\"particle_instances\":"<<(v.particle_matrices ? v.particle_matrices->size() : 0)<<",\"vertices\":"<<v.mesh->vertices.size()<<",\"faces\":"<<v.mesh->faces.size()<<'}';
   }
   out<<"],\"lights\":[";
   for(std::size_t i=0;i<frame.lights.size();++i) {

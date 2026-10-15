@@ -44,10 +44,9 @@ after 121.4 seconds of preparation and fell up to 20.0 seconds behind the audio
 clock. It allocated no additional cached meshes, textures, targets or GPU
 buffers during playback. This verifies image consistency; synchronized
 real-time Debris playback still needs performance work.
-The continuous renderer stops at 63,680 ms on optimized particle mesh
-instancing. GenSpline particle paths now evaluate, but the optimized path must
-still build and draw the original instance buffers instead of traversing a
-child scene for every particle.
+Optimized particle mesh instancing now evaluates and renders. The next
+continuous-run blocker is Color Correction at the same 63,680 ms transition.
+The 60-second capture remains byte-identical after the instancing changes.
 DejaVu Sans captures show textured buildings,
 lighting, shadows and cables. The playback test uses dummy audio; physical
 speaker output and synchronization remain unverified. This is progress through
@@ -67,6 +66,29 @@ The player synthesizes its V2 soundtrack into stereo PCM before playback, using
 the same SDL callback clock as Ogg music. The existing Theta renderer and released-clock profile
 do not establish compatibility with Debris. `debris_projects` compares the real
 wrapped files with their legacy documents and tests malformed container handling.
+
+Optimized Scene Particles retain one persistent matrix array per prepared mesh.
+All paint jobs snapshot the final array after scene traversal, including writes
+from later particle operators and state retained across viewports. The optimized
+path skips child execution, uses zero mesh time/pass adjustment and keeps the
+parent world transform; scene wrappers without their own cached mesh still use
+the ordinary per-particle traversal.
+
+GLES instance attributes transform positions, normals and tangents before the
+ordinary material shader, reproducing `InstancingInner` without expanding the
+mesh on the CPU. Lighting, fog and generated coordinates keep the parent's
+model space. Original material clusters, dynamic-buffer instance caps and large
+instance culling bounds are retained. Static and shadow passes still draw only
+the prototype, including shadows for zero-particle groups. Matrix buffers grow
+and are reused by source mesh.
+
+The extracted particle handler checks 1,792 optimized cases plus all 39 reachable
+Debris particle recipes at five times (35 use optimized instancing). GPU tests
+compare 11 cases with vertices expanded by the archived `InstancingInner`,
+including nonuniform/mirrored transforms, lighting, fog, generated coordinates
+and an offscreen prototype. Separate checks cover zero counts, retained shadow
+behavior, shared arrays, frame snapshots, buffer reuse and the original vertex/
+index caps. These checks pass under Clang ASan/UBSan.
 
 DXT1/DXT5 textures use the archived Ryg compressor after the original 15-bit
 mip reduction and byte packing. Quality flags, channel order and tiny-mip block
@@ -974,9 +996,9 @@ ignores spline zoom and evaluates with phase zero; angular velocity is applied
 afterward. This path matches the extracted handler across 2,816 synthetic cases,
 including simultaneous named/spatial curves and changing initialization values.
 A scene integration check uses a real derivative-facing spatial spline with
-non-unit zoom. Four saved Debris particle operators, two with GenSpline inputs,
-also match at five times. These checks pass under Clang ASan/UBSan. The remaining
-35 saved particle operators use optimized mesh instancing, which is not ported.
+non-unit zoom. All 39 saved Debris particle operators also match at five times,
+including the 35 optimized mesh-instancing operators described above. These
+checks pass under Clang ASan/UBSan.
 
 Theta saves the older 16-word parameter layout. `WerkDoc::Read` copies this prefix
 over editor defaults; the later motion parameters all default to zero. The native

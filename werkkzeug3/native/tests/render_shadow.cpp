@@ -120,6 +120,25 @@ void animated() {
   renderer.reset_targets();check(render(renderer,s)==render(renderer,s),"animated reset changed repeated frame");
   std::cout<<checks<<" animated mesh/shadow frames match baked poses; buffers stay bounded\n";
 }
+void instance_shadows() {
+  FrameFixture fixture;auto s=scene(fixture);wz3::FrameRenderer renderer(fixture.p,fixture.g);
+  auto& passes=s.materials[0].passes;
+  for(auto& pass:passes)if(pass.program!=wz3::MaterialProgram::shadow)pass.program=wz3::MaterialProgram::instances;
+  // Zero instances suppress the base/light passes, but the shadow program
+  // still draws the one prototype. Compare with an explicit shadow-only mesh.
+  const auto actual=render(renderer,s);auto reference=s;
+  reference.materials[0].passes.erase(reference.materials[0].passes.begin(),reference.materials[0].passes.end()-1);
+  check(render(renderer,reference)==actual,"empty instance mesh lost prototype shadow");
+  auto lit=s;lit.lights[0].flags=0;check(render(renderer,lit)!=actual,"instance shadow fixture casts no visible shadow");
+  auto matrices=std::make_shared<std::vector<wz3::SceneMatrix>>(3,wz3::scene_identity());
+  for(auto& m:*matrices)m[12]=100;
+  s.instances[0].particle_matrices=matrices;
+  check(render(renderer,s)==actual,"instance transforms must not move or duplicate prototype shadow");
+  s.instances[0].world[12]=100;
+  const auto jobs=wz3::scene_draw_jobs(s,128,128).jobs;
+  check(std::none_of(jobs.begin(),jobs.end(),[](const auto& j){return j.instance==0 && ((j.sort_key>>16)&15)==3;}),"instance flag must not enlarge shadow culling bounds");
+  std::cout<<"Instance materials retain one prototype shadow, including empty groups and ordinary shadow culling\n";
+}
 void theta(const char* path) {
   const auto p=wz3::read_project(path);const auto g=wz3::connect(p);wz3::FramePlayer player(p,g);wz3::FrameRenderer renderer(p,g);
   for(float beat:{56.f,72.f,96.f,120.f,144.f,184.f,216.f,448.5f,480.f,511.5f}) {
@@ -131,4 +150,4 @@ void theta(const char* path) {
   }
 }
 }
-int main(int argc,char** argv){try{controlled();coplanar_cap();animated();if(argc>1)theta(argv[1]);}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(int argc,char** argv){try{controlled();coplanar_cap();animated();instance_shadows();if(argc>1)theta(argv[1]);}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

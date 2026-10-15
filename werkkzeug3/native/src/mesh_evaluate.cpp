@@ -226,7 +226,7 @@ Mesh export_mesh(std::shared_ptr<GenMesh> mesh) {
     std::vector<std::uint32_t> corners;std::vector<std::uint8_t> creases;
     auto e=mesh->Face[i].Edge;const auto start=e;
     do {corners.push_back(mesh->GetVertId(e));creases.push_back(mesh->Edge[e/2].Crease);e=mesh->NextFaceEdge(e);}while(e!=start);
-    MeshFace f;f.mask=mesh->Face[i].Mask;f.material=mesh->Face[i].binding;f.pass=mesh->Face[i].pass;f.casts_shadow=mesh->Face[i].Used;
+    MeshFace f;f.mask=mesh->Face[i].Mask;f.material=mesh->Face[i].binding;f.pass=mesh->Face[i].pass;f.casts_shadow=mesh->Face[i].Used;f.cluster=mesh->Face[i].Material;
     if(corners.size()<=4) {
       f.count=corners.size();std::copy(corners.begin(),corners.end(),f.vertices.begin());std::copy(creases.begin(),creases.end(),f.crease.begin());out.faces.push_back(f);
     }else for(std::size_t c=1;c+1<corners.size();++c) {

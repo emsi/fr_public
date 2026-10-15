@@ -69,7 +69,7 @@ std::vector<SceneParticle> SceneParticles::evaluate(std::size_t id,std::span<con
   const bool released=impl->released_handler;
   if(released)require(parameters.size()==16 && !(parameters[0]&~0x3fu) && !spatial_path,"unsupported released Particles layout/flags");
   std::array<std::uint32_t,30> p{};std::copy(parameters.begin(),parameters.end(),p.begin());
-  const auto mode=p[0];require(!(mode&~0xffu),"optimized particle mesh instances are not ported");require(p[1]<=16384,"scene particle count limit");
+  const auto mode=p[0];require(!(mode&~0x1ffu),"unsupported scene particle flags");require(p[1]<=16384,"scene particle count limit");
   for(unsigned i=3;i<30;++i)require(std::isfinite(as_float(p[i])) && std::abs(as_float(p[i]))<=1e6f,"invalid scene particle numeric parameter");
   require(as_float(p[23])>=0 && as_float(p[23])<=1,"invalid particle come-out range");
   const auto& cloud=impl->cloud(id,p);float animation=as_float(p[12]);

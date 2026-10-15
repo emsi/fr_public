@@ -32,6 +32,10 @@ struct SceneInstance {
   SceneMatrix world=scene_identity();
   float time{};
   std::int32_t pass_adjust{};
+  // EngMesh owns one persistent instance array, shared by all its paint jobs.
+  // A frame snapshots the final array after scene traversal. Only passes with
+  // MaterialProgram::instances use it; static and shadow passes keep the mesh.
+  std::shared_ptr<const std::vector<SceneMatrix>> particle_matrices{};
 };
 struct SceneLight {
   std::size_t operator_id{};

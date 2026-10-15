@@ -65,7 +65,7 @@ Mesh export_mesh(std::shared_ptr<GenMinMesh> core) {
     const auto& cl=core->Clusters[f.Cluster];
     require(cl.AnimType==0 || (cl.AnimType==2 && core->Animation && core->CompletelyRigid),"unsupported MINMESH animation type");
     MeshFace face;face.mask=f.Select;face.material=cl.Mtrl ? cl.Mtrl->binding : std::nullopt;
-    face.pass=cl.RenderPass;face.casts_shadow=!(f.Flags&1);
+    face.pass=cl.RenderPass;face.casts_shadow=!(f.Flags&1);face.cluster=f.Cluster;
     if(f.Count<=4) {
       face.count=f.Count;std::copy_n(f.Vertices,f.Count,face.vertices.begin());out.faces.push_back(face);
     }else for(int c=2;c<f.Count;++c) {

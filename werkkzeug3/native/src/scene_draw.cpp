@@ -1,20 +1,40 @@
 // Distributed under the BSD license in werkkzeug3/LICENSE.txt.
 #include "wz3/scene_draw.hpp"
 #include "wz3/lighting.hpp"
+#include "mesh_kernel.hpp"
 #include <algorithm>
 #include <cfenv>
 #include <cmath>
 namespace wz3 {
 std::vector<SceneMeshBatch> scene_mesh_batches(const Mesh& mesh) {
   validate_mesh(mesh);
-  std::map<std::pair<std::optional<std::size_t>,std::int32_t>,std::size_t> groups;
+  std::map<std::tuple<std::optional<std::size_t>,std::int32_t,std::uint32_t>,std::size_t> groups;
   std::vector<SceneMeshBatch> result;
   for(std::size_t i=0;i<mesh.faces.size();++i) {
-    const auto& f=mesh.faces[i];auto [found,added]=groups.try_emplace({f.material,f.pass},result.size());
+    const auto& f=mesh.faces[i];auto [found,added]=groups.try_emplace({f.material,f.pass,f.cluster},result.size());
     if(added)result.push_back({f.material,f.pass,{}});
     result[found->second].faces.push_back(std::uint32_t(i));
   }
   return result;
+}
+std::size_t scene_instance_limit(const Mesh& mesh,const SceneMeshBatch& batch) {
+  std::vector<bool> used(mesh.vertices.size());std::size_t indices=0;
+  for(auto id:batch.faces){const auto& face=mesh.faces.at(id);indices+=(face.count-2)*3;for(unsigned c=0;c<face.count;++c)used.at(face.vertices[c])=true;}
+  if(mesh.kernel && !batch.faces.empty()) {
+    // GenMesh's preparation selects both endpoints of every adjacent edge,
+    // including wedges on the other side of a material boundary.
+    const auto& core=*mesh.kernel;const auto cluster=mesh.faces[batch.faces[0]].cluster;
+    for(int i=0;i<core.Edge.Count;++i) {
+      const auto& e=core.Edge[i];
+      if((e.Face[0]>=0 && core.Face[e.Face[0]].Material==int(cluster)) || (e.Face[1]>=0 && core.Face[e.Face[1]].Material==int(cluster))) {
+        used.at(e.Vert[0])=true;used.at(e.Vert[1])=true;
+      }
+    }
+  }
+  const auto vertices=std::count(used.begin(),used.end(),true);
+  if(!vertices || !indices)return 0;
+  // Keep the archive's /2 index cap even though MPP_INSTANCES uses 32-bit indices.
+  return std::min(std::size_t(12*1024*1024/48)/vertices,std::size_t(4*1024*1024/2)/indices);
 }
 std::uint32_t mesh_vertex_color(const std::array<float,4>& color) {
   const auto previous=std::fegetround();std::fesetround(FE_TONEAREST);
@@ -108,7 +128,8 @@ SceneDrawList scene_draw_jobs(const SceneFrame& scene,unsigned width,unsigned he
         const bool shadow=pass.program==MaterialProgram::shadow;
         if(shadow && usage!=3)throw std::runtime_error("shadow finalizer requires shadow usage");
         if(shadow && b!=first_shadow)continue;
-        const auto box=shadow ? batch_bounds(instance,whole) : batch_box;
+        const bool instanced=pass.program==MaterialProgram::instances;
+        const auto box=instanced ? Bounds{{-1073741824.f,-1073741824.f,-1073741824.f},{1073741824.f,1073741824.f,1073741824.f}} : shadow ? batch_bounds(instance,whole) : batch_box;
         if(usage!=3 && shadow_box_culled(box,planes))continue;
         const auto base=(std::int64_t(pass.render_pass)+batch.pass)&255;
         const auto index=std::clamp(base+instance.pass_adjust,std::int64_t(0),std::int64_t(255));
@@ -125,10 +146,10 @@ SceneDrawList scene_draw_jobs(const SceneFrame& scene,unsigned width,unsigned he
             if(usage==3) {
               if(!(light.flags&2) || shadow_box_culled(box,result.lights[l].shadow_frustum))continue;
               if(!shadow)throw std::runtime_error("shadow usage requires the shadow finalizer");
-            }else if(pass.program!=MaterialProgram::static_mesh)throw std::runtime_error("mesh finalizer is not ported");
+            }else if(pass.program!=MaterialProgram::static_mesh && !instanced)throw std::runtime_error("mesh finalizer is not ported");
             append(unsigned(l),l,shadow && !shadow_box_culled(box,result.lights[l].near_volume));
           }
-        }else {if(pass.program!=MaterialProgram::static_mesh)throw std::runtime_error("mesh finalizer is not ported");append(usage<3 ? 0u : 15u,{});}
+        }else {if(pass.program!=MaterialProgram::static_mesh && !instanced)throw std::runtime_error("mesh finalizer is not ported");append(usage<3 ? 0u : 15u,{});}
       }
     }
   }

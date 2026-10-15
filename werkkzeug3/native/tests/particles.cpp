@@ -17,10 +17,11 @@ struct sMatrix:wz3::legacy::sMatrix {
 };
 struct KInstanceMem {bool Reset{};void* DeleteArray{};};
 struct EngMesh {
-  sMatrix* GetInstanceMatrices(int) {throw std::runtime_error("unexpected optimized instances in source oracle");}
-  void UpdateInstanceCount(std::ptrdiff_t) {}
+  std::vector<sMatrix> matrices;std::size_t count{};
+  sMatrix* GetInstanceMatrices(int n) {count=n;matrices.resize(std::max(1,n));return matrices.data();}
+  void UpdateInstanceCount(std::ptrdiff_t n) {check(n>=0 && std::size_t(n)<=count,"oracle instance count overflow");count=n;}
 };
-struct GenScene {EngMesh* DrawMesh{};struct Children {int Count{};GenScene* operator[](int) {return nullptr;}} Childs;};
+struct GenScene {EngMesh* DrawMesh{};struct Children {int Count{};GenScene* child{};GenScene* operator[](int i) {check(i==0 && Count==1,"invalid oracle child");return child;}} Childs;};
 struct GenSpline {
   wz3::ParticleSpatialPath path;
   void Eval(float time,int phase,sMatrix& m,float& zoom) {
@@ -44,7 +45,10 @@ struct KEnvironment {
   } ExecStack;
   template<class T>T* GetInst(KOp*) {auto* mem=static_cast<T*>(instance);mem->Reset=!initialized;initialized=true;return mem;}
 };
-struct EngineStub {void AddPaintJob(EngMesh*,const sMatrix&,int,int) {throw std::runtime_error("unexpected engine call");}} engine;
+struct EngineStub {
+  EngMesh* mesh{};sMatrix world;int time=-1,pass=-1;unsigned calls{};
+  void AddPaintJob(EngMesh* m,const sMatrix& w,int t,int p) {mesh=m;world=w;time=t;pass=p;++calls;}
+} engine;
 EngineStub* Engine=&engine;
 constexpr unsigned KV_SELECT=3,KV_FRACTION=11;
 void ExecSceneInputs(KOp*,KEnvironment* env,int) {
@@ -60,14 +64,14 @@ std::uint32_t sRandomSeed=0x74382381;
 #undef __stdcall
 #undef sMOBILE
 struct Fixture {
-  ScenePartMem memory{};GenScene scene;KOp op{&scene};KEnvironment env;
-  Fixture() {env.instance=&memory;}
+  ScenePartMem memory{};EngMesh mesh;GenScene child,scene;KOp op{&scene};KEnvironment env;
+  explicit Fixture(bool optimized=false) {env.instance=&memory;if(optimized){child.DrawMesh=&mesh;scene.Childs={1,&child};}}
   ~Fixture() {delete[] memory.Pos;}
   std::vector<wz3::SceneParticle> run(std::span<const std::uint32_t> parameters,KSpline* spline=nullptr,GenSpline* spatial=nullptr) {
     std::array<std::uint32_t,30> p{};std::copy(parameters.begin(),parameters.end(),p.begin());
     const auto real=[&](unsigned i){return wz3::as_float(p[i]);};const auto vec=[&](unsigned i){sVector v;v.Init(real(i),real(i+1),real(i+2));return v;};
     KOp input{spatial};op.spatial=spatial ? &input : nullptr;
-    env.output.clear();Exec_Scene_Particles(&op,&env,int(p[0]),int(p[1]),int(p[2]),vec(3),vec(6),vec(9),real(12),vec(13),vec(16),vec(19),real(22),real(23),vec(24),vec(27),spline);op.spatial=nullptr;
+    engine.calls=0;env.output.clear();Exec_Scene_Particles(&op,&env,int(p[0]),int(p[1]),int(p[2]),vec(3),vec(6),vec(9),real(12),vec(13),vec(16),vec(19),real(22),real(23),vec(24),vec(27),spline);op.spatial=nullptr;
     return env.output;
   }
 };
@@ -79,6 +83,15 @@ void equal(const std::vector<wz3::SceneParticle>& a,const std::vector<wz3::Scene
     check(a[i].index==b[i].index && a[i].fraction==b[i].fraction,"source/native particle index/phase mismatch");
     for(unsigned c=0;c<16;++c)if(std::abs(a[i].transform[c]-b[i].transform[c])>1e-5f)
       throw std::runtime_error("source/native particle transform mismatch at "+std::to_string(i)+":"+std::to_string(c));
+  }
+}
+void equal_optimized(const std::vector<wz3::SceneParticle>& actual,const source::Fixture& original) {
+  check(original.env.output.empty(),"optimized handler must not execute child");
+  check(source::engine.calls==1 && source::engine.mesh==&original.mesh && source::engine.time==0 && source::engine.pass==0,"optimized paint submission");
+  check(actual.size()==original.mesh.count,"optimized particle count");
+  for(unsigned i=0;i<actual.size();++i) {
+    const auto& m=original.mesh.matrices[i];const wz3::SceneMatrix expected={m.i.x,m.i.y,m.i.z,m.i.w,m.j.x,m.j.y,m.j.z,m.j.w,m.k.x,m.k.y,m.k.z,m.k.w,m.l.x,m.l.y,m.l.z,m.l.w};
+    for(unsigned c=0;c<16;++c)near(actual[i].transform[c],expected[c],"optimized source/native matrix mismatch");
   }
 }
 wz3::Project splined() {
@@ -100,6 +113,45 @@ void oracle() {
     }
   }
   std::cout<<"256 particle mode combinations match extracted source over motion and cache updates\n";
+}
+void scene_variables();
+void optimized() {
+  const auto p=splined();const wz3::SplineLibrary curves(p);wz3::SceneParticles native(curves);source::KSpline named{curves,0};
+  const wz3::ParticleSpatialPath path=[](float t){auto m=wz3::scene_identity();m[12]=t*2;m[13]=1-t;return m;};source::GenSpline spatial{path};
+  unsigned cases=0;
+  for(unsigned mode=0x100;mode<0x200;++mode) {
+    source::Fixture original(true);std::array<std::uint32_t,30> values{mode,13,mode};
+    for(unsigned i=3;i<30;++i)values[i]=f(float(i)*.02f);values[23]=f(.1f);
+    original.env.ExecStack.values[0].l.Init(3,7,-2,1);
+    original.env.Var[3].Init(23,24,25,26);original.env.Var[11].Init(.1f,.2f,.3f,.4f);
+    for(float time:{-.25f,0.f,.125f,.75f,1.25f,2.5f}) {
+      values[12]=f(time);original.run(values,&named,&spatial);equal_optimized(native.evaluate(mode,values,0,path),original);
+      near(source::engine.world.l.x,3,"optimized submission keeps parent world");
+      near(original.env.Var[3].y,24,"optimized selection restored");near(original.env.Var[11].z,.3f,"optimized fraction restored");++cases;
+    }
+    values[1]=0;original.run(values);equal_optimized(native.evaluate(mode,values),original);++cases;
+  }
+  // Verify the scene integration independently of the original motion oracle.
+  FrameFixture x;const auto view=x.viewport(),cube=x.g.nodes[view].inputs[0];
+  const std::vector<std::uint32_t> transform={f(1),f(1),f(1),0,0,0,f(99),0,0};
+  auto scene_parameters=transform;scene_parameters.push_back(0);
+  const auto cached=x.add(0xc0,scene_parameters,{cube}),adjusted=x.add(0x180,{7},{cached});
+  std::vector<std::uint32_t> values(30);values[0]=0x120;values[1]=4;values[12]=f(.125f);values[13]=f(8);
+  const auto first=x.add(0xc5,values,{adjusted});values[12]=f(.25f);
+  const auto second=x.add(0xc5,values,{cube});x.animate(second,11,12);const auto parent=x.add(0xc3,transform,{second});
+  const auto all=x.add(0xc1,{}, {first,parent,cube});x.g.nodes[view].inputs={all};const auto plain=x.viewport();x.g.nodes[plain].inputs={cube};wz3::ScenePlayer player(x.p,x.g);
+  auto env=wz3::frame_environment(0);env.variables[0].fill(.7f);env.variables[11].fill(.25f);const auto frame=player.viewport(view,env,1);
+  check(frame.instances.size()==3,"optimized path emits one mesh job even with Scene/AdjustPass inputs");
+  for(const auto& draw:frame.instances){check(draw.particle_matrices && draw.particle_matrices==frame.instances[0].particle_matrices,"shared mesh must read final instance array");near(draw.particle_matrices->at(0)[12],2,"later particle operator wins");}
+  near(frame.instances[0].world[12],0,"cached Scene transform must be skipped");near(frame.instances[0].time,0,"optimized mesh time must be zero");check(frame.instances[0].pass_adjust==0,"optimized mesh ignores pass adjustment");near(frame.instances[1].world[12],99,"optimized mesh retains parent world");near(frame.instances[2].time,.7f,"ordinary job retains animation time");
+  const auto retained=player.viewport(plain,wz3::frame_environment(0),1);
+  check(retained.instances[0].particle_matrices==frame.instances[0].particle_matrices,"mesh instance array must survive viewport boundaries");
+  auto next_env=wz3::frame_environment(0);next_env.variables[11].fill(.5f);const auto next=player.viewport(view,next_env,1);
+  near(next.instances[0].particle_matrices->at(0)[12],4,"next frame updates shared instance array");
+  near(frame.instances[0].particle_matrices->at(0)[12],2,"previous frame must retain its matrix snapshot");
+  // A Transform has no DrawMesh in its own cache: the optimized flag falls back
+  // to normal traversal, including KV_SELECT/KV_FRACTION for every child.
+  std::cout<<cases<<" optimized particle cases match archived handler; shared mesh snapshots and zero-time/pass submission verified\n";
 }
 void analytic() {
   const auto p=splined();const wz3::SplineLibrary splines(p);wz3::SceneParticles native(splines);
@@ -142,22 +194,25 @@ void spatial_paths() {
   std::cout<<count<<" spatial particle cases match archived handler; real spline input, orientation and zoom integration pass\n";
 }
 void scene_variables() {
+  for(unsigned optimized:{0u,0x100u}) {
   FrameFixture x;const auto view=x.viewport(),cube=x.g.nodes[view].inputs[0];
   std::vector<std::uint32_t> srt={f(1),f(1),f(1),0,0,0,0,0,0};
   const auto fraction=x.add(0xc3,srt,{cube});x.animate(fraction,11,7);
   const auto selection=x.add(0xc3,srt,{fraction});x.animate(selection,3,8);
-  std::vector<std::uint32_t> params(16);params[0]=0x20;params[1]=4;params[12]=f(.125f);params[13]=f(8);
+  std::vector<std::uint32_t> params(16);params[0]=0x20|optimized;params[1]=4;params[12]=f(.125f);params[13]=f(8);
   const auto particles=x.add(0xc5,params,{selection});const auto all=x.add(0xc1,{}, {particles,selection});x.g.nodes[view].inputs={all};
   wz3::ScenePlayer player(x.p,x.g);auto env=wz3::frame_environment(0);env.variables[3].fill(23);env.variables[11].fill(.875f);
   const auto scene=player.viewport(view,env,1);check(scene.instances.size()==5,"particle child scene instancing");
   for(unsigned i=0;i<4;++i) {near(scene.instances[i].world[12],1+2*i,"particle parent transform");near(scene.instances[i].world[13],.125f+.25f*i,"child reads KV_FRACTION");near(scene.instances[i].world[14],float(i),"child reads KV_SELECT");check(scene.instances[i].mesh==scene.instances[4].mesh,"particles share static geometry");}
   near(scene.instances[4].world[13],.875f,"fraction restored before sibling");near(scene.instances[4].world[14],23,"selection restored before sibling");
+  if(optimized)continue;
   x.p.runtime_graph=true;wz3::ScenePlayer released(x.p,x.g);
   env=wz3::frame_environment(0);env.variables[3].fill(23);env.variables[11].fill(.875f);
   const auto old=released.viewport(view,env,1);
   for(unsigned i=0;i<4;++i) {
     near(old.instances[i].world[13],.875f,"released particles leave KV_FRACTION unchanged");
     near(old.instances[i].world[14],23,"released particles leave KV_SELECT unchanged");
+  }
   }
 }
 void released() {
@@ -286,9 +341,9 @@ void debris(const char* path) {
   const auto p=wz3::read_project(path);const auto g=wz3::connect(p);const wz3::SplineLibrary curves(p);wz3::SpatialSplines spatial(p,g);wz3::SceneParticles native(curves);
   unsigned checked=0,with_path=0,optimized=0;
   for(std::size_t id=0;id<p.operators.size();++id)if(g.nodes[id].reachable && p.operators[id].command==0xc5) {
-    const auto& op=p.operators[id];if(op.parameters[0]&0x100){++optimized;continue;}
+    const auto& op=p.operators[id];const bool instanced=op.parameters[0]&0x100;if(instanced)++optimized;
     std::optional<std::size_t> curve;if(!op.splines.empty() && !op.splines[0].empty())curve=curves.find(op.splines[0]);
-    source::Fixture original;source::KSpline named{curves,curve.value_or(0)};
+    source::Fixture original(instanced);source::KSpline named{curves,curve.value_or(0)};
     auto env=wz3::frame_environment(0);wz3::ParticleSpatialPath path;
     if(g.nodes[id].inputs.size()==2) {
       const auto input=g.nodes[id].inputs[1];spatial.precalculate(input,env);
@@ -297,12 +352,14 @@ void debris(const char* path) {
     source::GenSpline original_path{path};
     for(float time:{0.f,.125f,.5f,.875f,1.25f}) {
       env=wz3::frame_environment(std::int32_t(time*65536));const wz3::AnimationScope animation(wz3::compile_animation(op,curves),curves,op.parameters,env);
-      equal(native.evaluate(id,animation.parameters,curve,path),original.run(animation.parameters,curve ? &named : nullptr,path ? &original_path : nullptr));
+      const auto expected=original.run(animation.parameters,curve ? &named : nullptr,path ? &original_path : nullptr);
+      const auto actual=native.evaluate(id,animation.parameters,curve,path);
+      if(instanced)equal_optimized(actual,original);else equal(actual,expected);
     }
     ++checked;
   }
-  check(checked && with_path,"no saved Debris spatial particle recipes checked");
-  std::cout<<checked<<" saved Debris particle operators match archived handler at five times ("<<with_path<<" with GenSpline); "<<optimized<<" optimized mesh-instancing operators remain unsupported\n";
+  check(checked==39 && optimized==35 && with_path>=2,"saved Debris particle recipe coverage changed");
+  std::cout<<checked<<" saved Debris particle operators match archived handler at five times ("<<with_path<<" with GenSpline); "<<optimized<<" use optimized mesh instancing\n";
 }
 }
 int main(int argc,char** argv) {
@@ -310,7 +367,7 @@ int main(int argc,char** argv) {
     if(argc==3 && std::string_view(argv[1])=="--release-oracle")released_oracle(argv[2]);
     else if(argc==3 && std::string_view(argv[1])=="--debris")debris(argv[2]);
     else if(argc==4 && std::string_view(argv[1])=="--release-motion-oracle")released_motion_oracle(argv[2],argv[3]);
-    else {oracle();analytic();spatial_paths();released();released_motion();scene_variables();if(argc>1)theta(argv[1]);}
+    else {oracle();optimized();analytic();spatial_paths();released();released_motion();scene_variables();if(argc>1)theta(argv[1]);}
   }
   catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}
 }

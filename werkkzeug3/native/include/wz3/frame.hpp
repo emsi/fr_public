@@ -55,7 +55,7 @@ public:
   enum class Context { Headless, Current };
   struct Stats {
     std::size_t surface_allocations{},bitmap_uploads{},mesh_uploads{},shadow_uploads{},program_compilations{},lighting_uploads{};
-    std::size_t mesh_updates{},shadow_updates{};
+    std::size_t mesh_updates{},shadow_updates{},instance_uploads{},instance_updates{};
     bool operator==(const Stats&) const = default;
   };
   // Current borrows the caller's GLES3 context. Keep it current for every call,
