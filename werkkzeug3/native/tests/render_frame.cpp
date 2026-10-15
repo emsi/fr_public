@@ -1,5 +1,6 @@
 // Distributed under the BSD license in werkkzeug3/LICENSE.txt.
 #include "frame_fixture.hpp"
+#include <algorithm>
 #include <iostream>
 namespace {
 using Pixels=std::vector<std::uint8_t>;
@@ -15,6 +16,60 @@ void layers() {
   wz3::FramePlayer player(x.p,x.g);wz3::FrameRenderer renderer(x.p,x.g);auto frame=player.frame(root,0,32,16);const auto pixels=renderer.render(frame);
   pixel(pixels,32,0,0,{255,0,0});pixel(pixels,32,31,15,{255,0,0});pixel(pixels,32,16,8,{127,0,128});
   frame.commands.clear();check(renderer.render(frame)==pixels,"renderer must retain screen contents across frames without draws");
+}
+void released_layer_centers() {
+  for(unsigned width:{64u,128u})for(unsigned size:{3u,4u}) {
+    FrameFixture x;x.p.runtime_graph=true;
+    const auto layer=x.layer(x.material(0xffff0000),size);
+    const auto root=x.add(0x0d,{}, {layer});wz3::FramePlayer player(x.p,x.g);wz3::FrameRenderer renderer(x.p,x.g);
+    auto frame=player.frame(root,0,width,64);
+    // Integer centers on top/left edges belong to the layer; bottom/right
+    // edges do not. Include clipped, reversed, subpixel and empty rectangles.
+    // Size 3 also tests a cropped pool target and the subsequent FXQuad copy.
+    const wz3::FrameRect cases[]={{16.25f,16.25f,31.25f,31.25f},{16,16,31,31},
+      {16.5f,16.5f,31.5f,31.5f},{16.75f,16.75f,31.75f,31.75f},
+      {0,0,float(width),64},{-5,-3,17,19},{31,16,16,31},{16,31,31,16},
+      {31,31,16,16},{16.25f,16.25f,16.75f,16.75f},{16.75f,16.75f,17.25f,17.25f},
+      {16,16,16,31},{16,16,31,16}};
+    for(const auto& r:cases) {
+      for(auto& c:frame.commands)if(auto* q=std::get_if<wz3::FrameQuad>(&c.draw);q && q->released_layer)
+        q->rectangle={r[0]/width,r[1]/64,r[2]/width,r[3]/64};
+      renderer.reset_targets();const auto pixels=renderer.render(frame);
+      for(unsigned y=0;y<64;++y)for(unsigned px=0;px<width;++px) {
+        const bool covered=px>=std::min(r[0],r[2]) && px<std::max(r[0],r[2]) &&
+          y>=std::min(r[1],r[3]) && y<std::max(r[1],r[3]);
+        pixel(pixels,width,px,y,{covered ? 255u : 0u,0,0});
+      }
+    }
+  }
+}
+void released_layer_uv() {
+  FrameFixture x;x.p.runtime_graph=true;const auto layer=x.layer(x.material(0xffff0000),4);
+  const auto root=x.add(0x0d,{}, {layer});
+  wz3::FramePlayer player(x.p,x.g);wz3::FrameRenderer renderer(x.p,x.g);
+  auto frame=player.frame(root,0,64,64);
+  const auto base=std::get<wz3::FrameQuad>(frame.commands.back().draw);frame.commands.clear();frame.surfaces[1]={4,4};
+  // Build a known RG gradient in an offscreen surface. Use compensated FXQuad
+  // coverage to fill texels, then sample it through the original Layer2D UVs.
+  for(unsigned y=0;y<4;++y)for(unsigned px=0;px<4;++px) {
+    auto q=base;q.released_layer=false;q.rectangle={px/4.f,y/4.f,(px+1)/4.f,(y+1)/4.f};
+    q.shader.words[28]=0xff000000|(px*64<<16)|(y*64<<8);frame.commands.push_back({0,{1,4,4},q});
+  }
+  auto q=base;q.shader.words[9]=0;q.shader.words[11]=0x10;q.shader.words[4]=0x101;
+  q.shader.textures[0]=1;q.textures[0]=wz3::FrameTexture{true,1};
+  frame.commands.push_back({0,{0,64,64},q});
+  for(float edge:{16.f,16.25f,16.5f,16.75f})for(bool reversed:{false,true}) {
+    auto& shown=std::get<wz3::FrameQuad>(frame.commands.back().draw);
+    const float end=edge+15;shown.rectangle={edge/64,edge/64,end/64,end/64};
+    if(reversed){std::swap(shown.rectangle[0],shown.rectangle[2]);std::swap(shown.rectangle[1],shown.rectangle[3]);}
+    renderer.reset_targets();const auto pixels=renderer.render(frame);
+    for(unsigned y=0;y<64;++y)for(unsigned px=0;px<64;++px) {
+      const bool covered=px>=edge && px<end && y>=edge && y<end;
+      const auto value=[&](unsigned v){const float uv=reversed ? (end-v)/15 : (v-edge)/15;
+        return unsigned(std::lround(std::clamp(uv*4-.5f,0.f,3.f)*64));};
+      pixel(pixels,64,px,y,{covered ? value(px) : 0u,covered ? value(y) : 0u,0},1);
+    }
+  }
 }
 void targets() {
   FrameFixture x;const auto bitmap=x.add(0x26,{4,4,1});
@@ -156,6 +211,6 @@ void theta(const char* path) {
 }
 }
 int main(int argc,char** argv) {
-  try {layers();targets();release_depth();blur_and_merge();crashzoom_and_merge();scene_opt_in();particle_materials();normalized_effect();if(argc>1)theta(argv[1]);if(argc>2)credits(argv[1],argv[2]);}
+  try {layers();released_layer_centers();released_layer_uv();targets();release_depth();blur_and_merge();crashzoom_and_merge();scene_opt_in();particle_materials();normalized_effect();if(argc>1)theta(argv[1]);if(argc>2)credits(argv[1],argv[2]);}
   catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}
 }

@@ -89,6 +89,8 @@ struct FramePlayer::Impl {
     return {rt+1,width,height};
   }
   void append(std::size_t id,unsigned rt,std::variant<FrameClear,FrameQuad,SceneFrame> draw) {
+    // Released FXQuad writes pixel-space z=1; Layer2D supplies its own depth.
+    if(project.runtime_graph)if(auto* q=std::get_if<FrameQuad>(&draw);q && !q->released_layer)q->depth=1;
     require(result.commands.size()<100000,"frame draw command limit");result.commands.push_back({id,target(rt),std::move(draw)});
   }
   void bind(FrameQuad& quad,unsigned slot,unsigned rt,FrameRect uv={0,0,1,1}) const {
@@ -225,7 +227,7 @@ struct FramePlayer::Impl {
         if(p[10]&0x10)xy=centered(xy);
         if(p[10]&0x20)uv=centered(uv);
         for(const auto& pass:scenes.materials().snapshot(*node.links[0]).passes) {
-          FrameQuad q;q.shader=pass.shader;q.rectangle=xy;q.depth=real(p,9);q.uv.fill(uv);
+          FrameQuad q;q.shader=pass.shader;q.rectangle=xy;q.depth=real(p,9);q.uv.fill(uv);q.released_layer=project.runtime_graph;
           for(unsigned i=0;i<4;++i)if(auto texture=q.shader.textures[i]) {
             const auto bitmap=concrete(*texture);
             if(project.operators[bitmap].command==0x26)q.textures[i]=FrameTexture{true,bitmap_target(bitmap)};
@@ -278,7 +280,7 @@ void write_frame(std::ostream& out,const DemoFrame& f) {
       for(unsigned i=0;i<4;++i) {if(i)out<<',';if(q.textures[i])out<<"{\"surface\":"<<(q.textures[i]->surface ? "true" : "false")<<",\"id\":"<<q.textures[i]->id<<'}';else out<<"null";}
       out<<"],\"uv\":[";
       for(unsigned i=0;i<4;++i) {out<<(i ? "," : "")<<'[';for(unsigned j=0;j<4;++j)out<<(j ? "," : "")<<q.uv[i][j];out<<']';}
-      out<<"],\"depth\":"<<q.depth<<",\"material\":";Material m;m.passes.push_back({q.shader});write_material(out,m);
+      out<<"],\"depth\":"<<q.depth<<",\"released_layer\":"<<(q.released_layer ? "true" : "false")<<",\"material\":";Material m;m.passes.push_back({q.shader});write_material(out,m);
     }
     out<<'}';
   }

@@ -20,6 +20,12 @@ void order_and_scopes() {
   const auto& copy=std::get<wz3::FrameQuad>(frame.commands[1].draw);near(copy.uv[0][2],64/1024.0f,"cropped full-size UV width");near(copy.uv[0][3],48/512.0f,"cropped full-size UV height");
   check(frame.commands[0].target.width==64 && frame.commands[0].target.height==48,"full target viewport crop");
   player.frame(root,32768,64,48);near(wz3::as_float(qa.shader.words[24]),.25f,"previous frame shader snapshot changed");
+  check(!qa.released_layer && !copy.released_layer,"editor layer/copy sample-center convention");
+  x.p.runtime_graph=true;wz3::FramePlayer runtime(x.p,x.g);const auto released=runtime.frame(root,0,64,48);
+  const auto& layer=std::get<wz3::FrameQuad>(released.commands[0].draw);
+  const auto& fx=std::get<wz3::FrameQuad>(released.commands[1].draw);
+  check(layer.released_layer && !fx.released_layer,"released Layer2D and FXQuad need distinct pixel conventions");
+  check(layer.depth==0 && fx.depth==1,"released layer/copy depth convention");
 }
 void fanout_and_blur() {
   FrameFixture x;const auto layer=x.layer(x.material(0xff202020));const auto select=x.add(0xea,{}, {layer});

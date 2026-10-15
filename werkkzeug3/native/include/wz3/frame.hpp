@@ -15,6 +15,7 @@ struct FrameQuad {
   FrameRect rectangle{0,0,1,1};
   std::array<FrameRect,4> uv{{{0,0,1,1},{0,0,1,1},{0,0,1,1},{0,0,1,1}}};
   float depth=1.0f/4096;
+  bool released_layer{}; // Normalized Layer2D uses D3D9 integer pixel centers.
 };
 struct FrameCommand {
   std::size_t operator_id{};

@@ -19,13 +19,24 @@ constexpr const char* quad_vertex=R"(#version 300 es
   uniform mat3 uv_transform[4];
   uniform vec4 flip_texture;
   uniform float depth;
+  uniform vec2 layer_viewport;
   out vec2 material_uv[4];
   out vec4 material_vertex_color;
   void main() {
     vec2 p=vec2(float((gl_VertexID>>1)&1),float(gl_VertexID&1));
     vec2 xy=mix(rectangle.xy,rectangle.zw,p);
-    // The source's -half-pixel D3D projection compensates D3D9 pixel centers.
-    // GLES centers are already at +0.5; normalized edges need no extra shift.
+    if(layer_viewport.x>0.0) {
+      // D3D9 normalized Layer2D covers integer centers with top/left edges
+      // inclusive. Snap coverage to pixel boundaries, avoiding GLES's opposite
+      // horizontal-edge tie when a half-pixel shift lands on a sample center.
+      vec2 pixel=ceil(xy*layer_viewport);
+      xy=pixel/layer_viewport;
+      // Preserve the original interpolation at integer sample centers. Moving
+      // coverage alone would stretch the texture and alter its derivatives.
+      p=(pixel-0.5-rectangle.xy*layer_viewport)/((rectangle.zw-rectangle.xy)*layer_viewport);
+    }
+    // FXQuad already compensates by -0.5 pixels in the original projection;
+    // that cancels the D3D-to-GLES sample-center adjustment.
     gl_Position=vec4(xy.x*2.0-1.0,1.0-xy.y*2.0,depth*2.0-1.0,1.0);
     for(int i=0;i<4;++i) {
       material_uv[i]=(uv_transform[i]*vec3(mix(uv_rect[i].xy,uv_rect[i].zw,p),1.0)).xy;
@@ -234,7 +245,10 @@ struct FrameRenderer::Impl {
     if(!ok) {char log[4096]{};glGetProgramInfoLog(p,sizeof(log),nullptr,log);glDeleteProgram(p);throw std::runtime_error(std::string("frame shader link failed: ")+log);}
     programs.emplace(key,p);++stats.program_compilations;return p;
   }
-  void quad(const FrameQuad& q,std::size_t destination,const SceneEffectDraw* effect=nullptr,const SceneMatrix* projection=nullptr,const MeshDraw* mesh=nullptr,const LightDraw* light=nullptr,const SceneFog* fog=nullptr) {
+  void quad(const FrameQuad& q,const FrameTarget& target,const SceneEffectDraw* effect=nullptr,const SceneMatrix* projection=nullptr,const MeshDraw* mesh=nullptr,const LightDraw* light=nullptr,const SceneFog* fog=nullptr) {
+    const auto destination=target.surface;
+    if(q.released_layer && !effect && !mesh &&
+       (q.rectangle[0]==q.rectangle[2] || q.rectangle[1]==q.rectangle[3]))return;
     const auto& s=q.shader;const auto flags=s.words[0];
     require(!(flags&(light ? 0xcc0018u : 0xfc0018u)),"draw shadow state or depth bias is not ported");
     require(!(flags&0x700000) || (light && (flags&0x700000)==0x300000),"unsupported stencil material operation");
@@ -264,6 +278,7 @@ struct FrameRenderer::Impl {
       glBindSampler(i,sampler);glUniform1i(glGetUniformLocation(p,("material_tex"+std::to_string(i)).c_str()),GLint(i));
     }
     glUniform4fv(glGetUniformLocation(p,"rectangle"),1,q.rectangle.data());glUniform1f(glGetUniformLocation(p,"depth"),q.depth);
+    glUniform2f(glGetUniformLocation(p,"layer_viewport"),q.released_layer ? target.width : 0,q.released_layer ? target.height : 0);
     glUniform4fv(glGetUniformLocation(p,"uv_rect[0]"),4,rects.data());glUniformMatrix3fv(glGetUniformLocation(p,"uv_transform[0]"),4,GL_FALSE,matrices.data());
     glUniform4fv(glGetUniformLocation(p,"flip_texture"),1,flip.data());glUniform4fv(glGetUniformLocation(p,"material_colors[0]"),4,colors.data());
     if(light) {
@@ -324,7 +339,7 @@ struct FrameRenderer::Impl {
     if(draw.vertices.empty())return;
     const auto matrix=draw.normalized ? print_normalized_projection(target.width,target.height) : projection;
     std::optional<SceneFog> fog;if(draw.shader.words[0]&0x40){require(!draw.normalized,"normalized text fog is not ported");fog=scene_fog(camera,scene_identity());}
-    quad(resolve_material(draw.shader,&draw),target.surface,&draw,&matrix,nullptr,nullptr,fog ? &*fog : nullptr);
+    quad(resolve_material(draw.shader,&draw),target,&draw,&matrix,nullptr,nullptr,fog ? &*fog : nullptr);
   }
   void effects(const SceneFrame& scene,const FrameTarget& target) {
     const auto projection=scene_raster_projection(scene.camera,target.width,target.height);
@@ -391,7 +406,7 @@ struct FrameRenderer::Impl {
     const auto draws=scene_draw_jobs(scene,target.width,target.height);const auto projection=scene_raster_projection(scene.camera,target.width,target.height);
     const auto restore_scissor=[&]{glScissor(0,surfaces.at(target.surface).height-target.height,target.width,target.height);};
     const auto insert=[&](unsigned usage) {
-      restore_scissor();FrameQuad q;auto& w=q.shader.words;w[0]=0x30002|(usage==0 ? 0x3000 : 0x8000);w[9]=0x10;w[28]=0x00ffffff;w[23]=8;quad(q,target.surface);
+      restore_scissor();FrameQuad q;auto& w=q.shader.words;w[0]=0x30002|(usage==0 ? 0x3000 : 0x8000);w[9]=0x10;w[28]=0x00ffffff;w[23]=8;quad(q,target);
     };
     const auto scissor=[&](std::optional<std::size_t> light) {
       restore_scissor();if(light){const auto& r=draws.lights[*light].rectangle;const int left=int(target.width*(1+r[0])*.5f),right=int(target.width*(1+r[2])*.5f),top=int(target.height*(1-r[3])*.5f),bottom=int(target.height*(1-r[1])*.5f);glScissor(left,surfaces.at(target.surface).height-bottom,right-left,bottom-top);}
@@ -414,7 +429,7 @@ struct FrameRenderer::Impl {
           draw.color=light_color(pass.shader,l);draw.specular=light_specular_parameters(as_float(pass.shader.words[32]));setup=draw;
         }
         std::optional<SceneFog> fog;if(pass.shader.words[0]&0x40)fog=scene_fog(scene.camera,instance.world);
-        quad(resolve_material(pass.shader),target.surface,nullptr,&matrix,&mesh,setup ? &*setup : nullptr,fog ? &*fog : nullptr);
+        quad(resolve_material(pass.shader),target,nullptr,&matrix,&mesh,setup ? &*setup : nullptr,fog ? &*fog : nullptr);
       }catch(const std::exception& e) {throw std::runtime_error("mesh material "+(material ? std::to_string(*material) : "default")+": "+e.what());}
     };
     if(project.runtime_graph) {
@@ -499,7 +514,7 @@ void FrameRenderer::draw(const DemoFrame& frame,bool diagnostic) {
       glScissor(0,dst.height-c.target.height,c.target.width,c.target.height);
     };
     try {
-      if(const auto* q=std::get_if<FrameQuad>(&c.draw))s.quad(*q,c.target.surface);
+      if(const auto* q=std::get_if<FrameQuad>(&c.draw))s.quad(*q,c.target);
       else if(const auto* cl=std::get_if<FrameClear>(&c.draw))clear_target(*cl);
       else {const auto& scene=std::get<SceneFrame>(c.draw);clear_target({scene.viewport_flags&3,scene.background});if(diagnostic) {if(!scene.instances.empty())draw_scene_geometry(scene,c.target.width,c.target.height);s.effects(scene,c.target);}else s.scene_materials(scene,c.target);}
       require(glGetError()==GL_NO_ERROR,"frame draw produced an OpenGL error");

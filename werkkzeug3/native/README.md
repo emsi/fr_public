@@ -9,8 +9,8 @@ The player renders the complete timeline with saved materials, lighting, shadows
 fog, particles, credits and image effects. It supports both the archived editor
 project and the recovered final 1.01 release graph. The release runs through its
 verified beat-592 endpoint: **16,083 consecutive frames at 1024×768**, advancing
-in 16 ms steps. Its cached fonts need no host font substitution. Five captures
-match byte for byte between offline rendering and callback-paced playback.
+in 16 ms steps. Its cached fonts need no host font substitution. Six captures
+and the endpoint match byte for byte between offline rendering and callback-paced playback.
 The editor project has different content and a beat-609 endpoint. Audible
 synchronization on a physical sound device and whole-demo original-output
 fidelity remain unverified; see the release comparison below.
@@ -1212,6 +1212,60 @@ use RGBA8 and native mipmaps rather than all legacy format rules. Saved-material
 uploads are retained across frames; the diagnostic checker still rebuilds them
 for each viewport draw.
 Full-demo visual fidelity and physical audio latency measurement remain open.
+
+### Released overlay coordinates
+
+The final 1.01 player uses different projections for Layer2D and FXQuad.
+`tools/release_overlay_oracle.py` executes the original Layer2D camera setup at
+`0x81e15b`, quad writers at `0x81c9a6`/`0x81cafd` and graphics projection code.
+All **104 cases** verify vertex positions, UVs, projection mode and depth at four
+viewport sizes, including integer, fractional and reversed rectangles. Hooks
+only provide a vertex buffer and skip material/driver submission; this audit
+does not execute GPU rasterization or the application entry point.
+
+Layer2D maps normalized rectangle edges directly to D3D integer pixel centers.
+FXQuad uses pixel coordinates with its own half-pixel compensation and depth
+one. The native released-graph path now preserves that distinction. For Layer2D,
+an edge at screen coordinate `x` maps to GLES pixel boundary `ceil(x)`, covering
+the integer centers specified by the
+[D3D9 top-left fill rule](https://learn.microsoft.com/en-us/windows/win32/direct3d9/rasterization-rules).
+UV interpolation is adjusted to evaluate the unchanged original rectangle at
+those centers, preserving texture scale and derivatives. This avoids the exposed
+top row caused by applying only a half-pixel shift at integer boundaries.
+Zero-area layers are skipped. Archived editor projection behavior is unchanged.
+
+```sh
+uv run --no-project --with unicorn python werkkzeug3/native/tools/release_overlay_oracle.py \
+  build/reference/theta/extracted/restored-code-image.bin \
+  --output build/reference/theta/overlay-projection/oracle.json
+```
+
+The GPU regression checks every pixel of 52 rectangle cases, including clipped,
+reversed, subpixel and empty layers on screen and cropped pool targets. Eight
+additional gradient cases check bilinear UV sampling. The integer-edge test
+fails with the simple half-pixel shift. All 43 Release tests pass, including 16
+graphics tests; frame execution and composition also pass Clang ASan/UBSan,
+and composition passes llvmpipe.
+
+A complete Radeon render produces all 16,083 frames and 148 captures in 25.62
+seconds. The first frame is entirely black; every capture has black rows 0–76
+and 692–767, as required by the saved mask rectangles at 1024×768. Compared with
+the preceding camera correction, 144 images change: 121 only gain the previously
+masked picture row 691, and 23 also change inside the fixed 1024×614 comparison
+crop. The saved lower mask starts at `0.899993896484375 * 768`, so its first
+covered integer pixel is row 692. These coverage checks do not establish exact
+subpixel quantization on every original D3D9 GPU or whole-demo visual fidelity.
+Using the same video search windows and recorded native sample positions, 19
+captures have lower RGB MSE, four have higher MSE and 125 are unchanged. The
+median changes from 312.77 to 311.40. This remains a diagnostic comparison with
+a compressed third-party recording, not an acceptance threshold.
+
+A full SDL offscreen/dummy-audio run prepares in 23.60 seconds and completes
+playback in 255.63 wall seconds: all 16,083 simulation frames, 15,277 presentations
+and 11,084 audio callbacks. No new cached assets, surfaces, uploads or programs
+are created during playback. Captures at 0, 36, 120, 195, 220 and 250 seconds,
+plus the endpoint, match the offline run byte for byte. Physical audio output
+and audible synchronization remain unverified.
 
 ## Release reference audit
 
