@@ -1,5 +1,5 @@
 // Distributed under the BSD license in werkkzeug3/LICENSE.txt.
-// Bitmap_Bricks/Bitmap_Bulge from ../genbitmap.cpp.
+// Bitmap_Bricks/Bitmap_Bulge and editor Bitmap_Cell from ../genbitmap.cpp.
 #include "wz3/texture.hpp"
 #include <algorithm>
 #include <bit>
@@ -78,6 +78,73 @@ void bricks_bitmap(Texture& texture,std::span<const std::uint32_t> p) {
       if(fy<gap_y)value=std::min(value,edge(fy,gap_y,pixel_y));
       if(16384-fy<gap_y)value=std::min(value,edge(16384-fy,gap_y,pixel_y));
       texture.pixels[std::size_t(y)*texture.width+x]=fade64(mortar,row[bx].color,value*4);
+    }
+  }
+}
+void cell_bitmap(Texture& texture,std::span<const std::uint32_t> p) {
+  const Nearest rounding;validate(texture);
+  require(texture.width>=16 && texture.height>=16,"editor Cell requires complete 16x16 tiles");
+  require(p.size()==13 && p[5]>=1 && p[5]<=256,"invalid Cell parameter layout/count");
+  const auto real=[&](unsigned i){const auto v=as_float(p[i]);require(std::isfinite(v),"non-finite Cell parameter");return v;};
+  const auto amplitude=real(7),gamma=real(8);const unsigned mode=p[9];
+  const int percent=std::bit_cast<std::int32_t>(p[11]);Random random(p[6]);
+  struct Cell {int x,y,color;};std::array<Cell,256> cells;
+  int count=p[5];
+  for(int i=0;i<count;++i)cells[i]={int(random.next()%16384),int(random.next()%16384),int(random.next()%16384)};
+  const int distance=integer(std::nearbyint(double(real(10)*16384.f)));
+  const auto minimum=std::bit_cast<std::int32_t>(std::uint32_t(distance)*std::uint32_t(distance));
+  for(int i=1;i<count;) {
+    if((mode&2) && int(random.next()%255)<percent)cells[i].color=65535;
+    const int px=(cells[i].x&16383)-8192,py=(cells[i].y&16383)-8192;bool cut=false;
+    for(int j=0;j<i && !cut;++j) {
+      const int dx=((cells[j].x-px)&16383)-8192,dy=((cells[j].y-py)&16383)-8192;
+      cut=dx*dx+dy*dy<minimum;
+    }
+    if(cut)cells[i]=cells[--count];else ++i;
+  }
+  const float aspect=std::pow(2.,double(real(12)));
+  require(std::isfinite(aspect) && aspect>0,"invalid Cell aspect ratio");
+  const bool flip=aspect<1;
+  const int aspect_fixed=integer(flip ? aspect*aspect*65536 : 65536/(aspect*aspect));
+  const float scale=flip ? 1.f/(16384.f*aspect) : aspect/16384.f;
+  if(flip)for(int i=0;i<count;++i)std::swap(cells[i].x,cells[i].y);
+  const auto color0=color64(p[3]),color1=color64(p[2]),background=color64(p[4]);
+  const int shift_x=14-std::countr_zero(texture.width),shift_y=14-std::countr_zero(texture.height);
+  const auto scaled=[&](int x){return int((std::int64_t(x)*aspect_fixed)>>16);};
+  std::array<int,256> lower;
+  for(unsigned by=0;by<texture.height;by+=16)for(unsigned bx=0;bx<texture.width;bx+=16) {
+    int x0=bx<<shift_x,x1=(bx+15)<<shift_x,y0=by<<shift_y,y1=(by+15)<<shift_y;
+    if(flip){std::swap(x0,y0);std::swap(x1,y1);}
+    for(int i=0;i<count;++i) {
+      int dx=((cells[i].x-x0)&16383)-8192,dy=((cells[i].x-x1)&16383)-8192;
+      if((dx^dy)<=0)lower[i]=0;
+      else {dx=std::min(std::abs(dx),std::abs(dy));lower[i]=scaled(dx*dx);}
+      dx=((cells[i].y-y0)&16383)-8192;dy=((cells[i].y-y1)&16383)-8192;
+      if((dx^dy)>0){dy=std::min(std::abs(dx),std::abs(dy));lower[i]+=dy*dy;}
+    }
+    // Sorting persists between tiles. Equal-distance ties preserve this order
+    // and can select a different cell color if replaced with an unstable sort.
+    for(int i=1;i<count;++i) {
+      const auto cell=cells[i];const int bound=lower[i];int j=i;
+      while(j && lower[j-1]>bound){cells[j]=cells[j-1];lower[j]=lower[j-1];--j;}
+      cells[j]=cell;lower[j]=bound;
+    }
+    for(unsigned ty=0;ty<16;++ty)for(unsigned tx=0;tx<16;++tx) {
+      int x=(bx+tx)<<shift_x,y=(by+ty)<<shift_y;if(flip)std::swap(x,y);
+      int best=0x40000000,second=0x40000000,nearest=-1;
+      for(int i=0;i<count && second>lower[i];++i) {
+        const int dx=((cells[i].x-x)&16383)-8192,dy=((cells[i].y-y)&16383)-8192,dist=scaled(dx*dx)+dy*dy;
+        if(dist<best){second=best;best=dist;nearest=i;}
+        else if(dist>best && dist<second)second=dist;
+      }
+      require(nearest>=0,"Cell nearest-point search failed");
+      float value=std::sqrt(double(best))*scale;
+      if(mode&1){const float other=std::sqrt(double(second))*scale;value=value+other>.00001f ? (other-value)/(other+value) : 0;}
+      int fade=std::clamp(integer(std::pow(double(value*amplitude),double(gamma))*32768),0,32767)*2;
+      if(mode&4)fade=65536-fade;
+      auto color=color0;
+      if(mode&2)color=cells[nearest].color==65535 ? background : fade64(color0,color1,cells[nearest].color*4);
+      texture.pixels[std::size_t(by+ty)*texture.width+bx+tx]=fade64(color,(mode&2) ? background : color1,fade);
     }
   }
 }

@@ -8,9 +8,14 @@
 #endif
 namespace original {
 using sInt=int;using sF32=float;using sU16=std::uint16_t;using sU32=std::uint32_t;using sU64=std::uint64_t;
+using sBool=bool;constexpr bool sFALSE=false,sTRUE=true;
 sU32 sRandomSeed;
 template<class T>T sMin(T a,T b){return std::min(a,b);}template<class T>T sMax(T a,T b){return std::max(a,b);}
 double sFPow(double a,double b){return std::pow(a,b);}double sFSqrt(double a){return std::sqrt(a);}
+template<class T>void sSwap(T& a,T& b){std::swap(a,b);}
+int sAbs(int v){return std::abs(v);}int sGetPower2(unsigned v){return std::countr_zero(v);}
+int sFtol(float v){return int(std::nearbyint(v));}int sRange7fff(int v){return std::clamp(v,0,32767);}
+int sMulShift(int a,int b){return std::bit_cast<std::int32_t>(std::uint32_t((std::int64_t(a)*b)>>16));}
 sU64 pack(wz3::Pixel p){std::swap(p[0],p[2]);return std::bit_cast<sU64>(p);}
 wz3::Pixel unpack(sU64 p){auto result=std::bit_cast<wz3::Pixel>(p);std::swap(result[0],result[2]);return result;}
 struct GenBitmap {
@@ -40,13 +45,19 @@ void Fade64(sU64& d,sU64 a,sU64 b,int fade) {
 #endif
 }
 #define sMOBILE 1
+#define sINTRO 0
+#define NOTEXTURES0()
 #define NOTEXTURES1(a)
 #define __stdcall
 #define sVERIFY(x) check(x,"invalid original pattern")
+#define SCRIPTVERIFY(x) sVERIFY(x)
 #include "bitmap_patterns_oracle.inc"
+#undef SCRIPTVERIFY
 #undef sVERIFY
 #undef __stdcall
 #undef NOTEXTURES1
+#undef NOTEXTURES0
+#undef sINTRO
 #undef sMOBILE
 std::vector<wz3::Pixel> bricks(std::span<const std::uint32_t> p) {
   const auto r=[&](unsigned i){return wz3::as_float(p[i]);};
@@ -54,12 +65,41 @@ std::vector<wz3::Pixel> bricks(std::span<const std::uint32_t> p) {
   return result->pixels();
 }
 std::vector<wz3::Pixel> bulge(const wz3::Texture& source,float warp) {GenBitmap bitmap(source);Bitmap_Bulge(&bitmap,warp);return bitmap.pixels();}
+std::vector<wz3::Pixel> cell(std::span<const std::uint32_t> p) {
+  const auto r=[&](unsigned i){return wz3::as_float(p[i]);};
+  std::unique_ptr<GenBitmap> result(Bitmap_Cell(p[0],p[1],p[2],p[3],p[4],p[5],p[6],r(7),r(8),p[9],r(10),p[11],r(12)));
+  return result->pixels();
+}
 }
 namespace {
 template<class F> void rejects(F action){bool rejected=false;try{action();}catch(const std::runtime_error&){rejected=true;}check(rejected,"invalid bitmap pattern accepted");}
 void compare_bricks(const std::vector<std::uint32_t>& p) {
   FrameFixture fixture;const auto id=fixture.add(0x3d,p);const auto actual=wz3::evaluate_texture(fixture.p,fixture.g,id);
   check(actual->pixels==original::bricks(p),"Bricks differs from archived handler");
+}
+void compare_cell(const std::vector<std::uint32_t>& p) {
+  FrameFixture fixture;const auto id=fixture.add(0x32,p);const auto actual=wz3::evaluate_texture(fixture.p,fixture.g,id);
+  const auto expected=original::cell(p);
+  if(actual->pixels!=expected) {
+    const auto at=std::mismatch(actual->pixels.begin(),actual->pixels.end(),expected.begin()).first-actual->pixels.begin();
+    throw std::runtime_error("Cell mode "+std::to_string(p[9])+" count "+std::to_string(p[5])+" aspect "+std::to_string(wz3::as_float(p[12]))+" differs at pixel "+std::to_string(at));
+  }
+}
+void cell_cases() {
+  std::vector<std::uint32_t> p={5,4,0x23687a9b,0xfab29467,0x95766435,32,0,f(.9f),f(.7f),0,0,37,0};unsigned cases=0;
+  for(unsigned mode=0;mode<8;++mode)for(float aspect:{-3.f,0.f,3.f})for(float distance:{0.f,.1f,1.f})for(unsigned count:{1u,2u,32u,256u}) {
+    p[5]=count;p[6]=cases%2 ? 0xdeadbeefu : 47;p[9]=mode;p[10]=f(distance);p[12]=f(aspect);
+    p[7]=f(cases%3==0 ? 0.f : .9f);p[8]=f(cases%3==0 ? 0.f : .7f);compare_cell(p);++cases;
+  }
+  FrameFixture fixture;const auto id=fixture.add(0x32,p);
+  auto baseline=wz3::evaluate_texture(fixture.p,fixture.g,id);
+  const auto saved=std::fegetround();std::fesetround(FE_DOWNWARD);const auto actual=wz3::evaluate_texture(fixture.p,fixture.g,id);
+  check(std::fegetround()==FE_DOWNWARD,"Cell failed to restore rounding");std::fesetround(saved);
+  check(baseline->pixels==actual->pixels,"Cell depends on caller rounding");
+  for(unsigned count:{0u,257u}) {fixture.p.operators[id].parameters[5]=count;rejects([&]{wz3::evaluate_texture(fixture.p,fixture.g,id);});}
+  fixture.p.operators[id].parameters=p;fixture.p.operators[id].parameters[0]=3;
+  rejects([&]{wz3::evaluate_texture(fixture.p,fixture.g,id);});
+  std::cout<<cases<<" Cell cases matched archived tiled kernel: point pruning, aspect, colors, nearest/second distances and ties\n";
 }
 void synthetic() {
   std::vector<std::uint32_t> p={6,5,0x23687a9b,0xfab29467,0x95766435,f(.2f),f(.4f),7,5,0,80,0,f(.25f),f(1)};unsigned count=0;
@@ -88,21 +128,23 @@ void synthetic() {
   std::cout<<"Bulge coordinates, wrapped bilinear sampling, metadata and invalid inputs checked\n";
 }
 void debris(const char* path) {
-  const auto p=wz3::read_project(path);const auto g=wz3::connect(p);unsigned bricks=0,bulges=0;
+  const auto p=wz3::read_project(path);const auto g=wz3::connect(p);unsigned bricks=0,bulges=0,cells=0;
   wz3::Texture source;source.width=32;source.height=16;source.pixels.resize(512);
   for(unsigned i=0;i<512;++i)source.pixels[i]={std::uint16_t(i*53%32768),std::uint16_t(i*83%32768),std::uint16_t(i*131%32768),std::uint16_t(i*197)};
   for(std::size_t id=0;id<p.operators.size();++id)if(g.nodes[id].reachable) {
     const auto& op=p.operators[id];
     if(op.command==0x3d){compare_bricks(op.parameters);++bricks;}
+    else if(op.command==0x32){compare_cell(op.parameters);++cells;}
     else if(op.command==0x3e) {
       auto result=source;const auto warp=wz3::as_float(op.parameters[0]);wz3::bulge_bitmap(source,result,warp);
       check(result.pixels==original::bulge(source,warp),"saved Bulge differs");
       ++bulges;
     }
   }
-  check(bricks==36 && bulges==1,"Debris pattern recipe counts changed");
+  check(bricks==36 && bulges==1 && cells==8,"Debris pattern recipe counts changed");
   std::cout<<bricks<<" full-resolution Debris Bricks images matched archived handler\n";
+  std::cout<<cells<<" full-resolution Debris Cell images matched archived editor kernel\n";
   std::cout<<bulges<<" saved Bulge parameter set matched with a controlled input; its real Text dependency is not yet ported\n";
 }
 }
-int main(int argc,char** argv){try{synthetic();if(argc>1)debris(argv[1]);}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(int argc,char** argv){try{synthetic();cell_cases();if(argc>1)debris(argv[1]);}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

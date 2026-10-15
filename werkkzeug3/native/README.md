@@ -36,8 +36,9 @@ still names `debris.v2m`.
 main viewport contains 76 mesh instances, two lights and 26 ChainLine cables.
 Continuous CPU preparation in 16 ms steps reaches 9,808 ms (beat 32.0394), then
 stops at the unported Glare effect, operator 10464. Full rendering now enters
-the Material 2.0 pipeline, then stops at unported Cell texture operator 42893
-in the dependencies of material 12050 in the first viewport.
+the Material 2.0 pipeline, then stops at uncached text in the dependencies of
+material 38640 in the first viewport. Without `--font-file` it requests the saved
+Arial family; with an explicit font it reaches the unported paragraph path.
 Remaining MINMESH/scene operators and Water/Glare/Color Correction effects
 also remain to be ported.
 The player synthesizes its V2 soundtrack into stereo PCM before playback, using
@@ -228,8 +229,15 @@ Bulge preserves the spherical coordinate warp and wrapped bilinear sampling.
 Its saved parameter set is checked with a controlled input: the complete saved
 graph still depends on unported uncached text paragraphs, even with an explicit
 font file. Both kernels restore the caller's floating-point environment.
-The opening scene's material dependencies now evaluate 80 of 107 distinct
-texture recipes; Cell and text dependencies remain.
+Cell implements the archived editor's 16x16 tiled nearest-point search, seeded
+point pruning, aspect ratio, stable ordering, distance/gap modes and colors.
+All eight reachable Debris Cell images match that kernel pixel for pixel at
+512x512; another 288 cases cover point counts, minimum distance, aspect and mode
+combinations. The compact intro's different search loop is not selected for
+saved editor documents. Images smaller than a complete tile are rejected because
+the editor kernel would access outside their buffers.
+The opening scene's material dependencies now evaluate 99 of 107 distinct
+texture recipes; the other eight depend on uncached text.
 
 The native `wz3-v2m` tool reads compact music modules, reconstructs their MIDI
 event stream/sample positions and optionally renders stereo float WAV without
