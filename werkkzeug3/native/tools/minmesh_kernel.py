@@ -12,7 +12,7 @@ from particles_oracle import extract
 source = Path(sys.argv[1]).read_text(encoding="cp1252")
 names = ["GenMinVector::UnitSafe", "GenMinVector::Cross", "GenMinVert::IsSame"]
 names += ["GenMinMesh::" + x for x in """HashVector AddCluster MakeGrid Transform
-CalcNormals Add MergeClusters Invert CalcBBox SelectAll CalcMergeVerts""".split()]
+CalcNormals Add MergeClusters Invert CalcBBox SelectAll CalcMergeVerts OppositeEdge EdgeFlip""".split()]
 names += ["SiftDownEdge", "HeapSortEdges", "ConnectFaces", "GenMinMesh::CalcAdjacencyCore", "GenMinMesh::CalcAdjacency", "SelectLogic"]
 names += ["MinMesh_" + x for x in """Grid Cube Sphere MatLink MatLinkId SelectAll
 SelectCube SelectLogic DeleteFaces Invert TransformEx ExtrudeNormal Bend2

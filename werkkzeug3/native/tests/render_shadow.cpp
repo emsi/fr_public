@@ -2,6 +2,7 @@
 #include "frame_fixture.hpp"
 #include "wz3/scene_draw.hpp"
 #include "minmesh_kernel.hpp"
+#include "minmesh_font.hpp"
 #include "bone_fixture.hpp"
 #include <iostream>
 namespace {
@@ -87,6 +88,46 @@ void coplanar_cap() {
     const auto pixels=render(renderer,s);const int expected=z<=2.5f ? 32 : 255;
     check(std::abs(int(pixels[(64*128+64)*4])-expected)<=1,"shadow cap must fail depth at equality (archived D3DCMP_LESS)");
   }
+}
+void font_hole() {
+  namespace mm=wz3::legacy::minimal;
+  mm::Font3DContour outer,inner;
+  outer.start={-.8f,-.8f,0};outer.segments={{false,{}, {-.8f,.8f,0}},{false,{}, {.8f,.8f,0}},{false,{}, {.8f,-.8f,0}},{false,{},outer.start}};
+  inner.start={-.4f,-.4f,0};inner.segments={{false,{}, {.4f,-.4f,0}},{false,{}, {.4f,.4f,0}},{false,{}, {-.4f,.4f,0}},{false,{},inner.start}};
+  const std::array glyphs{mm::Font3DGlyph{outer,inner}};auto core=mm::font3d_paths(glyphs,1,1,.05f);
+  core->materials=std::make_shared<mm::MaterialArena>();auto& binding=(*core->materials)[0];binding.binding=0;
+  core->Clusters[1].Mtrl=&binding;auto mesh=std::make_shared<wz3::Mesh>(mm::export_mesh(core));
+  FrameFixture fixture;auto s=scene(fixture);s.instances[0].mesh=mesh;s.instances[0].world[14]=2.5f;
+  // Four analytic boxes describe the extruded ring independently of the GLU
+  // triangle topology. Keep the caster depth pass: z-pass omits finite caps
+  // and relies on the ordinary surface hiding the caster's own projection.
+  s.lights[0].position={-1,1,0};
+  auto& light=s.materials[1].passes[1].shader.words;light[0]=0x300280;light[1]=light[2]=0;light[9]=0x10;light[28]=0xffffffff;light[23]=8;
+  const std::array<wz3::Bounds,4> bars{{{{-.8f,-.8f,2.5f},{-.4f,.8f,3.5f}},{{.4f,-.8f,2.5f},{.8f,.8f,3.5f}},
+    {{-.4f,-.8f,2.5f},{.4f,-.4f,3.5f}},{{-.4f,.4f,2.5f},{.4f,.8f,3.5f}}}};
+  wz3::FrameRenderer renderer(fixture.p,fixture.g);bool zpass=false,zfail=false;unsigned holes=0;
+  for(bool inside:{false,true}) {
+    if(inside){s.camera.world[12]=1;s.camera.world[14]=4.5f;}
+    for(const auto& job:wz3::scene_draw_jobs(s,128,128).jobs)if(((job.sort_key>>16)&15)==3){zpass|=!job.shadow_zfail;zfail|=job.shadow_zfail;}
+    const auto pixels=render(renderer,s);unsigned dark=0,clear=0,hole=0;
+    for(unsigned y=2;y<126;++y)for(unsigned x=2;x<126;++x) {
+      const float z=6-s.camera.world[14];const wz3::Vec3 p={s.camera.world[12]+(2*(x+.5f)/128-1)*z+1.f/128,(1-2*(y+.5f)/128)*z-1.f/128,6};
+      if(hits({s.camera.world[12],s.camera.world[13],s.camera.world[14]},p,{{-.82f,-.82f,2.48f},{.82f,.82f,3.52f}}))continue;
+      bool inner_hit=false,outer_hit=false;
+      for(auto box:bars) {
+        auto small=box,large=box;for(unsigned c=0;c<3;++c){small.min[c]+=.02f;small.max[c]-=.02f;large.min[c]-=.02f;large.max[c]+=.02f;}
+        inner_hit|=hits(s.lights[0].position,p,small);outer_hit|=hits(s.lights[0].position,p,large);
+      }
+      if(inner_hit!=outer_hit)continue;
+      const auto at=(y*128+x)*4;for(unsigned c=0;c<3;++c)if(std::abs(int(pixels[at+c])-(inner_hit ? 32 : 255))>2)
+        throw std::runtime_error("Font3D shadow differs from analytic extruded ring: camera="+std::to_string(inside)+" pixel="+std::to_string(x)+","+std::to_string(y)+" expected="+std::to_string(inner_hit ? 32 : 255)+" actual="+std::to_string(pixels[at+c]));
+      dark+=inner_hit;clear+=!inner_hit;hole+=!inner_hit && hits(s.lights[0].position,p,{{-.78f,-.78f,2.52f},{.78f,.78f,3.48f}});
+    }
+    check(dark>30 && clear>100,"Font3D shadow test lacks ring/receiver coverage");holes+=hole;
+    check(render(renderer,s)==pixels,"Font3D shadow changed on repeat");
+  }
+  check(zpass && zfail && holes>50,"Font3D shadow must exercise both stencil algorithms and a lit hole");
+  std::cout<<"Font3D extruded hole shadows match analytic rays with z-pass and z-fail\n";
 }
 void animated() {
   FrameFixture fixture;auto s=scene(fixture);
@@ -189,4 +230,4 @@ void theta(const char* path) {
   }
 }
 }
-int main(int argc,char** argv){try{controlled();coplanar_cap();animated();instance_shadows();weighted();if(argc>1)theta(argv[1]);}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(int argc,char** argv){try{controlled();coplanar_cap();font_hole();animated();instance_shadows();weighted();if(argc>1)theta(argv[1]);}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

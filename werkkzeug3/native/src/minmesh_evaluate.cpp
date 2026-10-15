@@ -1,5 +1,6 @@
 // Distributed under the BSD license in werkkzeug3/LICENSE.txt.
 #include "minmesh_kernel.hpp"
+#include "minmesh_font.hpp"
 #include "wz3/texture.hpp"
 #include "wz3/spline3d.hpp"
 #include <bit>
@@ -109,6 +110,10 @@ public:
       case 0x104:
         parameters(op,2);require(node.inputs.empty(),"MINMESH Sphere has inputs");
         mesh.reset(MinMesh_Sphere(integer(op,0,256,3),integer(op,1,256,1)));break;
+      case 0x133:
+        parameters(op,3);require(node.inputs.empty() && op.strings.size()==2,"invalid Font3D layout");
+        require(!options.font_file.empty(),"Font3D needs an explicit --font-file");
+        mesh=font3d_mesh(options.font_file,op.strings[0],real(op,0),real(op,1),real(op,2));break;
       case 0x128:
         parameters(op,8);mesh=std::make_shared<GenMinMesh>(*input());bone_chain(*mesh,op.parameters);break;
       case 0x129: {

@@ -8,12 +8,18 @@
 #include <stdexcept>
 
 int main(int argc, char** argv) {
-  const bool materials=argc==5 && std::string_view(argv[4])=="--materials";
-  if (argc != 4 && !materials) {
-    std::cerr << "Usage: " << argv[0] << " PROJECT.k OPERATOR_NAME_OR_ID OUTPUT [--materials]\n";
+  if (argc < 4) {
+    std::cerr << "Usage: " << argv[0] << " PROJECT.k OPERATOR_NAME_OR_ID OUTPUT [--materials] [--font-file FONT.ttf]\n";
     return 2;
   }
   try {
+    bool materials=false;wz3::TextureOptions options;
+    for(int i=4;i<argc;++i) {
+      const std::string_view option=argv[i];
+      if(option=="--materials")materials=true;
+      else if(option=="--font-file" && i+1<argc)options.font_file=argv[++i];
+      else throw std::runtime_error("unknown or incomplete mesh preview option");
+    }
     const auto project = wz3::read_project(argv[1]);
     const auto graph = wz3::connect(project);
     const std::string_view selector(argv[2]);
@@ -23,7 +29,7 @@ int main(int argc, char** argv) {
       const auto [end,error] = std::from_chars(selector.data(),selector.data()+selector.size(),id);
       if (error != std::errc{} || end != selector.data()+selector.size()) throw std::runtime_error("no mesh named " + std::string(selector));
     }
-    const auto mesh = wz3::evaluate_mesh(project,graph,id);
+    const auto mesh = wz3::evaluate_mesh(project,graph,id,options);
 #if WZ3_GPU_PREVIEW
     std::vector<std::uint8_t> pixels;
     if(materials) {
@@ -34,8 +40,10 @@ int main(int argc, char** argv) {
       const auto bounds=wz3::mesh_bounds(*mesh);float extent=0;
       for(unsigned c=0;c<3;++c) {scene.camera.world[12+c]=(bounds.min[c]+bounds.max[c])*.5f;extent=std::max(extent,bounds.max[c]-bounds.min[c]);}
       scene.camera.world[14]-=std::max(extent*1.5f,1.f);
-      wz3::DemoFrame frame;frame.width=frame.height=768;frame.surfaces[0]={768,768};frame.commands.push_back({id,{0,768,768},std::move(scene)});
-      wz3::FrameRenderer renderer(project,graph);pixels=renderer.render(frame);
+      wz3::DemoFrame frame;frame.width=frame.height=768;frame.surfaces[0]={768,768};
+      auto& command=frame.commands.emplace_back();command.operator_id=id;command.target={0,768,768};
+      command.draw.emplace<wz3::SceneFrame>(std::move(scene));
+      wz3::FrameRenderer renderer(project,graph,options);pixels=renderer.render(frame);
     }else pixels=wz3::render_mesh(*mesh,768,768);
     wz3::write_ppm(argv[3],768,768,pixels);
 #else

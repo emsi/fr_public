@@ -5,6 +5,8 @@ include(CTest)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 find_package(JPEG REQUIRED)
 find_package(Freetype REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(GLU REQUIRED IMPORTED_TARGET glu)
 option(WZ3_SANITIZE "Enable address and undefined-behavior sanitizers" OFF)
 option(WZ3_BUILD_RENDERER "Build headless EGL/GLES3 previews and frame compositor" OFF)
 option(WZ3_BUILD_PLAYER "Build the SDL2 windowed player with Ogg/V2 playback" OFF)
@@ -23,7 +25,7 @@ add_library(wz3_project src/project.cpp src/release_project.cpp src/graph.cpp sr
 # their scalar operation boundaries and explicit floating-point environments.
 set_source_files_properties(src/mesh_kernel.cpp src/mesh_noise.cpp src/animation.cpp src/timeline.cpp src/material_shader.cpp src/scene.cpp src/frame.cpp src/particles.cpp src/effect_particles.cpp src/walk.cpp src/print.cpp src/scene_draw.cpp src/lighting.cpp src/shadow.cpp src/fog.cpp PROPERTIES
   COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
-target_link_libraries(wz3_project PRIVATE JPEG::JPEG Freetype::Freetype)
+target_link_libraries(wz3_project PRIVATE JPEG::JPEG Freetype::Freetype PkgConfig::GLU)
 target_sources(wz3_project PRIVATE src/glare.cpp src/color_correction.cpp)
 set_source_files_properties(src/glare.cpp src/color_correction.cpp PROPERTIES COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
 add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/dxt_kernel.inc"
@@ -84,6 +86,12 @@ add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/pipe_kernel.inc
   DEPENDS tools/pipe_kernel.py tools/particles_oracle.py ../genminmesh.cpp VERBATIM)
 target_sources(wz3_project PRIVATE src/minmesh_pipe.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/pipe_kernel.inc")
 set_source_files_properties(src/minmesh_pipe.cpp PROPERTIES COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/font3d_kernel.inc"
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/font3d_kernel.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../genminmesh.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/font3d_kernel.inc"
+  DEPENDS tools/font3d_kernel.py tools/particles_oracle.py ../genminmesh.cpp VERBATIM)
+target_sources(wz3_project PRIVATE src/minmesh_font.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/font3d_kernel.inc")
+set_source_files_properties(src/minmesh_font.cpp PROPERTIES COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
 add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/spline_kernel.inc"
   COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/spline_kernel.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/../genblobspline.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/../_types.cpp"
@@ -250,6 +258,10 @@ if(BUILD_TESTING)
   target_compile_options(wz3-minmesh-noise-tests PRIVATE -frounding-math -ffp-contract=off)
   target_link_libraries(wz3-minmesh-noise-tests PRIVATE wz3_project)
   add_test(NAME minmesh_noise COMMAND wz3-minmesh-noise-tests "${CMAKE_CURRENT_SOURCE_DIR}/../data/debris/debris_9241_c.k")
+  add_executable(wz3-font3d-tests tests/font3d.cpp tests/minmesh_reference.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/minmesh_oracle.inc")
+  target_include_directories(wz3-font3d-tests PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_compile_options(wz3-font3d-tests PRIVATE -frounding-math -ffp-contract=off)
+  target_link_libraries(wz3-font3d-tests PRIVATE wz3_project)
   if(WZ3_SANITIZE)
     set_tests_properties(debris_bones PROPERTIES TIMEOUT 900)
   endif()
@@ -463,6 +475,7 @@ if(BUILD_TESTING)
   find_file(WZ3_TEST_FONT_FILE NAMES DejaVuSans.ttf PATHS /usr/share/fonts/truetype/dejavu
     DOC "Font used for native atlas tests (override with an explicit TTF path)")
   if(WZ3_TEST_FONT_FILE)
+    add_test(NAME minmesh_font3d COMMAND wz3-font3d-tests "${WZ3_TEST_FONT_FILE}" "${CMAKE_CURRENT_SOURCE_DIR}/../data/debris/debris_9241_c.k")
     add_test(NAME debris_text COMMAND wz3-paragraph-tests "${CMAKE_CURRENT_SOURCE_DIR}/../data/debris/debris_9241_c.k" "${WZ3_TEST_FONT_FILE}")
     add_test(NAME debris_dxt COMMAND wz3-dxt-tests "${CMAKE_CURRENT_SOURCE_DIR}/../data/debris/debris_9241_c.k" "${WZ3_TEST_FONT_FILE}")
     add_test(NAME theta_print COMMAND wz3-print-tests
@@ -472,6 +485,7 @@ if(BUILD_TESTING)
     add_test(NAME theta_font_atlas COMMAND wz3-font-tests
       "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta/theta_final.k" "${WZ3_TEST_FONT_FILE}")
   else()
+    add_test(NAME minmesh_font3d COMMAND wz3-font3d-tests)
     message(STATUS "No test font found; set WZ3_TEST_FONT_FILE to enable font atlas tests")
   endif()
   if(WZ3_TEST_GRAPHICS)

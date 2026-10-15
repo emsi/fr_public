@@ -111,6 +111,7 @@ public:
   void CalcBBox(sAABox&)const;void SelectAll(int,int);
   void CreateAnimation(int n){Animation=std::make_shared<GenMinMeshAnim>(n);}
   int* CalcMergeVerts()const;bool CalcAdjacencyCore(const int*);bool CalcAdjacency();
+  int OppositeEdge(int)const;void EdgeFlip(int);
   void validate()const;std::size_t bytes()const;
 };
 bool CheckMinMesh(GenMinMesh*&);

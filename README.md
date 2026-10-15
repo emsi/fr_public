@@ -6,10 +6,10 @@ for the project reader, graph inspector, procedural textures, font atlases and
 native GPU mesh previews.
 Theta plays through its complete timeline on Linux. Native support for
 **fr-041: Debris** is now in progress: its archived project renders through
-250 seconds offline on Linux and its V2 soundtrack synthesizes natively.
+330 seconds offline on Linux and its V2 soundtrack synthesizes natively.
 Audio-callback playback is validated through 180 seconds. Bone animation,
-Pipe meshes and Perlin displacement are supported. The next missing operator
-is Font3D at 254.703 seconds. Rendering also
+Pipe meshes, Perlin displacement and 3D font outlines are supported. The next
+missing operator is Multiply at 333.071 seconds. Rendering also
 needs performance work to keep pace with audio; the full demo is not yet supported.
 The original archive follows below.
 

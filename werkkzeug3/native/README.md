@@ -48,13 +48,11 @@ render surfaces, bitmap uploads, mesh/shadow/instance buffers, shaders or lighti
 tables, and did not rebake any textures during playback. Synchronized real-time
 Debris playback still needs performance work.
 Optimized particle mesh instancing, Color Correction, Bitmap Render,
-BoneChain/BoneTrain, weighted skinning, Pipe and MINMESH Perlin are supported.
-An unrestricted run passes 250 seconds and stops at 254,703 ms on MINMESH Font3D operator
-9462 (`andromedasoftwaredevelopment.`, saved font Arial). The 124- and 180-second
-captures remain byte-identical to the preceding runs. Font3D needs native glyph
-outlines, triangulation and extrusion; the original uses Windows GDI and GLU.
-All 81 release checks pass, including 27 graphics tests. New bone, Pipe and
-Perlin checks also pass under Clang ASan/UBSan.
+BoneChain/BoneTrain, weighted skinning, Pipe, MINMESH Perlin and Font3D are supported.
+An unrestricted run now passes 330 seconds and stops at 333,071 ms on MINMESH
+Multiply operator 11077. Font3D unblocks the 3D greetings from 254.703 seconds;
+captures at 255, 260, 280 and 300 seconds include the saved text scenes.
+Font3D geometry and GPU shadow checks also pass under Clang ASan/UBSan.
 DejaVu Sans captures show textured buildings,
 lighting, shadows and cables. The playback test uses dummy audio; physical
 speaker output and synchronization remain unverified. This is progress through
@@ -201,7 +199,33 @@ routines. It also supports Add and conversion from the older indexed mesh
 format. MINMESH retains up to eight corners per polygon, both UV sets and
 two-vertex stitch records; normals/tangents and shadow adjacency come from its
 own kernels. Material links retain operator identities and pass numbers.
-Animated mesh initialization, Font3D and Multiply still fail explicitly.
+Animated mesh initialization and Multiply still fail explicitly.
+
+MINMESH Font3D obtains unhinted quadratic TrueType contours from FreeType and
+feeds Linux GLU's CPU tessellator. Each glyph is triangulated separately, keeping
+its holes and allowing neighboring glyphs to overlap. The archived recursive
+curve subdivision, degenerate-triangle cleanup, extrusion, separate cap/side
+vertices and UV shear (`u = x + z`, `v = y`) run from extracted source. The
+GLU callbacks use full-width pointers on 64-bit Linux and capture exceptions
+before returning across the C interface. No OpenGL context is needed to build
+the mesh.
+
+Positive cell-height scaling uses the font's Windows ascent/descent metrics;
+coordinates are quantized to 16.16 pixels and advances to whole pixels, with
+no kerning. `--font-file` explicitly supplies the replacement face for all saved
+family names. These metrics and the DejaVu substitutions have not been compared
+with GDI output using the original Arial/Georgia fonts; this is native geometry
+support, not a claim of identical released lettering. Both `wz3-mesh` and
+`wz3-mesh-render` accept `--font-file` for inspection.
+
+`minmesh_font3d` checks holes, overlapping glyphs, intersecting contours requiring
+the GLU combine callback, quadratic curve area, signed extrusion volume, cap
+normals, UVs and rounding restoration. All 29 reachable Debris Font3D recipes
+produce closed meshes with the archived engine's shadow topology using DejaVu
+Sans; an additional manual run passes with DejaVu Serif. The GPU shadow test
+compares an extruded hole with analytic ray/box intersections for both z-pass
+and z-fail, including a lit hole in the shadow. CPU and GPU checks pass under
+optimized Clang ASan/UBSan (Mesa leak detection disabled).
 
 MINMESH Perlin displacement runs its original vector-lattice interpolation with
 the archived permutation/gradient tables and float32 downward rounding. It
@@ -681,10 +705,11 @@ bits and blob bytes are retained for the subsequent evaluator.
 ## Build and inspect
 
 Requirements: C and C++20 compilers, CMake 3.20+, Python 3, libjpeg development
-headers/library, FreeType development files, and a build tool such as Ninja. On Ubuntu:
+headers/library, FreeType and GLU development files, pkg-config, and a build
+tool such as Ninja. On Ubuntu:
 
 ```sh
-sudo apt-get install build-essential cmake ninja-build python3 libjpeg-dev libfreetype-dev
+sudo apt-get install build-essential cmake ninja-build python3 libjpeg-dev libfreetype-dev libglu1-mesa-dev pkg-config
 ```
 
 ```sh
