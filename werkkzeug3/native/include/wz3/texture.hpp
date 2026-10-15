@@ -16,7 +16,20 @@ struct FontAtlas {
   std::string requested_family, family, rasterizer;
   std::array<GlyphMetric, 256> glyphs{};
 };
-struct TextureOptions { std::filesystem::path font_file; };
+struct Texture;
+// The CPU texture graph can delegate Bitmap_Render to a graphics backend.
+// The provider owns cached results; project/graph references must outlive it.
+class RenderedBitmapProvider {
+public:
+  struct Stats {std::size_t textures{},pixel_bytes{};};
+  virtual ~RenderedBitmapProvider()=default;
+  virtual std::shared_ptr<const Texture> get(std::size_t id,std::size_t input,unsigned width,unsigned height)=0;
+  virtual Stats stats() const=0;
+};
+struct TextureOptions {
+  std::filesystem::path font_file;
+  std::shared_ptr<RenderedBitmapProvider> rendered_bitmaps{};
+};
 struct FontLayout {
   float x{}, y{}, height{}, width{}, inner_spacing{};
   int outer_spacing{};
@@ -32,6 +45,8 @@ struct Texture {
   std::vector<Pixel> pixels;
   std::array<std::shared_ptr<const FontAtlas>, 8> fonts{};
 };
+// ReadTexture expands each RGBA8 byte as (byte<<7)|(byte>>1), preserving rows.
+Texture bitmap_readback(unsigned width,unsigned height,std::span<const std::uint8_t> rgba);
 Pixel color64(std::uint32_t argb);
 Pixel fade64(const Pixel& a, const Pixel& b, std::int32_t fade);
 Pixel merge_pixel(const Pixel& base, const Pixel& source, unsigned mode);

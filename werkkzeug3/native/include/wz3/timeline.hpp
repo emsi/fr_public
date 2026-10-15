@@ -30,7 +30,7 @@ class EventTimeline {
 public:
   EventTimeline(const Project&,const Graph&);
   void reset();
-  void begin_frame(std::int32_t beat_16_16);
+  void begin_frame(std::int32_t beat_16_16,bool include_static_events=true);
   std::int32_t beat() const;
   std::span<const std::size_t> active(std::size_t operator_id) const;
   const Event& event(std::size_t event_id) const;

@@ -34,7 +34,7 @@ void validate_mesh(const Mesh& mesh) {
     for (unsigned i = 0; i < f.count; ++i) if (f.vertices[i] >= mesh.vertices.size()) throw std::runtime_error("mesh index out of bounds");
   }
 }
-std::shared_ptr<const Mesh> evaluate_mesh(const Project& project, const Graph& graph, std::size_t id) {
+std::shared_ptr<const Mesh> evaluate_mesh(const Project& project, const Graph& graph, std::size_t id,const TextureOptions& options) {
   auto target=id;
   for(unsigned depth=0;depth<512;++depth) {
     if(target>=project.operators.size() || target>=graph.nodes.size() || !graph.nodes[target].active)throw std::runtime_error("invalid mesh operator");
@@ -46,8 +46,8 @@ std::shared_ptr<const Mesh> evaluate_mesh(const Project& project, const Graph& g
       if(node.inputs.size()!=1)throw std::runtime_error("invalid mesh alias");
       target=node.inputs[0];
     }else {
-      if(operator_info(cmd).category=="MINMESH")return legacy::minimal::evaluate_kernel(project,graph,id);
-      return legacy::evaluate_kernel(project,graph,id);
+      if(operator_info(cmd).category=="MINMESH")return legacy::minimal::evaluate_kernel(project,graph,id,options);
+      return legacy::evaluate_kernel(project,graph,id,options);
     }
   }
   throw std::runtime_error("cycle or excessive depth in mesh aliases");

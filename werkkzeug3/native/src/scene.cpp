@@ -79,11 +79,11 @@ SceneAssets::SceneAssets(const Project& p,const Graph& g,const TextureOptions& o
   require(g.nodes.size()==p.operators.size(),"scene asset graph size mismatch");
 }
 bool SceneAssets::matches(const Project& p,const Graph& g,const TextureOptions& o) const {
-  return &project==&p && &graph==&g && options.font_file==o.font_file;
+  return &project==&p && &graph==&g && options.font_file==o.font_file && options.rendered_bitmaps==o.rendered_bitmaps;
 }
 std::shared_ptr<const Mesh> SceneAssets::mesh(std::size_t id) {
   if(const auto found=meshes.find(id);found!=meshes.end())return found->second;
-  auto value=evaluate_mesh(project,graph,id);
+  auto value=evaluate_mesh(project,graph,id,options);
   const auto bytes=mesh_storage_bytes(*value);
   constexpr std::size_t budget=1024u*1024*1024;
   if(bytes>budget-mesh_bytes)throw std::runtime_error("scene mesh cache budget exceeded: operator "+std::to_string(id)+

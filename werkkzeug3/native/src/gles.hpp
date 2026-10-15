@@ -4,6 +4,7 @@
 #include <EGL/eglext.h>
 #include <GLES3/gl3.h>
 #include <sstream>
+#include <memory>
 #include <stdexcept>
 #include <string_view>
 namespace wz3::gles {
@@ -56,6 +57,41 @@ struct Context {
       if (context != EGL_NO_CONTEXT) eglDestroyContext(display, context);
       if (surface != EGL_NO_SURFACE) eglDestroySurface(display, surface);
       eglTerminate(display);
+    }
+  }
+};
+// A synchronous nested bake must preserve the caller's entire GL state. A
+// separate, unshared context provides that isolation without a fragile list of
+// bindings to save. Borrow an active display; never terminate that display.
+struct ScopedContext {
+  EGLDisplay display=eglGetCurrentDisplay();
+  EGLContext previous=eglGetCurrentContext(),context=EGL_NO_CONTEXT;
+  EGLSurface draw=eglGetCurrentSurface(EGL_DRAW),read=eglGetCurrentSurface(EGL_READ),surface=EGL_NO_SURFACE;
+  EGLenum api=eglQueryAPI();
+  std::unique_ptr<Context> standalone;
+  ScopedContext() {
+    try {
+      if(previous==EGL_NO_CONTEXT){standalone=std::make_unique<Context>(1,1);return;}
+      egl_check(eglBindAPI(EGL_OPENGL_ES_API),"bake API selection");
+      const EGLint attributes[]={EGL_SURFACE_TYPE,EGL_PBUFFER_BIT,EGL_RENDERABLE_TYPE,EGL_OPENGL_ES3_BIT,
+        EGL_RED_SIZE,8,EGL_GREEN_SIZE,8,EGL_BLUE_SIZE,8,EGL_ALPHA_SIZE,8,EGL_SAMPLE_BUFFERS,0,EGL_SAMPLES,0,EGL_NONE};
+      EGLConfig config;EGLint count=0;egl_check(eglChooseConfig(display,attributes,&config,1,&count),"bake EGL configuration");
+      if(!count)throw std::runtime_error("no RGBA8 GLES3 configuration for bitmap bake");
+      const EGLint size[]={EGL_WIDTH,1,EGL_HEIGHT,1,EGL_NONE};surface=eglCreatePbufferSurface(display,config,size);egl_check(surface!=EGL_NO_SURFACE,"bake EGL surface");
+      const EGLint version[]={EGL_CONTEXT_CLIENT_VERSION,3,EGL_NONE};context=eglCreateContext(display,config,EGL_NO_CONTEXT,version);egl_check(context!=EGL_NO_CONTEXT,"bake EGL context");
+      egl_check(eglMakeCurrent(display,surface,surface,context),"bake context activation");
+    }catch(...){release();throw;}
+  }
+  ScopedContext(const ScopedContext&)=delete;ScopedContext& operator=(const ScopedContext&)=delete;
+  ~ScopedContext(){release();}
+  void release() {
+    if(standalone){standalone.reset();eglBindAPI(api);return;}
+    eglBindAPI(api);
+    if(previous!=EGL_NO_CONTEXT) {
+      eglMakeCurrent(display,draw,read,previous);
+      if(context!=EGL_NO_CONTEXT)eglDestroyContext(display,context);
+      if(surface!=EGL_NO_SURFACE)eglDestroySurface(display,surface);
+      context=EGL_NO_CONTEXT;surface=EGL_NO_SURFACE;
     }
   }
 };

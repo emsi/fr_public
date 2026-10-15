@@ -37,9 +37,10 @@ void EventTimeline::reset() {
   events=project.events;prepared=false;
   for(auto& list:active_events)list.clear();
 }
-void EventTimeline::begin_frame(std::int32_t beat) {
+void EventTimeline::begin_frame(std::int32_t beat,bool include_static_events) {
   frame_beat=beat;prepared=true;
   for(auto& list:active_events)list.clear();
+  if(!include_static_events)return;
   // The archive prepends each event to FirstEvent. Reverse file order is
   // significant when events overlap, even if their start times are identical.
   for(std::size_t i=events.size();i>0;) {

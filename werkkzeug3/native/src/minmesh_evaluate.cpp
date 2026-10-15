@@ -21,6 +21,7 @@ sFSRT srt(const Operator& op,unsigned i) {
   return out;
 }
 class Evaluator {
+  const TextureOptions& options;
   const Project& project;const Graph& graph;
   std::vector<std::shared_ptr<const GenMinMesh>> cache;
   std::vector<bool> visiting;
@@ -45,7 +46,7 @@ class Evaluator {
   std::shared_ptr<GenMinMesh> convert(std::size_t id) {
     // Mesh_ToMin copies only selected live wedges, their point positions,
     // UV/color attributes and live polygon loops. Its output has no selection.
-    const auto input=legacy::evaluate_kernel(project,graph,id);
+    const auto input=legacy::evaluate_kernel(project,graph,id,options);
     GenMesh source(*input->kernel);source.Triangulate(8);source.All2Sel(true,MAS_FACE);source.Face2Vert();source.validate();
     auto out=std::make_shared<GenMinMesh>();out->materials=materials;
     std::vector<int> mapping(source.Vert.Count,-1);
@@ -78,7 +79,7 @@ class Evaluator {
     return out;
   }
 public:
-  Evaluator(const Project& p,const Graph& g):project(p),graph(g),cache(p.operators.size()),visiting(cache.size()) {
+  Evaluator(const Project& p,const Graph& g,const TextureOptions& o):options(o),project(p),graph(g),cache(p.operators.size()),visiting(cache.size()) {
     require(g.nodes.size()==p.operators.size(),"MINMESH graph size mismatch");
   }
   std::shared_ptr<const GenMinMesh> get(std::size_t id,unsigned depth=0) {
@@ -112,7 +113,7 @@ public:
         for(unsigned i=0;i<21;++i)if(i!=15)real(op,i);
         integer(op,15,7);
         auto input_mesh=std::make_shared<GenMinMesh>(*get(node.inputs[0],depth+1));
-        const auto bitmap=node.inputs.size()==2 ? evaluate_texture(project,graph,node.inputs[1]) : nullptr;
+        const auto bitmap=node.inputs.size()==2 ? evaluate_texture(project,graph,node.inputs[1],options) : nullptr;
         mesh.reset(explode(*input_mesh,bitmap.get(),op.parameters));break;
       }
       case 0x111:
@@ -164,8 +165,8 @@ public:
   }
 };
 }
-std::shared_ptr<const Mesh> evaluate_kernel(const Project& project,const Graph& graph,std::size_t id) {
-  const auto core=Evaluator(project,graph).get(id);
+std::shared_ptr<const Mesh> evaluate_kernel(const Project& project,const Graph& graph,std::size_t id,const TextureOptions& options) {
+  const auto core=Evaluator(project,graph,options).get(id);
   return std::make_shared<Mesh>(export_mesh(std::make_shared<GenMinMesh>(*core)));
 }
 } // namespace wz3::legacy::minimal

@@ -11,6 +11,7 @@
 #include "gles.hpp"
 #include <algorithm>
 #include <iostream>
+#include <set>
 
 namespace wz3 {
 namespace {
@@ -220,6 +221,35 @@ void clear(FrameClear c,bool stencil=false) {
   glClear(((c.flags&1) ? GL_COLOR_BUFFER_BIT : 0)|((c.flags&2) ? GL_DEPTH_BUFFER_BIT|(stencil ? GL_STENCIL_BUFFER_BIT : 0) : 0));
 }
 }
+namespace {
+class BitmapRenderCache final : public RenderedBitmapProvider,public std::enable_shared_from_this<BitmapRenderCache> {
+  const Project& project;const Graph& graph;TextureOptions options;
+  using Key=std::tuple<std::size_t,std::size_t,unsigned,unsigned>;
+  std::map<Key,std::shared_ptr<const Texture>> cache;std::set<std::size_t> pending;std::size_t bytes{},reserved{};
+public:
+  BitmapRenderCache(const Project& p,const Graph& g,TextureOptions o):project(p),graph(g),options(std::move(o)){options.rendered_bitmaps.reset();}
+  Stats stats()const override{return {cache.size(),bytes};}
+  std::shared_ptr<const Texture> get(std::size_t id,std::size_t input,unsigned width,unsigned height)override {
+    const Key key{id,input,width,height};if(auto found=cache.find(key);found!=cache.end())return found->second;
+    require(id<project.operators.size() && input<project.operators.size() && width && height && width<=4096 && height<=4096,"invalid Render bitmap request");
+    require(pending.size()<16 && !pending.contains(id),"recursive Render bitmap dependency");
+    const auto size=std::size_t(width)*height*sizeof(Pixel);require(size<=128u*1024*1024-bytes-reserved,"rendered bitmap cache budget exceeded");
+    pending.insert(id);reserved+=size;
+    struct Remove {BitmapRenderCache& owner;std::size_t id,size;~Remove(){owner.pending.erase(id);owner.reserved-=size;}} remove{*this,id,size};
+    auto nested_options=options;nested_options.rendered_bitmaps=shared_from_this();
+    gles::ScopedContext context;
+    FramePlayer player(project,graph,nested_options);auto frame=player.bitmap_frame(input,width,height);
+    frame.commands.insert(frame.commands.begin(),FrameCommand{id,{0,width,height},FrameClear{3,0xffff8080}});
+    FrameRenderer renderer(project,graph,nested_options,FrameRenderer::Context::Current);
+    auto texture=std::make_shared<Texture>(bitmap_readback(width,height,renderer.render(frame)));
+    cache.emplace(key,texture);bytes+=size;return texture;
+  }
+};
+}
+TextureOptions rendered_texture_options(const Project& p,const Graph& g,TextureOptions options) {
+  if(!options.rendered_bitmaps)options.rendered_bitmaps=std::make_shared<BitmapRenderCache>(p,g,options);
+  return options;
+}
 struct FrameRenderer::Impl {
   const Project& project;const Graph& graph;TextureOptions texture_options;std::unique_ptr<gles::Context> context;
   struct Surface {GLuint color{},depth{},fbo{};unsigned width{},height{};};
@@ -234,7 +264,7 @@ struct FrameRenderer::Impl {
   std::map<std::string,GLuint> programs;
   struct MeshGeometry {
     std::shared_ptr<const Mesh> owner;GLuint buffer{};
-    std::size_t bytes{};
+    std::size_t bytes{},reserved{};
     std::vector<std::pair<GLint,GLsizei>> batches;
     std::vector<std::size_t> instance_limits;
   };
@@ -243,14 +273,14 @@ struct FrameRenderer::Impl {
   struct MeshInstances {
     std::shared_ptr<const Mesh> owner;
     std::shared_ptr<const std::vector<SceneMatrix>> matrices;
-    GLuint buffer{};std::size_t bytes{};
+    GLuint buffer{};std::size_t bytes{},reserved{};
   };
   std::map<const Mesh*,MeshInstances> instance_buffers;
   SceneMatrix last_model=scene_identity();
   struct LightDraw {Vec3 position,eye;std::array<float,4> attenuation,color;std::array<float,2> specular;bool directional;};
   struct ShadowGeometry {
     std::shared_ptr<const Mesh> owner;std::vector<std::uint8_t> mask;
-    ShadowMesh mesh;GLuint buffer{};std::size_t bytes{};
+    ShadowMesh mesh;GLuint buffer{};std::size_t bytes{},reserved{};
   };
   std::map<const Mesh*,ShadowGeometry> shadows;
   GLuint shadow_program{},shadow_index_buffer{};
@@ -260,7 +290,7 @@ struct FrameRenderer::Impl {
   GLuint vao{},particle_buffer{};std::array<GLuint,4> samplers{};
   std::size_t surface_bytes{},bitmap_bytes{};
   FrameRenderer::Stats stats;
-  Impl(const Project& p,const Graph& g,const TextureOptions& options,FrameRenderer::Context mode):project(p),graph(g),texture_options(options) {
+  Impl(const Project& p,const Graph& g,const TextureOptions& options,FrameRenderer::Context mode):project(p),graph(g),texture_options(rendered_texture_options(p,g,options)) {
     if(mode==FrameRenderer::Context::Headless)context=std::make_unique<gles::Context>(1,1);
     require(glGetString(GL_VERSION)!=nullptr,"FrameRenderer needs a current GLES3 context");
     std::cerr<<"GL vendor: "<<glGetString(GL_VENDOR)<<"\nGL renderer: "<<glGetString(GL_RENDERER)<<"\nGL version: "<<glGetString(GL_VERSION)<<'\n';
@@ -895,7 +925,7 @@ struct FrameRenderer::Impl {
 };
 FrameRenderer::FrameRenderer(const Project& p,const Graph& g,const TextureOptions& options,Context mode):impl(std::make_unique<Impl>(p,g,options,mode)) {}
 FrameRenderer::~FrameRenderer()=default;
-FrameRenderer::Stats FrameRenderer::stats() const {return impl->stats;}
+FrameRenderer::Stats FrameRenderer::stats() const {auto stats=impl->stats;stats.bitmap_renders=impl->texture_options.rendered_bitmaps->stats().textures;return stats;}
 void FrameRenderer::reset_targets() {
   auto& s=*impl;s.activate();s.last_model=scene_identity();glDisable(GL_SCISSOR_TEST);
   glClearStencil(0);glStencilMask(255);

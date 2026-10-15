@@ -37,19 +37,16 @@ main viewport contains 76 mesh instances, two lights and 26 ChainLine cables.
 With an explicit font, the native player renders the opening city at 1280x640:
 1,251 consecutive frames through 20 seconds pass in both offline and
 audio-callback-paced playback, with byte-identical endpoint captures.
-Continuous GPU rendering and callback-paced playback now pass 110 seconds
-(6,876 frames), with byte-identical captures at 64, 80 and 110 seconds showing
-particle clouds and the later city/train scenes. The callback-paced run took
-118.9 wall seconds after 164.7 seconds of preparation and fell up to 21.6 seconds
-behind the audio clock. It allocated no additional cached meshes, textures,
-targets, mesh/shadow/instance buffers or shaders during playback. This verifies
-image consistency; synchronized real-time Debris playback still needs
-performance work. Optimized particle mesh instancing and Color Correction are
-now supported. The next continuous-run failure is at
-110,207 ms: material 10399 requires bitmap Render operator 10366. That operator
-bakes an IPP scene at time zero into a 512x512 texture, then returns the pixels
-to the procedural bitmap graph. It needs a rendering callback in texture
-precalculation. The 60-second capture remains byte-identical to the earlier port.
+Continuous GPU rendering now passes 117 seconds (7,314 frames). The 110-second
+capture remains byte-identical to the previous milestone; the 112- and
+117-second images show the elevated-road sequence and baked building textures.
+The last 110-second callback-paced check took 118.9 wall seconds after 164.7
+seconds of preparation and fell up to 21.6 seconds behind the audio clock.
+Synchronized real-time Debris playback still needs performance work.
+Optimized particle mesh instancing, Color Correction and Bitmap Render are now
+supported. The next continuous-run failure is at 117,551 ms: MINMESH BoneTrain
+operator 8279 requires BoneChain (8263), spatial-spline bone motion and weighted
+skinning. The existing Explode implementation only handles rigid fragments.
 DejaVu Sans captures show textured buildings,
 lighting, shadows and cables. The playback test uses dummy audio; physical
 speaker output and synchronization remain unverified. This is progress through
@@ -58,17 +55,41 @@ images. To play the supported opening from the repository root:
 
 ```sh
 build/native/wz3-player werkkzeug3/data/debris/debris_9241_c.k \
-  --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf --duration 110
+  --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf --duration 117
 ```
 
 DejaVu Sans substitutes for the project's Arial font; its appearance is not an
 original-output match. DXT textures require S3TC support from the GLES driver.
-Remaining MINMESH/scene operators, rendered bitmaps and the Water effect
+Remaining MINMESH/scene operators, RenderAuto and the Water effect
 also remain to be ported.
 The player synthesizes its V2 soundtrack into stereo PCM before playback, using
 the same SDL callback clock as Ogg music. The existing Theta renderer and released-clock profile
 do not establish compatibility with Debris. `debris_projects` compares the real
 wrapped files with their legacy documents and tests malformed container handling.
+
+Bitmap Render (`0x3f`) executes its IPP input once in a fresh time-zero
+view, with aspect one and no project events. It clears the master target to
+`0xffff8080`; an output left in the IPP pool is not automatically copied back.
+Top-down RGBA8 readback is expanded to the original 15-bit bitmap lanes, so
+HSCB and other procedural filters can consume the baked scene. Rendering uses
+an isolated GLES context and restores the caller context on success or failure,
+including when a material requests a bake between texture bindings. Cached
+images are shared across loading/playback and mesh displacement/Explode inputs.
+A 128 MiB pixel budget includes in-flight bakes; recursive dependencies fail.
+
+`bitmap_render` compares every byte value with the archived `ReadTexture` loop,
+including BGRA/RGBA conversion, row pitch, alpha and downstream bitmap filters.
+It also checks time-zero camera animation, aspect and absent project events.
+`gpu_bitmap_render` checks colored image regions, the initial clear, IPP pool
+behavior, nested contexts, failure recovery, material binding preservation,
+cache reuse and Displace/ToMin/Explode consumers. `gpu_debris_bitmaps` renders all
+three reachable saved 512x512 recipes and the HSCB/store texture that blocked
+playback at 110.207 seconds. These compare with ordinary time-zero native IPP
+frames; they do not establish a match with the Windows release. All 77 release
+checks pass. The three new checks also pass with Clang ASan/UBSan at `-O1`
+(127.8 seconds, Mesa leak detection disabled). The full-asset check exceeded six
+minutes in an unoptimized Debug sanitizer build; prefer an optimized sanitizer
+build when running these complete procedural scenes.
 
 Optimized Scene Particles retain one persistent matrix array per prepared mesh.
 All paint jobs snapshot the final array after scene traversal, including writes

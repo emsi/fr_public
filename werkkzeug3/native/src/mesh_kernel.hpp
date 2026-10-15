@@ -201,5 +201,5 @@ GenMesh* Mesh_Color(GenMesh*,sF323,sF322,sU32,float,float,int);
 GenMesh* Mesh_ShadowEnable(GenMesh*,bool);
 GenMesh* Mesh_Bend(KOp*,GenMesh*,int,sFSRT,sFSRT,sF322,sF322,int);
 Mesh export_mesh(std::shared_ptr<GenMesh>);
-std::shared_ptr<const Mesh> evaluate_kernel(const Project&,const Graph&,std::size_t);
+std::shared_ptr<const Mesh> evaluate_kernel(const Project&,const Graph&,std::size_t,const TextureOptions& = {});
 } // namespace wz3::legacy

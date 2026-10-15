@@ -127,5 +127,5 @@ GenMinMesh* MinMesh_Triangulate(GenMinMesh*);
 GenMinMesh* MinMesh_Center(GenMinMesh*,int);
 GenMinMesh* explode(GenMinMesh&,const Texture*,std::span<const std::uint32_t>);
 Mesh export_mesh(std::shared_ptr<GenMinMesh>);
-std::shared_ptr<const Mesh> evaluate_kernel(const Project&,const Graph&,std::size_t);
+std::shared_ptr<const Mesh> evaluate_kernel(const Project&,const Graph&,std::size_t,const TextureOptions& = {});
 } // namespace wz3::legacy::minimal

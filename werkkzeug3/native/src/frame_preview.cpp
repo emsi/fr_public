@@ -30,6 +30,9 @@ int main(int argc,char** argv) {
     const auto found=graph.names.find(argv[2]);const auto root=found==graph.names.end() ? number<std::size_t>(argv[2]) : found->second;
     const auto time=number<double>(argv[3])*65536;
     if(!std::isfinite(time) || time<-2147483648.0 || time>2147483647.0)throw std::runtime_error("beat outside 16.16 range");
+#if WZ3_GPU_FRAME
+    options=wz3::rendered_texture_options(project,graph,options);
+#endif
     wz3::FramePlayer player(project,graph,options);
 #if WZ3_GPU_FRAME
     wz3::FrameRenderer renderer(project,graph,options);

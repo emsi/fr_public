@@ -26,6 +26,7 @@ sFSRT srt(const Operator& op,unsigned i) {
   return value;
 }
 class Evaluator {
+  const TextureOptions& options;
   const Project& project; const Graph& graph;
   std::vector<std::shared_ptr<const GenMesh>> cache;
   std::vector<bool> visiting;
@@ -41,7 +42,7 @@ class Evaluator {
     return false;
   }
 public:
-  Evaluator(const Project& p,const Graph& g):project(p),graph(g),cache(p.operators.size()),visiting(cache.size()) {}
+  Evaluator(const Project& p,const Graph& g,const TextureOptions& o):options(o),project(p),graph(g),cache(p.operators.size()),visiting(cache.size()) {}
   std::shared_ptr<const GenMesh> get(std::size_t id,unsigned depth=0) {
     if(id>=cache.size() || !graph.nodes.at(id).active)throw std::runtime_error("invalid or inactive mesh operator");
     if(cache[id])return cache[id];
@@ -77,7 +78,7 @@ public:
       }else if(op.command==0x8f) {
         require(op,4);if(node.inputs.size()!=2)throw std::runtime_error("Displace needs mesh and bitmap inputs");
         mesh=std::make_shared<GenMesh>(*get(node.inputs[0],depth+1));
-        const auto bitmap=evaluate_texture(project,graph,node.inputs[1]);
+        const auto bitmap=evaluate_texture(project,graph,node.inputs[1],options);
         const auto mask=integer(op,0);if(mask)mesh->Mask2Sel(mask<<16);else mesh->All2Sel();
         mesh->NeedAllNormals();mesh->Displace(*bitmap,real(op,1),real(op,2),real(op,3));mesh->GotNormals=false;
       }else if(op.command==0x92) {
@@ -240,8 +241,8 @@ Mesh export_mesh(std::shared_ptr<GenMesh> mesh) {
   mesh->compact_storage();out.faces.shrink_to_fit();
   out.kernel=std::move(mesh);validate_mesh(out);return out;
 }
-std::shared_ptr<const Mesh> evaluate_kernel(const Project& project,const Graph& graph,std::size_t id) {
-  const auto core=Evaluator(project,graph).get(id);
+std::shared_ptr<const Mesh> evaluate_kernel(const Project& project,const Graph& graph,std::size_t id,const TextureOptions& options) {
+  const auto core=Evaluator(project,graph,options).get(id);
   return std::make_shared<Mesh>(export_mesh(std::make_shared<GenMesh>(*core)));
 }
 } // namespace wz3::legacy

@@ -12,6 +12,13 @@
 #include <stdexcept>
 
 namespace wz3 {
+Texture bitmap_readback(unsigned width,unsigned height,std::span<const std::uint8_t> rgba) {
+  if(!width || !height || width>4096 || height>4096 || rgba.size()!=std::size_t(width)*height*4)
+    throw std::runtime_error("invalid rendered bitmap readback");
+  Texture texture;texture.width=width;texture.height=height;texture.pixels.resize(std::size_t(width)*height);
+  for(std::size_t i=0;i<texture.pixels.size();++i)for(unsigned c=0;c<4;++c){const auto v=rgba[i*4+c];texture.pixels[i][c]=(unsigned(v)<<7)|(v>>1);}
+  return texture;
+}
 Pixel color64(std::uint32_t argb) {
   Pixel pixel{};
   constexpr unsigned shifts[] = {16, 8, 0, 24};
@@ -94,6 +101,16 @@ public:
       else if(op.command==0x32)cell_bitmap(*texture,op.parameters);
       else gradient(*texture, op);
       cache_[id] = std::move(texture);
+    } else if(op.command==0x3f) {
+      require(op,2);
+      if(node.inputs.size()!=1 || !node.links.empty())throw std::runtime_error("Render bitmap needs one IPP input");
+      if(!options_.rendered_bitmaps)throw std::runtime_error("Render bitmap requires a graphics backend");
+      const auto width=1u<<std::clamp<int>(op.parameters[0]&0x7f,0,12);
+      const auto height=1u<<std::clamp(std::bit_cast<std::int32_t>(op.parameters[1]),0,12);
+      auto rendered=options_.rendered_bitmaps->get(id,node.inputs[0],width,height);
+      if(!rendered || rendered->width!=width || rendered->height!=height || rendered->pixels.size()!=std::size_t(width)*height)
+        throw std::runtime_error("Render bitmap backend returned invalid dimensions");
+      cache_[id]=std::move(rendered);
     } else if (op.command == 0x24) {
       require(op, 1);
       if (node.inputs.empty()) throw std::runtime_error("Merge requires at least one input");
@@ -232,6 +249,9 @@ private:
   std::shared_ptr<std::size_t> allocated_ = std::make_shared<std::size_t>(0);
   template<class F> void dependencies(std::size_t id,F action) const {
     const auto& node=graph_.nodes[id];
+    // Render crosses into an IPP scene, whose dependencies belong to the
+    // rendering backend, not this bitmap evaluator's cache/refcount graph.
+    if(project_.operators[id].command==0x3f)return;
     if(project_.operators[id].command==1) {
       if(node.links.size()!=1 || !node.links[0])throw std::runtime_error("texture Load has no resolved link");
       action(*node.links[0]);

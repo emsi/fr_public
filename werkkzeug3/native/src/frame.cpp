@@ -31,7 +31,7 @@ struct FramePlayer::Impl {
   struct Target {std::optional<std::size_t> owner;std::int64_t refs{};unsigned size{};};
   std::array<Target,13> pool;
   std::optional<unsigned> last;
-  std::size_t master{};DemoFrame result;
+  std::size_t master{};float aspect=1;DemoFrame result;
   Impl(const Project& p,const Graph& g,const TextureOptions& options,std::shared_ptr<SceneAssets> assets):project(p),graph(g),splines(p),scenes(p,g,options,std::move(assets)),timeline(p,g),
       programs(p.operators.size()),previous(programs.size()),visiting(programs.size()),prepared(programs.size()),outputs(programs.size()) {
     require(g.nodes.size()==programs.size(),"frame graph size mismatch");
@@ -137,7 +137,7 @@ struct FramePlayer::Impl {
       unsigned size;
       {const AnimationScope scope(program(id),splines,op.parameters,env,previous[id]);require(!scope.parameters.empty(),"missing viewport size");size=scope.parameters[0];}
       if(auto cached=find(id))last=*cached;
-      else {auto scene=scenes.viewport(id,env,float(result.width)/result.height,world,&timeline);const auto rt=alloc(id,size,outputs[id]);append(id,rt,std::move(scene));last=rt;}
+      else {auto scene=scenes.viewport(id,env,aspect,world,&timeline);const auto rt=alloc(id,size,outputs[id]);append(id,rt,std::move(scene));last=rt;}
       return;
     }
     const AnimationScope scope(program(id),splines,op.parameters,env,previous[id]);const auto& p=scope.parameters;
@@ -248,18 +248,26 @@ struct FramePlayer::Impl {
     default:throw std::runtime_error("frame operator "+std::to_string(id)+" ("+std::string(operator_info(op.command).name)+") is not ported");
     }
   }
+  DemoFrame run(std::size_t root,std::int32_t beat,unsigned width,unsigned height,std::optional<std::int32_t> milliseconds,bool bitmap_render) {
+    require(width && height && width<=4096 && height<=4096,"invalid frame dimensions");auto& s=*this;
+    if(bitmap_render)require(category(root)=="IPP","Render bitmap requires an IPP input");
+    aspect=bitmap_render ? 1.f : float(width)/height;
+    auto initial=frame_environment(0);s.prepare(root,initial);s.result={};s.result.beat=beat;s.result.width=width;s.result.height=height;
+    s.result.milliseconds=milliseconds.value_or(0);
+    if(!milliseconds)s.result.milliseconds=beat_milliseconds(beat,s.project);
+    s.scenes.begin_frame(s.result.milliseconds);
+    s.result.surfaces.emplace(0,FrameSurface{width,height});
+    for(unsigned i=0;i<12;++i) {const auto size=i/3;const auto shift=size==3 ? 0 : size;s.result.surfaces.emplace(i+1,FrameSurface{1024u>>shift,512u>>shift});}
+    s.master=0;s.reset_pool();s.timeline.begin_frame(beat,!bitmap_render);auto env=frame_environment(beat);s.execute(root,env,scene_identity());return std::move(s.result);
+  }
 };
 FramePlayer::FramePlayer(const Project& p,const Graph& g,const TextureOptions& options,std::shared_ptr<SceneAssets> assets):impl(std::make_unique<Impl>(p,g,options,std::move(assets))) {}
 FramePlayer::~FramePlayer()=default;
 DemoFrame FramePlayer::frame(std::size_t root,std::int32_t beat,unsigned width,unsigned height,std::optional<std::int32_t> milliseconds) {
-  require(width && height && width<=4096 && height<=4096,"invalid frame dimensions");auto& s=*impl;
-  auto initial=frame_environment(0);s.prepare(root,initial);s.result={};s.result.beat=beat;s.result.width=width;s.result.height=height;
-  s.result.milliseconds=milliseconds.value_or(0);
-  if(!milliseconds)s.result.milliseconds=beat_milliseconds(beat,s.project);
-  s.scenes.begin_frame(s.result.milliseconds);
-  s.result.surfaces.emplace(0,FrameSurface{width,height});
-  for(unsigned i=0;i<12;++i) {const auto size=i/3;const auto shift=size==3 ? 0 : size;s.result.surfaces.emplace(i+1,FrameSurface{1024u>>shift,512u>>shift});}
-  s.master=0;s.reset_pool();s.timeline.begin_frame(beat);auto env=frame_environment(beat);s.execute(root,env,scene_identity());return std::move(s.result);
+  return impl->run(root,beat,width,height,milliseconds,false);
+}
+DemoFrame FramePlayer::bitmap_frame(std::size_t root,unsigned width,unsigned height) {
+  return impl->run(root,0,width,height,0,true);
 }
 void write_frame(std::ostream& out,const DemoFrame& f) {
   out<<std::setprecision(9)<<"{\"beat\":"<<double(f.beat)/65536<<",\"width\":"<<f.width<<",\"height\":"<<f.height

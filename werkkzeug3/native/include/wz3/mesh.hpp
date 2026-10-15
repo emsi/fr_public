@@ -1,6 +1,6 @@
 // Distributed under the BSD license in werkkzeug3/LICENSE.txt.
 #pragma once
-#include "wz3/graph.hpp"
+#include "wz3/texture.hpp"
 #include <memory>
 #include <limits>
 
@@ -42,7 +42,7 @@ struct Mesh {
   std::shared_ptr<const Mesh> animation_source;
 };
 struct Bounds { Vec3 min{}, max{}; };
-std::shared_ptr<const Mesh> evaluate_mesh(const Project&, const Graph&, std::size_t id);
+std::shared_ptr<const Mesh> evaluate_mesh(const Project&, const Graph&, std::size_t id,const TextureOptions& = {});
 bool mesh_has_animation(const Mesh&);
 std::shared_ptr<const Mesh> pose_mesh(const std::shared_ptr<const Mesh>&,float time);
 Bounds mesh_bounds(const Mesh&);

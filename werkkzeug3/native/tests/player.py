@@ -27,7 +27,7 @@ with tempfile.TemporaryDirectory(prefix="wz3-player-") as directory:
     assert "Playback complete:" in result.stdout and "2000 ms" in result.stdout
     assert "Video: offscreen; audio: disk;" in result.stdout
     assert "Loading complete:" in result.stdout
-    assert "Playback allocations: 0 meshes, 0 fonts, 0 surfaces, 0 bitmaps, 0 mesh uploads, 0 shadow uploads, 0 instance buffers, 0 programs, 0 lighting tables" in result.stdout
+    assert "Playback allocations: 0 meshes, 0 fonts, 0 surfaces, 0 bitmaps, 0 mesh uploads, 0 shadow uploads, 0 instance buffers, 0 bitmap renders, 0 programs, 0 lighting tables" in result.stdout
     image = (path / "frame.ppm").read_bytes()
     assert image.startswith(b"P6\n160 120\n255\n"), "invalid player capture dimensions"
     pixels = image.split(b"\n", 3)[3]

@@ -1,5 +1,8 @@
 // Distributed under the BSD license in werkkzeug3/LICENSE.txt.
 #include "wz3/texture.hpp"
+#if WZ3_GPU_PREVIEW
+#include "wz3/frame.hpp"
+#endif
 #include <charconv>
 #include <iostream>
 #include <stdexcept>
@@ -30,6 +33,9 @@ int main(int argc, char** argv) {
       if (error != std::errc{} || end != selector.data() + selector.size())
         throw std::runtime_error("no operator named " + std::string(selector));
     }
+#if WZ3_GPU_PREVIEW
+    options=wz3::rendered_texture_options(project,graph,options);
+#endif
     const auto texture = wz3::evaluate_texture(project, graph, id, options);
     for (const auto& font : texture->fonts) if (font)
       std::cerr << "Font page " << font->page << ": requested " << font->requested_family
