@@ -83,7 +83,7 @@ bool SceneAssets::matches(const Project& p,const Graph& g,const TextureOptions& 
 std::shared_ptr<const Mesh> SceneAssets::mesh(std::size_t id) {
   if(const auto found=meshes.find(id);found!=meshes.end())return found->second;
   auto value=evaluate_mesh(project,graph,id);
-  const auto bytes=value->vertices.size()*sizeof(MeshVertex)+value->faces.size()*sizeof(MeshFace)+value->kernel->bytes();
+  const auto bytes=mesh_storage_bytes(*value);
   require(bytes<=256u*1024*1024-mesh_bytes,"scene mesh cache budget exceeded");
   meshes.emplace(id,value);mesh_bytes+=bytes;return value;
 }
@@ -118,9 +118,10 @@ struct ScenePlayer::Impl {
     if(cmd==1) {require(node.links.size()==1 && node.links[0].has_value(),"unresolved scene Load");return *node.links[0];}
     require((cmd==2 || cmd==3 || cmd==5 || cmd==6 || cmd==0x16 || cmd==0x180) && node.inputs.size()==1,"invalid scene alias");return node.inputs[0];
   }
-  std::size_t concrete(std::size_t id) const {
+  std::size_t concrete(std::size_t id,bool follow_scene_pass=true) const {
     for(unsigned depth=0;depth<512;++depth) {
       valid(id);const auto cmd=project.operators[id].command;
+      if(cmd==0x180 && !follow_scene_pass)return id;
       if((cmd<1 || cmd>3) && cmd!=5 && cmd!=6 && cmd!=0x16 && cmd!=0x180)return id;
       id=alias(id);
     }
@@ -205,8 +206,11 @@ struct ScenePlayer::Impl {
   }
   void execute(std::size_t id,AnimationEnvironment& env,const SceneMatrix& world,SceneFrame& frame,EventTimeline* timeline,unsigned depth=0,std::int32_t pass=0) {
     valid(id);require(depth<512 && ++frame.visited_operators<=1000000,"scene traversal limit");
-    Visit visit(visiting,id);const auto target=concrete(id);
-    if(operator_info(project.operators[target].command).category=="MESH") {
+    // AdjustPass produces a scene even when its input is a mesh. It must run
+    // before ExecSceneInput-style dispatch reaches the cached geometry.
+    Visit visit(visiting,id);const auto target=concrete(id,false);
+    const auto category=operator_info(project.operators[target].command).category;
+    if(category=="MESH" || category=="MINMESH") {
       require(frame.instances.size()<65536,"scene instance limit");
       for(auto source=id;source!=target;source=alias(source))
         require(!project.operators[source].has_animation(),"animated mesh alias precalculation is not ported");

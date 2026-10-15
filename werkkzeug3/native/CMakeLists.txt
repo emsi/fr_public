@@ -33,6 +33,12 @@ if(WZ3_SANITIZE)
 endif()
 
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/minmesh_kernel.inc"
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/minmesh_kernel.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../genminmesh.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/minmesh_kernel.inc"
+  DEPENDS tools/minmesh_kernel.py tools/particles_oracle.py ../genminmesh.cpp VERBATIM)
+target_sources(wz3_project PRIVATE src/minmesh_kernel.cpp src/minmesh_evaluate.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/minmesh_kernel.inc")
+set_source_files_properties(src/minmesh_kernel.cpp src/minmesh_evaluate.cpp PROPERTIES COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
 add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/spline_kernel.inc"
   COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/spline_kernel.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/../genblobspline.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/../_types.cpp"
@@ -142,6 +148,16 @@ if(WZ3_BUILD_PLAYER)
 endif()
 
 if(BUILD_TESTING)
+  add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/minmesh_oracle.inc"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/minmesh_oracle.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../genmesh.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/../engine.cpp"
+      "${CMAKE_CURRENT_BINARY_DIR}/generated/minmesh_oracle.inc"
+    DEPENDS tools/minmesh_oracle.py tools/particles_oracle.py ../genmesh.cpp ../engine.cpp VERBATIM)
+  add_executable(wz3-minmesh-tests tests/minmesh.cpp tests/minmesh_reference.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/minmesh_oracle.inc")
+  target_include_directories(wz3-minmesh-tests PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_compile_options(wz3-minmesh-tests PRIVATE -frounding-math -ffp-contract=off)
+  target_link_libraries(wz3-minmesh-tests PRIVATE wz3_project)
+  add_test(NAME minmesh_geometry COMMAND wz3-minmesh-tests "${CMAKE_CURRENT_SOURCE_DIR}/../data/debris/debris_9241_c.k")
   add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/spline_oracle.inc"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/spline_oracle.py"
       "${CMAKE_CURRENT_SOURCE_DIR}/../genblobspline.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/spline_oracle.inc"
@@ -314,6 +330,10 @@ if(BUILD_TESTING)
     add_test(NAME gpu_theta_mesh COMMAND wz3-mesh-render
       "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta/theta_final.k" mesh.flatfractal
       "${CMAKE_CURRENT_BINARY_DIR}/theta-fractal.ppm")
+    add_test(NAME gpu_debris_mesh COMMAND wz3-mesh-render
+      "${CMAKE_CURRENT_SOURCE_DIR}/../data/debris/debris_9241_c.k" 925
+      "${CMAKE_CURRENT_BINARY_DIR}/debris-mesh-925.ppm")
+    set_tests_properties(gpu_debris_mesh PROPERTIES LABELS graphics)
     add_executable(wz3-mesh-render-tests tests/render_mesh.cpp src/render.cpp)
     target_link_libraries(wz3-mesh-render-tests PRIVATE wz3_project PkgConfig::EGL PkgConfig::GLES)
     add_test(NAME gpu_mesh_depth COMMAND wz3-mesh-render-tests)

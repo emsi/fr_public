@@ -2,6 +2,7 @@
 // EngMesh::PrepareJob/UpdateShadowCacheJob and sFrustum::ZFailVolume.
 #include "wz3/shadow.hpp"
 #include "mesh_kernel.hpp"
+#include "minmesh_kernel.hpp"
 #include "mesh_topology.hpp"
 #include <cmath>
 #include <set>
@@ -23,12 +24,45 @@ std::vector<std::uint8_t> shadow_face_mask(const Mesh& mesh,const std::map<std::
     return false;
   };
   std::vector<std::uint8_t> mask;
-  if(mesh.kernel)for(int f=0;f<mesh.kernel->Face.Count;++f){const auto& face=mesh.kernel->Face[f];mask.push_back(face.Material && face.Used && casts(face.binding));}
+  if(mesh.min_kernel)for(int f=0;f<mesh.min_kernel->Faces.Count;++f) {
+    const auto& face=mesh.min_kernel->Faces[f];const auto* m=mesh.min_kernel->Clusters[face.Cluster].Mtrl;
+    mask.push_back(face.Count>=3 && face.Cluster && !(face.Flags&1) && m && casts(m->binding));
+  }
+  else if(mesh.kernel)for(int f=0;f<mesh.kernel->Face.Count;++f){const auto& face=mesh.kernel->Face[f];mask.push_back(face.Material && face.Used && casts(face.binding));}
   else for(const auto& face:mesh.faces)mask.push_back(face.casts_shadow && casts(face.material));
   return mask;
 }
 ShadowMesh prepare_shadow_mesh(const Mesh& mesh,std::span<const std::uint8_t> mask) {
   validate_mesh(mesh);std::vector<Polygon> polygons;
+  if(mesh.min_kernel) {
+    // EngMesh::PrepareJob(GenMinMesh*) uses its own face normals, welded
+    // adjacency and zero mapping for unselected neighboring face planes.
+    const auto& core=*mesh.min_kernel;require(mask.size()==std::size_t(core.Faces.Count),"MINMESH shadow face mask size");
+    ShadowMesh out;out.planes.push_back({});std::vector<std::uint32_t> mapping(mask.size());
+    for(std::size_t i=0;i<mask.size();++i)if(mask[i]) {
+      const auto& f=core.Faces[i];require(f.Count>=3,"invalid MINMESH shadow polygon");
+      mapping[i]=out.planes.size();const auto& n=f.Normal;const auto& p=core.Vertices[f.Vertices[0]].Pos;
+      out.planes.push_back({n.x,n.y,n.z,-n.Dot(p)});
+    }
+    if(out.planes.size()==1)return out;
+    for(const auto& v:mesh.vertices)out.vertices.push_back(v.position);
+    for(std::size_t i=0;i<mask.size();++i)if(mask[i]) {
+      const auto& f=core.Faces[i];
+      for(unsigned c=2;c<f.Count;++c) {
+        for(auto v:{f.Vertices[0],f.Vertices[c-1],f.Vertices[c]})out.triangles.push_back(v*2);
+        out.triangle_planes.push_back(mapping[i]);
+      }
+      for(unsigned c=0;c<f.Count;++c) {
+        const auto adjacent=f.Adjacent[c];const auto neighbor=adjacent<0 ? -1 : adjacent/8;
+        require(neighbor<int(mask.size()),"MINMESH shadow adjacency out of bounds");
+        // Preserve the archive's face-index comparison: open boundary edges
+        // (neighbor -1) do not produce silhouette edges in this engine path.
+        if(int(i)<neighbor)out.edges.push_back({{std::uint32_t(f.Vertices[c]*2),std::uint32_t(f.Vertices[(c+1)%f.Count]*2)},
+          {mapping[i],mapping[neighbor]}});
+      }
+    }
+    return out;
+  }
   if(mesh.kernel) {
     const auto& core=*mesh.kernel;require(mask.size()==std::size_t(core.Face.Count),"shadow kernel face mask size");polygons.resize(mask.size());
     for(std::uint32_t f=0;f<polygons.size();++f) {

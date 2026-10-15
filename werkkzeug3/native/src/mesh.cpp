@@ -1,6 +1,7 @@
 // Distributed under the BSD license in werkkzeug3/LICENSE.txt.
 #include "wz3/mesh.hpp"
 #include "mesh_kernel.hpp"
+#include "minmesh_kernel.hpp"
 #include <algorithm>
 #include <cmath>
 #include <fstream>
@@ -34,7 +35,26 @@ void validate_mesh(const Mesh& mesh) {
   }
 }
 std::shared_ptr<const Mesh> evaluate_mesh(const Project& project, const Graph& graph, std::size_t id) {
-  return legacy::evaluate_kernel(project,graph,id);
+  auto target=id;
+  for(unsigned depth=0;depth<512;++depth) {
+    if(target>=project.operators.size() || target>=graph.nodes.size() || !graph.nodes[target].active)throw std::runtime_error("invalid mesh operator");
+    const auto cmd=project.operators[target].command;const auto& node=graph.nodes[target];
+    if(cmd==1) {
+      if(node.links.size()!=1 || !node.links[0])throw std::runtime_error("unresolved mesh Load");
+      target=*node.links[0];
+    }else if(cmd==2 || cmd==3) {
+      if(node.inputs.size()!=1)throw std::runtime_error("invalid mesh alias");
+      target=node.inputs[0];
+    }else {
+      if(operator_info(cmd).category=="MINMESH")return legacy::minimal::evaluate_kernel(project,graph,id);
+      return legacy::evaluate_kernel(project,graph,id);
+    }
+  }
+  throw std::runtime_error("cycle or excessive depth in mesh aliases");
+}
+std::size_t mesh_storage_bytes(const Mesh& mesh) {
+  return mesh.vertices.size()*sizeof(MeshVertex)+mesh.faces.size()*sizeof(MeshFace)+
+    (mesh.kernel ? mesh.kernel->bytes() : 0)+(mesh.min_kernel ? mesh.min_kernel->bytes() : 0);
 }
 void write_obj(const std::filesystem::path& path, const Mesh& mesh) {
   validate_mesh(mesh);

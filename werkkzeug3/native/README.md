@@ -33,14 +33,41 @@ The `_c` project names the included `debris/debris_ost.v2m`; the other project
 still names `debris.v2m`.
 
 **Debris does not play yet.** CPU frame preparation now passes material
-initialization and spline-camera evaluation, then stops at MINMESH `MatLink`
-operator 925.
-Material 2.0 GPU shaders/albedo capture, later MINMESH operators and
+initialization, spline-camera evaluation and the first MINMESH objects, then
+stops at scene `Marker` operator 15780.
+Material 2.0 GPU shaders/albedo capture, remaining MINMESH/scene operators and
 Water/Glare/Color Correction effects also remain to be ported.
 The player synthesizes its V2 soundtrack into stereo PCM before playback, using
 the same SDL callback clock as Ogg music. The existing Theta renderer and released-clock profile
 do not establish compatibility with Debris. `debris_projects` compares the real
 wrapped files with their legacy documents and tests malformed container handling.
+
+The native MINMESH core uses the archived grid/cube/sphere, selection, material
+cluster, transform, bend, extrusion along normals, triangulation and centering
+routines. It also supports Add and conversion from the older indexed mesh
+format. MINMESH retains up to eight corners per polygon, both UV sets and
+two-vertex stitch records; normals/tangents and shadow adjacency come from its
+own kernels. Material links retain operator identities and pass numbers.
+Animated mesh initialization, bones, Pipe, Explode, Font3D, Multiply and Perlin
+displacement still fail explicitly.
+
+Currently 232 of the 563 reachable MINMESH operators evaluate in isolation.
+The remaining operators depend on unported commands, including a few older
+mesh modifiers. These counts describe geometry coverage, not rendered scenes.
+Tests compare conversion against the archived `Mesh_ToMin` and shadow planes,
+edges and triangle indices against `EngMesh::PrepareJob(GenMinMesh*)`; they also
+check primitive dimensions/winding, UV seams, selection, cluster reuse,
+copy-on-write behavior, malformed inputs and scene-cache integration. The first
+Debris object has 1,014 vertices and 864 polygons, with bounds [-6,-6,-6] through
+[6,6,6]. It can be inspected with:
+
+```sh
+build/native/wz3-mesh werkkzeug3/data/debris/debris_9241_c.k 925 build/native/debris-925.obj
+build/native/wz3-mesh-render werkkzeug3/data/debris/debris_9241_c.k 925 build/native/debris-925.ppm
+```
+
+The image uses diagnostic lighting; the saved Material 2.0 shader is not yet
+rendered. This preview does not establish Debris visual compatibility.
 
 Spatial camera paths use the archived Hermite, derivative, quaternion and
 orientation kernels, with bounded blob readers and cached native spline objects.
