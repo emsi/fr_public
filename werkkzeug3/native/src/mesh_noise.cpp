@@ -26,6 +26,7 @@ int floor_coordinate(float v) {
 }
 struct NoiseData {
   std::array<std::uint8_t,512> permutation{};
+  std::array<std::array<float,2>,256> gradient2{};
   std::array<sVector,16> gradient{{
     {1,1,0,0},{-1,1,0,0},{1,-1,0,0},{-1,-1,0,0},
     {1,0,1,0},{-1,0,1,0},{1,0,-1,0},{-1,0,-1,0},
@@ -47,10 +48,17 @@ struct NoiseData {
       std::swap(keys[i],keys[j]);std::swap(permutation[i],permutation[j]);
     }
     std::copy_n(permutation.begin(),256,permutation.begin()+256);
+    // Continue the same generator after the permutation keys. These are
+    // rejection-sampled disk vectors, not normalized directions on a circle.
+    for(unsigned i=0;i<256;) {
+      const int x=int(next()%65536)-32768,y=int(next()%65536)-32768;
+      if(std::int64_t(x)*x+std::int64_t(y)*y<32768*32768)gradient2[i++]={x/32768.f,y/32768.f};
+    }
   }
 };
 const NoiseData& noise_data() {static const NoiseData data;return data;}
 }
 const std::array<std::uint8_t,512>& perlin_permutation() {return noise_data().permutation;}
+const std::array<std::array<float,2>,256>& perlin_gradients2() {return noise_data().gradient2;}
 #include "mesh_noise.inc"
 } // namespace wz3::legacy

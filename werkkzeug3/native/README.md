@@ -36,7 +36,7 @@ still names `debris.v2m`.
 main viewport contains 76 mesh instances, two lights and 26 ChainLine cables.
 Continuous CPU preparation in 16 ms steps reaches 9,808 ms (beat 32.0394), then
 stops at the unported Glare effect, operator 10464. Full rendering now enters
-the Material 2.0 pipeline, then stops at unported Perlin texture operator 43017
+the Material 2.0 pipeline, then stops at unported Range texture operator 47104
 in the dependencies of material 41956 in the first viewport.
 Remaining MINMESH/scene operators and Water/Glare/Color Correction effects
 also remain to be ported.
@@ -188,8 +188,19 @@ blend, add and subtract operations; it preserves the mask input's metadata.
 Light/Bump parameter sets with the extracted original handler, using controlled
 source images. It checks 10,000 AddScale and 16,384 Mask cases against the MMX
 instruction sequence through SSE2, plus graph wiring and invalid inputs. These
-checks do not yet cover the complete saved texture graphs: upstream Perlin and
-other generators still need ports.
+checks do not yet cover the complete saved texture graphs: other generators
+and filters still need ports.
+
+The Perlin generator reproduces the saved editor-project (`!sINTRO`) kernel:
+the original LCG/permutation and unnormalized disk gradients, quintic lookup,
+fixed-point row accumulation with 32-bit wrapping, four noise modes, gamma
+lookup and MMX color interpolation. It restores the caller's floating-point
+environment and rejects invalid shifts/table access. All 42 reachable Debris
+Perlin images match the extracted original kernel at their saved 256/512-pixel
+resolutions; 324 synthetic combinations cover non-square images, modes, seeds,
+negative falloff and rounding. The compact intro executable's scalar Perlin
+loop differs in coordinate calculation and rounding and is a separate release
+compatibility profile, not selected for these saved editor documents.
 
 The native `wz3-v2m` tool reads compact music modules, reconstructs their MIDI
 event stream/sample positions and optionally renders stereo float WAV without

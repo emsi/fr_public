@@ -46,6 +46,8 @@ void adjust_hscb(Texture&, float hue, float saturation, float contrast, float br
 // Bitmap_Bump's 14 saved words; an absent normal map is the Bitmap_Light path.
 void bump_bitmap(Texture&, const Texture* normals, std::span<const std::uint32_t> parameters);
 Pixel add_scale64(const Pixel& base,const Pixel& color,std::int32_t fade);
+// Saved editor-project Bitmap_Perlin (!sINTRO), including fixed-point rows.
+void perlin_bitmap(Texture&,std::span<const std::uint32_t> parameters);
 void draw_cached_text(Texture&, std::span<const std::uint8_t> blob, std::uint32_t color, unsigned flags,
                       float inner_spacing = 0, std::string_view family = {});
 void generate_font_atlas(Texture&, const FontLayout&, const std::filesystem::path& font_file);

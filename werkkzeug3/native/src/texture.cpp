@@ -69,13 +69,14 @@ public:
       cache_[id] = evaluate(*node.links[0], depth + 1);
     } else if (op.command == 2 || op.command == 3) {
       cache_[id] = input();
-    } else if (op.command == 0x21 || op.command == 0x34) {
+    } else if (op.command == 0x21 || op.command == 0x22 || op.command == 0x34) {
       if (!node.inputs.empty()) throw std::runtime_error("texture generator has unexpected inputs");
-      require(op, op.command == 0x21 ? 3 : 8);
+      require(op, op.command == 0x21 ? 3 : op.command == 0x22 ? 11 : 8);
       const auto width = 1u << std::clamp<int>(op.parameters[0] & 0x7f, 0, 12);
       const auto height = 1u << std::clamp(std::bit_cast<std::int32_t>(op.parameters[1]), 0, 12);
       auto texture = allocate(width, height);
       if (op.command == 0x21) std::fill(texture->pixels.begin(), texture->pixels.end(), color64(op.parameters[2]));
+      else if(op.command==0x22)perlin_bitmap(*texture,op.parameters);
       else gradient(*texture, op);
       cache_[id] = std::move(texture);
     } else if (op.command == 0x24) {

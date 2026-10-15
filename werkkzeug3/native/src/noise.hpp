@@ -4,4 +4,5 @@
 #include <cstdint>
 namespace wz3::legacy {
 const std::array<std::uint8_t,512>& perlin_permutation();
+const std::array<std::array<float,2>,256>& perlin_gradients2();
 }
