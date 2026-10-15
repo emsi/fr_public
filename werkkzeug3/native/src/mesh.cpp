@@ -53,7 +53,7 @@ std::shared_ptr<const Mesh> evaluate_mesh(const Project& project, const Graph& g
   throw std::runtime_error("cycle or excessive depth in mesh aliases");
 }
 std::size_t mesh_storage_bytes(const Mesh& mesh) {
-  return mesh.vertices.size()*sizeof(MeshVertex)+mesh.faces.size()*sizeof(MeshFace)+
+  return mesh.vertices.capacity()*sizeof(MeshVertex)+mesh.faces.capacity()*sizeof(MeshFace)+
     (mesh.kernel ? mesh.kernel->bytes() : 0)+(mesh.min_kernel ? mesh.min_kernel->bytes() : 0);
 }
 void write_obj(const std::filesystem::path& path, const Mesh& mesh) {

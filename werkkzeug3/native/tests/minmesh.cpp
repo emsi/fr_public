@@ -131,6 +131,20 @@ void scene_integration() {
   check(a.instances[0].pass_adjust==7,"MINMESH scene pass wrapper was skipped");
   check(assets->stats().mesh_bytes==mesh_storage_bytes(*a.instances[0].mesh),"MINMESH cache accounting");
 }
+void compact_storage() {
+  Fixture x;const auto original=x.get(x.add(0x102,cube(2,3,4)));
+  auto core=std::make_shared<mm::GenMinMesh>(*original->min_kernel);
+  core->Vertices.AtLeast(16384);core->Faces.AtLeast(16384);
+  const auto oversized=core->bytes();const auto packed=mm::export_mesh(core);
+  check(core->bytes()<oversized/100,"immutable MINMESH kept construction capacity");
+  check(core->Vertices.Array==core->Vertices.storage.data() && core->Faces.Array==core->Faces.storage.data(),"MINMESH compaction left dangling pointers");
+  check(mesh_normals(packed)==mesh_normals(*original),"MINMESH compaction changed normals");
+  check_minmesh_shadow_reference(packed,all_shadow(packed));
+  auto copy=std::make_shared<mm::GenMinMesh>(*packed.min_kernel);copy->Add(packed.min_kernel.get());
+  const auto doubled=mm::export_mesh(copy);check(doubled.faces.size()==2*packed.faces.size(),"compacted MINMESH cannot grow again");
+  const auto empty=mm::export_mesh(std::make_shared<mm::GenMinMesh>());
+  check(empty.vertices.empty() && empty.faces.empty() && empty.min_kernel->Vertices.storage.size()==1 && empty.min_kernel->Faces.storage.size()==1,"MINMESH compaction lost empty-array sentinels");
+}
 void debris(const char* path) {
   const auto p=read_project(path);const auto g=connect(p);const auto mesh=evaluate_mesh(p,g,925);
   check(mesh->vertices.size()==1014 && mesh->faces.size()==864,"Debris first MINMESH object changed topology");
@@ -155,6 +169,6 @@ void debris(const char* path) {
 }
 }
 int main(int argc,char** argv) {
-  try{primitives();selection_and_clusters();conversion();topology_and_limits();scene_integration();if(argc>1)debris(argv[1]);}
+  try{primitives();selection_and_clusters();conversion();topology_and_limits();scene_integration();compact_storage();if(argc>1)debris(argv[1]);}
   catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
 }

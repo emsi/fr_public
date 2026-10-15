@@ -103,6 +103,10 @@ template<class T> struct Storage {
     if(std::size_t(n)>storage.size()) storage.resize(std::max(std::size_t(n),std::min(kernel_limit,storage.size()*2+16)));
     Array=storage.data();
   }
+  void compact(int minimum=0) {
+    if(Count<0 || std::size_t(Count)>storage.size())throw std::runtime_error("invalid indexed mesh storage count");
+    storage.resize(std::max(Count,minimum));storage.shrink_to_fit();Array=storage.data();
+  }
   T* Add() {AtLeast(Count+1);return &Array[Count++];}
   T& operator[](int i) {if(i<0 || std::size_t(i)>=storage.size())throw std::runtime_error("indexed mesh array bounds");return Array[i];}
   const T& operator[](int i) const {return const_cast<Storage*>(this)->operator[](i);}
@@ -142,7 +146,7 @@ public:
   GenMesh()=default;
   GenMesh(const GenMesh&);
   GenMesh& operator=(const GenMesh&)=delete;
-  void Init(sU32,int); void Realloc(int);
+  void Init(sU32,int); void Realloc(int);void compact_storage();
   int VertSize() const {return 5;} int VertMask() const {return sGMF_DEFAULT;}
   int VertMap(int i) const {return i<4 ? i : i==5 ? 4 : -1;}
   sVector& VertPos(int v) {return buffer.at(v*5);}

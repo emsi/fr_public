@@ -234,6 +234,10 @@ Mesh export_mesh(std::shared_ptr<GenMesh> mesh) {
       f.crease={std::uint8_t(c==1 ? creases[0] : 0),creases[c],std::uint8_t(c+2==corners.size() ? creases.back() : 0),0};out.faces.push_back(f);
     }
   }
+  // Construction retains spare capacity for subdivision/extrusion. The scene
+  // cache owns an immutable result and needs only the used array ranges, including
+  // deleted faces still referenced by half-edges.
+  mesh->compact_storage();out.faces.shrink_to_fit();
   out.kernel=std::move(mesh);validate_mesh(out);return out;
 }
 std::shared_ptr<const Mesh> evaluate_kernel(const Project& project,const Graph& graph,std::size_t id) {

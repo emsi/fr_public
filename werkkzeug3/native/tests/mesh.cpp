@@ -242,7 +242,7 @@ void multiply2() {
 void deletion_and_normal_extrusion() {
   Fixture p;const auto base=p.add(0x81,cube());const auto original=p.get(base);
   const auto deleted=p.get(p.add(0x93,{3},{base}));
-  check(deleted->faces.size()==4 && deleted->vertices.size()==24,"Delete Faces must retain vertices and remove masked faces");
+  check(deleted->faces.size()==4 && deleted->vertices.size()==24 && deleted->kernel->Face.Count==6,"Delete Faces must retain vertices/deleted half-edge faces and remove masked faces from export");
   for(const auto& face:deleted->faces)check(!(face.mask&3),"Delete Faces removed wrong faces");
   check(p.get(p.add(0x93,{0},{base}))->faces.empty(),"Delete Faces zero mask must remove all faces");
   const auto selected=p.add(0x86,{0x10000,2,0,f(.5f),0,f(2),f(.01f),f(2)},{base});
@@ -256,6 +256,22 @@ void deletion_and_normal_extrusion() {
   }
   const auto branches=p.get(p.add(0x92,{}, {base,p.add(0x93,{0},{base})}));
   check(branches->faces.size()==6,"Delete Faces modified a shared input");
+}
+void compact_storage() {
+  Fixture p;const auto base=p.add(0x81,cube());const auto original=p.get(base);
+  auto core=std::make_shared<wz3::legacy::GenMesh>(*original->kernel);
+  core->Vert.AtLeast(16384);core->Edge.AtLeast(16384);core->Face.AtLeast(16384);core->Realloc(16384);
+  const auto oversized=core->bytes();const auto packed=wz3::legacy::export_mesh(core);
+  check(core->bytes()<oversized/100,"immutable indexed mesh kept construction capacity");
+  check(core->Vert.Array==core->Vert.storage.data() && core->VertBuf==core->buffer.data(),"compaction left dangling indexed mesh pointers");
+  check(wz3::mesh_normals(packed)==wz3::mesh_normals(*original),"compaction changed indexed normals");
+  for(std::size_t i=0;i<packed.vertices.size();++i)check(packed.vertices[i].position==original->vertices[i].position && packed.vertices[i].uv==original->vertices[i].uv && packed.vertices[i].point==original->vertices[i].point,"compaction changed indexed attributes/topology");
+  // A conversion or later modifier can copy the immutable core and grow it.
+  wz3::legacy::GenMesh copy(*packed.kernel);wz3::legacy::Mesh_Subdivide(nullptr,&copy,0,1,1);
+  const auto expanded=wz3::legacy::export_mesh(std::make_shared<wz3::legacy::GenMesh>(copy));
+  const auto reference=p.get(p.add(0x87,{0,f(1),1},{base}));
+  check(expanded.vertices.size()==reference->vertices.size() && expanded.faces.size()==reference->faces.size(),"compacted indexed core cannot grow again");
+  check(wz3::mesh_normals(expanded)==wz3::mesh_normals(*reference),"compacted indexed subdivision changed normals");
 }
 void debris(const char* path) {
   const auto p=wz3::read_project(path);const auto g=wz3::connect(p);
@@ -527,7 +543,7 @@ void noise_displacement() {
 }
 int main(int argc,char** argv) {
   try {
-    check(argc==3,"expected Theta and Debris projects");primitives();operators();multiply2();deletion_and_normal_extrusion();normals();bends();indexed_operations();attributes_and_grids();displacement();noise_displacement();debris(argv[2]);
+    check(argc==3,"expected Theta and Debris projects");primitives();operators();multiply2();deletion_and_normal_extrusion();compact_storage();normals();bends();indexed_operations();attributes_and_grids();displacement();noise_displacement();debris(argv[2]);
     const auto project=wz3::read_project(argv[1]);const auto graph=wz3::connect(project);
     for (const auto* name : {"mesh.cube","mesh.bwflattorus","mesh.LineCircle","mesh.FireGradientCircle",
         "mesh.bwflattorus8","mesh.bwflattorus4","mesh.flatfractal","mesh.g4flat","mesh.citybridge",

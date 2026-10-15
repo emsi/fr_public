@@ -85,7 +85,9 @@ std::shared_ptr<const Mesh> SceneAssets::mesh(std::size_t id) {
   if(const auto found=meshes.find(id);found!=meshes.end())return found->second;
   auto value=evaluate_mesh(project,graph,id);
   const auto bytes=mesh_storage_bytes(*value);
-  require(bytes<=256u*1024*1024-mesh_bytes,"scene mesh cache budget exceeded");
+  constexpr std::size_t budget=1024u*1024*1024;
+  if(bytes>budget-mesh_bytes)throw std::runtime_error("scene mesh cache budget exceeded: operator "+std::to_string(id)+
+    " needs "+std::to_string(bytes)+" bytes; "+std::to_string(meshes.size())+" cached meshes use "+std::to_string(mesh_bytes)+" of "+std::to_string(budget)+" bytes");
   meshes.emplace(id,value);mesh_bytes+=bytes;return value;
 }
 std::shared_ptr<const Texture> SceneAssets::font(std::size_t id) {

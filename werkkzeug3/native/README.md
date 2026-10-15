@@ -35,7 +35,7 @@ still names `debris.v2m`.
 **Debris does not play yet.** Its opening frame now prepares on the CPU: the
 main viewport contains 76 mesh instances, two lights and 26 ChainLine cables.
 Continuous CPU preparation in 16 ms steps reaches 9,808 ms (beat 32.0394), then
-hits the current 256 MiB scene mesh-cache limit. Full rendering stops at the
+stops at the unported Glare effect, operator 10464. Full rendering stops at the
 first viewport because Material 2.0 GPU shaders/albedo capture are not ported.
 Remaining MINMESH/scene operators and Water/Glare/Color Correction effects
 also remain to be ported.
@@ -79,6 +79,16 @@ cannot overflow. Material/pass bindings, shadow flags, selection and topology
 survive each append. Debris operator 16395 now builds its 60 copies into 4,320
 vertices and 840 polygons. Scene nodes also accept an absent mesh, as in the
 original runtime.
+
+Cached meshes release spare construction capacity while retaining polygon,
+half-edge, stitch and deleted-face records. This reduces the opening scene's
+geometry storage from about 65 MiB to 53 MiB. The scene cache allows up to 1 GiB
+of completed meshes; per-recipe construction still has its 256 MiB budget and
+element limits. At the first scene transition it holds 236 meshes using about
+317 MiB, with about 396 MiB peak process RSS in the CPU-only preroll check.
+Audio, textures and GPU buffers are additional, so this is not a whole-demo
+memory requirement. Tests cover normals/shadows, retained topology, empty-array
+sentinels and growing a mutable copy after compaction.
 
 Scene Marker stores the complete current transform before running its optional
 child. The 32 markers start as identity matrices and survive frame/viewport

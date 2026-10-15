@@ -70,6 +70,9 @@ Mesh export_mesh(std::shared_ptr<GenMinMesh> core) {
       face.count=3;face.vertices={std::uint32_t(f.Vertices[0]),std::uint32_t(f.Vertices[c-1]),std::uint32_t(f.Vertices[c]),0};out.faces.push_back(face);
     }
   }
+  // Keep the archive's empty-array sentinel, stitch records and deleted faces;
+  // release only unused construction capacity before caching the final mesh.
+  core->Vertices.compact(1);core->Faces.compact(1);core->Clusters.compact();out.faces.shrink_to_fit();
   out.min_kernel=std::move(core);validate_mesh(out);return out;
 }
 } // namespace wz3::legacy::minimal

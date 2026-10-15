@@ -68,6 +68,10 @@ void GenMesh::Realloc(int count) {
   if(std::size_t(count)*5>=buffer.size()) buffer.resize(std::max(std::size_t(count)*5,std::min(kernel_limit*5,buffer.size()*3/2+5)));
   VertBuf=buffer.data();
 }
+void GenMesh::compact_storage() {
+  Vert.compact();Edge.compact();Face.compact();Coll.compact();Parts.compact();Lgts.compact();
+  buffer.resize(std::size_t(Vert.Count)*5);buffer.shrink_to_fit();VertBuf=buffer.data();
+}
 bool CheckMesh(GenMesh*& mesh,sU32 mask) {
   if(!mesh) throw std::runtime_error("missing indexed mesh input");
   if(!(mask&0x80000000u)) {if(mask)mesh->Mask2Sel(mask);else mesh->All2Sel();}
@@ -134,7 +138,7 @@ void GenMesh::validate() const {
 }
 std::size_t GenMesh::bytes() const {
   return Vert.storage.capacity()*sizeof(GenMeshVert)+Edge.storage.capacity()*sizeof(GenMeshEdge)+
-    Face.storage.capacity()*sizeof(GenMeshFace)+buffer.capacity()*sizeof(sVector)+(Parts.storage.capacity()+Lgts.storage.capacity())*sizeof(int);
+    Face.storage.capacity()*sizeof(GenMeshFace)+Coll.storage.capacity()*sizeof(Collision)+buffer.capacity()*sizeof(sVector)+(Parts.storage.capacity()+Lgts.storage.capacity())*sizeof(int);
 }
 
 #define sVERIFY(condition) do {if(!(condition)) throw std::runtime_error("mesh kernel invariant: " #condition);} while(false)
