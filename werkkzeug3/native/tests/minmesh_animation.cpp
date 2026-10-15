@@ -119,14 +119,15 @@ void random_rotations() {
     }
   }
 }
-void recipes(const char* path) {
+void recipes(const char* path,const char* font) {
+  TextureOptions options;options.font_file=font;
   const auto p=read_project(path);const auto g=connect(p);unsigned recipes=0,complete=0;
   for(unsigned mode=0;mode<8;++mode)for(float flat:{0.f,.2f,-.1f}) {
     auto params=parameters(mode);params[19]=f(flat);const auto mesh=exploded(params);for(float t:{0.f,.1f,1.f,3.f})validate_mesh(*pose_mesh(mesh,t));
   }
   for(std::size_t i=0;i<p.operators.size();++i)if(g.nodes[i].reachable && p.operators[i].command==0x134) {
     const auto mesh=exploded(p.operators[i].parameters);for(float t:{0.f,.2f,1.f,10.f})validate_mesh(*pose_mesh(mesh,t));++recipes;
-    try{const auto real=evaluate_mesh(p,g,i);for(float t:{0.f,.2f,1.f})validate_mesh(*pose_mesh(real,t));++complete;}
+    try{const auto real=evaluate_mesh(p,g,i,options);for(float t:{0.f,.2f,1.f})validate_mesh(*pose_mesh(real,t));++complete;}
     catch(const std::runtime_error& e){if(!std::string(e.what()).ends_with(" is not ported"))throw;}
   }
   const auto first=evaluate_mesh(p,g,8157);check(mesh_has_animation(*first),"material link discarded Explode animation");
@@ -134,4 +135,4 @@ void recipes(const char* path) {
   std::cout<<recipes<<" saved Explode recipes and "<<complete<<" complete graphs pose; analytic motion, RNG, bitmap delays and archived shadow planes pass\n";
 }
 }
-int main(int argc,char** argv){try{topology_and_motion();timing_modes();polygons();random_rotations();if(argc==2)recipes(argv[1]);}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(int argc,char** argv){try{topology_and_motion();timing_modes();polygons();random_rotations();if(argc>2)recipes(argv[1],argv[2]);}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

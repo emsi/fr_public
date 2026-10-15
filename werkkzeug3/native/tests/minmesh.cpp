@@ -145,7 +145,8 @@ void compact_storage() {
   const auto empty=mm::export_mesh(std::make_shared<mm::GenMinMesh>());
   check(empty.vertices.empty() && empty.faces.empty() && empty.min_kernel->Vertices.storage.size()==1 && empty.min_kernel->Faces.storage.size()==1,"MINMESH compaction lost empty-array sentinels");
 }
-void debris(const char* path) {
+void debris(const char* path,const char* font) {
+  TextureOptions options;options.font_file=font;
   const auto p=read_project(path);const auto g=connect(p);const auto mesh=evaluate_mesh(p,g,925);
   check(mesh->vertices.size()==1014 && mesh->faces.size()==864,"Debris first MINMESH object changed topology");
   const auto box=mesh_bounds(*mesh);for(unsigned c=0;c<3;++c){near(box.min[c],-6,"Debris object lower bound");near(box.max[c],6,"Debris object upper bound");}
@@ -153,12 +154,12 @@ void debris(const char* path) {
   check_minmesh_shadow_reference(*mesh,all_shadow(*mesh));
   unsigned converted=0;std::map<std::string,unsigned> unsupported;
   for(std::size_t i=0;i<p.operators.size();++i)if(g.nodes[i].reachable && operator_info(p.operators[i].command).category=="MINMESH") {
-    try {const auto value=evaluate_mesh(p,g,i);validate_mesh(*value);++converted;}
+    try {const auto value=evaluate_mesh(p,g,i,options);validate_mesh(*value);++converted;}
     catch(const std::runtime_error& e) {
       const std::string message=e.what();const auto begin=message.find('('),end=message.find(')',begin);
       if(begin==std::string::npos || end==std::string::npos || !message.ends_with(" is not ported"))throw;
       const auto name=message.substr(begin+1,end-begin-1);
-      const std::set<std::string> remaining={"Perlin Displace","BoneChain","BoneTrain","Multiply","Font3D","Pipe"};
+      const std::set<std::string> remaining={"Multiply"};
       if(!remaining.contains(name))throw;
       ++unsupported[name];
     }
@@ -169,6 +170,6 @@ void debris(const char* path) {
 }
 }
 int main(int argc,char** argv) {
-  try{primitives();selection_and_clusters();conversion();topology_and_limits();scene_integration();compact_storage();if(argc>1)debris(argv[1]);}
+  try{primitives();selection_and_clusters();conversion();topology_and_limits();scene_integration();compact_storage();if(argc>2)debris(argv[1],argv[2]);}
   catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
 }
