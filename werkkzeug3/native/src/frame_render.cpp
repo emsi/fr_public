@@ -6,6 +6,7 @@
 #include "wz3/scene_draw.hpp"
 #include "wz3/lighting.hpp"
 #include "wz3/fog.hpp"
+#include "wz3/material20.hpp"
 #include <cmath>
 #include "gles.hpp"
 #include <algorithm>
@@ -113,7 +114,7 @@ struct FrameRenderer::Impl {
   const Project& project;const Graph& graph;TextureOptions texture_options;std::unique_ptr<gles::Context> context;
   struct Surface {GLuint color{},depth{},fbo{};unsigned width{},height{};};
   std::map<std::size_t,Surface> surfaces;
-  Surface shared_depth;
+  Surface shared_depth,albedo;
   std::map<std::size_t,GLuint> bitmaps;
   std::map<std::size_t,std::shared_ptr<const Texture>> supplied_bitmaps;
   std::map<std::size_t,std::size_t> bitmap_sizes;
@@ -149,6 +150,7 @@ struct FrameRenderer::Impl {
     if(context)eglMakeCurrent(context->display,context->surface,context->surface,context->context);
     for(const auto& [id,s]:surfaces) {static_cast<void>(id);destroy(s);}
     destroy(shared_depth);
+    destroy(albedo);
     for(const auto& [id,t]:bitmaps) {static_cast<void>(id);glDeleteTextures(1,&t);}
     for(const auto& [source,p]:programs) {static_cast<void>(source);glDeleteProgram(p);}
     for(const auto& [id,g]:geometry) {static_cast<void>(id);glDeleteBuffers(1,&g.buffer);}
@@ -208,6 +210,28 @@ struct FrameRenderer::Impl {
     glBlitFramebuffer(0,from.height-h,w,from.height,0,to.height-h,w,to.height,
                      GL_DEPTH_BUFFER_BIT|GL_STENCIL_BUFFER_BIT,GL_NEAREST);
     glBindFramebuffer(GL_FRAMEBUFFER,to.fbo);
+  }
+  void albedo_surface(const FrameTarget& target) {
+    // RenderTargetManager's 0x00010000 follows the master viewport and never
+    // shrinks. Keep its color storage separate from graph render target IDs.
+    const auto width=std::max(albedo.width,target.width),height=std::max(albedo.height,target.height);
+    if(width==albedo.width && height==albedo.height)return;
+    surface_bytes-=std::size_t(albedo.width)*albedo.height*4;destroy(albedo);albedo={};
+    const auto bytes=std::size_t(width)*height*4;require(bytes<=256u*1024*1024-surface_bytes,"Material 2.0 albedo target budget exceeded");surface_bytes+=bytes;
+    albedo.width=width;albedo.height=height;glGenTextures(1,&albedo.color);glBindTexture(GL_TEXTURE_2D,albedo.color);
+    glTexStorage2D(GL_TEXTURE_2D,1,GL_RGBA8,width,height);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAX_LEVEL,0);
+    glGenFramebuffers(1,&albedo.fbo);glBindFramebuffer(GL_FRAMEBUFFER,albedo.fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,albedo.color,0);
+    require(glCheckFramebufferStatus(GL_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE,"incomplete Material 2.0 albedo target");
+    glDisable(GL_SCISSOR_TEST);clear({1,0xff000000});glEnable(GL_SCISSOR_TEST);
+    glBindFramebuffer(GL_FRAMEBUFFER,surfaces.at(target.surface).fbo);++stats.surface_allocations;
+  }
+  void capture_albedo(const FrameTarget& target) {
+    const auto& from=surfaces.at(target.surface);
+    glDisable(GL_SCISSOR_TEST);glBindFramebuffer(GL_READ_FRAMEBUFFER,from.fbo);glBindFramebuffer(GL_DRAW_FRAMEBUFFER,albedo.fbo);
+    glBlitFramebuffer(0,from.height-target.height,target.width,from.height,
+      0,albedo.height-target.height,target.width,albedo.height,GL_COLOR_BUFFER_BIT,GL_NEAREST);
+    glBindFramebuffer(GL_FRAMEBUFFER,from.fbo);glEnable(GL_SCISSOR_TEST);
   }
   GLuint bitmap(std::size_t id,std::shared_ptr<const Texture> supplied={}) {
     const auto found=bitmaps.find(id);
@@ -321,12 +345,8 @@ struct FrameRenderer::Impl {
       glDrawArrays(GL_TRIANGLES,first,count);
     }
   }
-  FrameQuad resolve_material(const MaterialShader& shader,const SceneEffectDraw* effect=nullptr) {
-    require(!shader.material20,"Material 2.0 GPU shaders are not ported");
-    FrameQuad q;q.shader=shader;
-    for(unsigned slot=0;slot<4;++slot)if(q.shader.textures[slot]) {
-      auto id=*q.shader.textures[slot];
-      if(effect && effect->textures.contains(id)) {q.textures[slot]=FrameTexture{false,id};continue;}
+  FrameTexture resolve_texture(std::size_t id,const SceneEffectDraw* effect=nullptr) {
+      if(effect && effect->textures.contains(id))return FrameTexture{false,id};
       bool resolved=false;
       for(unsigned depth=0;depth<512;++depth) {
         require(id<project.operators.size() && graph.nodes[id].active,"invalid scene texture");const auto cmd=project.operators[id].command;
@@ -335,9 +355,98 @@ struct FrameRenderer::Impl {
         else {resolved=true;break;}
       }
       require(resolved,"scene texture alias depth limit");
-      q.textures[slot]=project.operators[id].command==0x26 ? FrameTexture{true,13+id} : FrameTexture{false,id};
-    }
+      return project.operators[id].command==0x26 ? FrameTexture{true,13+id} : FrameTexture{false,id};
+  }
+  FrameQuad resolve_material(const MaterialShader& shader,const SceneEffectDraw* effect=nullptr) {
+    require(!shader.material20,"Material 2.0 requires a mesh draw");
+    FrameQuad q;q.shader=shader;
+    for(unsigned slot=0;slot<4;++slot)if(q.shader.textures[slot])q.textures[slot]=resolve_texture(*q.shader.textures[slot],effect);
     return q;
+  }
+  void material20(const Material20Shader& shader,const FrameTarget& target,const MeshDraw& mesh,const SceneMatrix& projection,const SceneFrame& scene,const SceneLight* light) {
+    const auto source=material20_source(shader);const auto key=source.vertex+source.fragment;
+    GLuint p;
+    if(const auto found=programs.find(key);found!=programs.end())p=found->second;
+    else {
+      require(programs.size()<4096,"frame shader cache limit");
+      const auto vertex=gles::shader(GL_VERTEX_SHADER,source.vertex.c_str());GLuint fragment;
+      try {fragment=gles::shader(GL_FRAGMENT_SHADER,source.fragment.c_str());}catch(...){glDeleteShader(vertex);throw;}
+      p=glCreateProgram();glAttachShader(p,vertex);glAttachShader(p,fragment);glLinkProgram(p);glDeleteShader(vertex);glDeleteShader(fragment);
+      GLint ok=0;glGetProgramiv(p,GL_LINK_STATUS,&ok);
+      if(!ok){char log[4096]{};glGetProgramInfoLog(p,sizeof(log),nullptr,log);glDeleteProgram(p);throw std::runtime_error(std::string("Material 2.0 shader link failed: ")+log);}
+      programs.emplace(key,p);++stats.program_compilations;
+    }
+    glUseProgram(p);glBindVertexArray(vao);
+    std::array<float,27> matrices{};std::array<float,3> flip{};
+    for(std::size_t i=0;i<source.samplers.size();++i) {
+      const auto slot=source.samplers[i];GLuint texture;glActiveTexture(GL_TEXTURE0+i);
+      if(slot==7){require(albedo.color,"missing Material 2.0 albedo capture");texture=albedo.color;}
+      else {
+        const auto binding=resolve_texture(*shader.textures[slot]);
+        if(binding.surface) {
+          require(binding.id!=target.surface,"Material 2.0 render target feedback is not supported");
+          require(surfaces.contains(binding.id),"missing Material 2.0 sampled surface");texture=surfaces.at(binding.id).color;flip[i]=1;
+        }else texture=bitmap(binding.id);
+        const auto matrix=material20_uv_matrix(shader,slot);std::copy(matrix.begin(),matrix.end(),matrices.begin()+i*9);
+      }
+      const auto flags=material20_sampler_flags(shader,slot),filter=flags&7,sampler=samplers[i];
+      constexpr GLint min_filter[]={GL_NEAREST,GL_LINEAR,GL_LINEAR_MIPMAP_NEAREST,GL_LINEAR_MIPMAP_LINEAR,GL_LINEAR_MIPMAP_LINEAR,GL_NEAREST,GL_NEAREST,GL_NEAREST};
+      glBindTexture(GL_TEXTURE_2D,texture);glSamplerParameteri(sampler,GL_TEXTURE_MIN_FILTER,min_filter[filter]);
+      glSamplerParameteri(sampler,GL_TEXTURE_MAG_FILTER,filter>=1 && filter<=4 ? GL_LINEAR : GL_NEAREST);
+      glSamplerParameteri(sampler,GL_TEXTURE_WRAP_S,flags&0x100 ? GL_CLAMP_TO_EDGE : GL_REPEAT);glSamplerParameteri(sampler,GL_TEXTURE_WRAP_T,flags&0x100 ? GL_CLAMP_TO_EDGE : GL_REPEAT);
+      const auto extensions=reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS));
+      const bool anisotropic=extensions && std::string_view(extensions).find("GL_EXT_texture_filter_anisotropic")!=std::string_view::npos;
+      require(filter!=4 || anisotropic,"Material 2.0 needs anisotropic filtering");
+      if(anisotropic){GLfloat maximum=1;glGetFloatv(0x84ff,&maximum);glSamplerParameterf(sampler,0x84fe,filter==4 ? std::min(4.f,maximum) : 1.f);}
+      glBindSampler(GLuint(i),sampler);glUniform1i(glGetUniformLocation(p,("material_tex"+std::to_string(slot)).c_str()),GLint(i));
+      if(slot==6)glUniform1f(glGetUniformLocation(p,"environment_flip"),flip[i]);
+    }
+    glUniformMatrix3fv(glGetUniformLocation(p,"uv_transform[0]"),3,GL_FALSE,matrices.data());glUniform3fv(glGetUniformLocation(p,"flip_texture"),1,flip.data());
+    glUniformMatrix4fv(glGetUniformLocation(p,"view_projection"),1,GL_FALSE,projection.data());
+    const auto stage=shader.stage;
+    if(stage==Material20Stage::depth)glUniform1f(glGetUniformLocation(p,"alpha_burn"),as_float(shader.parameters[4]));
+    if(stage==Material20Stage::texture && (shader.compiled_parameters[0]&0x200)) {
+      const auto m=material20_color_matrix(shader);glUniform4fv(glGetUniformLocation(p,"color_matrix[0]"),3,m.data());
+    }
+    if(stage==Material20Stage::ambient) {
+      const auto c=scene.ambient;glUniform4f(glGetUniformLocation(p,"ambient"),((c>>16)&255)/255.f,((c>>8)&255)/255.f,(c&255)/255.f,(c>>24)/255.f);
+    }
+    if(stage==Material20Stage::light) {
+      require(light,"Material 2.0 light pass needs a scene light");const auto l=material20_lighting(shader,mesh.model,scene.camera,*light);
+      glUniform3fv(glGetUniformLocation(p,"light_position"),1,l.position.data());glUniform3fv(glGetUniformLocation(p,"eye_position"),1,l.eye.data());
+      glUniform4fv(glGetUniformLocation(p,"attenuation_parameters"),1,l.attenuation.data());glUniform1i(glGetUniformLocation(p,"directional"),l.directional);
+      glUniform4fv(glGetUniformLocation(p,"diffuse"),1,l.diffuse.data());glUniform4fv(glGetUniformLocation(p,"specular"),1,l.specular.data());
+      const float u=float(target.width)/albedo.width,v=float(target.height)/albedo.height;
+      // Original projected lookup adds half a D3D pixel. Convert integer D3D
+      // sample centers to GLES half-integers first; preserve the original
+      // viewport-sized offset when the retained capture texture is larger.
+      glUniform4f(glGetUniformLocation(p,"albedo_projection"),.5f*u,-.5f*v,
+        .5f*u+.5f/target.width-.5f/albedo.width,.5f*v+.5f/target.height-.5f/albedo.height);
+    }
+    if(stage==Material20Stage::environment) {
+      const auto m=material20_environment_matrix(shader,mesh.model,scene.camera);
+      const auto eye=light_model_vector(mesh.model,{scene.camera.world[12],scene.camera.world[13],scene.camera.world[14]},true);
+      glUniformMatrix4fv(glGetUniformLocation(p,"environment_matrix"),1,GL_FALSE,m.data());glUniform3fv(glGetUniformLocation(p,"eye_position"),1,eye.data());
+    }
+    const bool depth=stage==Material20Stage::depth,lit=stage==Material20Stage::light;
+    glColorMask(!depth,!depth,!depth,!depth);glEnable(GL_DEPTH_TEST);glDepthMask(depth);glDepthFunc(depth ? GL_LEQUAL : GL_EQUAL);
+    glEnable(GL_CULL_FACE);glFrontFace(GL_CW);glCullFace(GL_BACK);
+    if(lit){glEnable(GL_STENCIL_TEST);glStencilFunc(GL_EQUAL,0,255);glStencilOp(GL_KEEP,GL_KEEP,GL_KEEP);}else glDisable(GL_STENCIL_TEST);
+    if(lit || stage==Material20Stage::ambient || stage==Material20Stage::environment) {
+      glEnable(GL_BLEND);glBlendEquation(GL_FUNC_ADD);
+      if(stage==Material20Stage::ambient)glBlendFunc(GL_DST_COLOR,GL_ZERO);
+      else glBlendFunc(GL_ONE,lit && (shader.compiled_parameters[0]&4) ? GL_ONE_MINUS_SRC_COLOR : GL_ONE);
+    }else glDisable(GL_BLEND);
+    glBindBuffer(GL_ARRAY_BUFFER,mesh.buffer);
+    glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,sizeof(MeshVertex),reinterpret_cast<void*>(offsetof(SceneEffectVertex,position)));
+    glVertexAttribPointer(1,2,GL_FLOAT,GL_FALSE,sizeof(MeshVertex),reinterpret_cast<void*>(offsetof(SceneEffectVertex,uv)));
+    glVertexAttribPointer(2,4,GL_UNSIGNED_BYTE,GL_TRUE,sizeof(MeshVertex),reinterpret_cast<void*>(offsetof(SceneEffectVertex,color)));
+    glVertexAttribPointer(3,3,GL_FLOAT,GL_FALSE,sizeof(MeshVertex),reinterpret_cast<void*>(offsetof(MeshVertex,normal)));
+    glVertexAttribPointer(4,3,GL_FLOAT,GL_FALSE,sizeof(MeshVertex),reinterpret_cast<void*>(offsetof(MeshVertex,tangent)));
+    for(unsigned i=0;i<5;++i)glEnableVertexAttribArray(i);
+    // ZFill::Set does not publish LastMatrix; all four color passes do.
+    if(!depth)last_model=mesh.model;
+    glDrawArrays(GL_TRIANGLES,mesh.first,mesh.count);
   }
   void effect(const SceneEffectDraw& draw,const SceneMatrix& projection,const FrameTarget& target,const SceneCamera& camera) {
     if(draw.vertices.empty() && !draw.ribbon) {if(draw.material_on_empty)last_model=draw.material_model;return;}
@@ -418,7 +527,7 @@ struct FrameRenderer::Impl {
   }
   void scene_materials(const SceneFrame& scene,const FrameTarget& target) {
     const auto draws=scene_draw_jobs(scene,target.width,target.height);const auto projection=scene_raster_projection(scene.camera,target.width,target.height);
-    require(std::none_of(draws.material20_inserts.begin(),draws.material20_inserts.end(),[](bool v){return v;}),"Material 2.0 albedo capture and GPU passes are not ported");
+    if(albedo.color || std::any_of(scene.materials.begin(),scene.materials.end(),[](const auto& m){return std::any_of(m.second.passes.begin(),m.second.passes.end(),[](const auto& p){return bool(p.shader.material20);});}))albedo_surface(target);
     const auto restore_scissor=[&]{glScissor(0,surfaces.at(target.surface).height-target.height,target.width,target.height);};
     const auto insert=[&](unsigned usage) {
       restore_scissor();FrameQuad q;auto& w=q.shader.words;w[0]=0x30002|(usage==0 ? 0x3000 : 0x8000);w[9]=0x10;w[28]=0x00ffffff;w[23]=8;quad(q,target);
@@ -436,6 +545,7 @@ struct FrameRenderer::Impl {
         }
         const auto& data=mesh_geometry(instance.mesh,batches);const auto [first,count]=data.batches[job.batch];
         const auto matrix=scene_combine(projection,instance.world);const MeshDraw mesh{data.buffer,first,count,instance.world};
+        if(pass.shader.material20){material20(*pass.shader.material20,target,mesh,matrix,scene,job.light ? &draws.lights[*job.light].light : nullptr);return;}
         std::optional<LightDraw> setup;
         if(job.light) {
           const auto& l=draws.lights[*job.light].light;LightDraw draw;draw.directional=l.flags&4;
@@ -469,8 +579,11 @@ struct FrameRenderer::Impl {
       }
     } else {
       const auto after=[&](unsigned pass,unsigned usage) {
-        restore_scissor();if(!draws.inserts[pass])return;
-        if(usage==0 || usage==5)insert(usage);
+        restore_scissor();if(!draws.inserts[pass] && !draws.material20_inserts[pass])return;
+        // Engine selects one insert per pass: Material20's priority 0x20 wins
+        // over Material11's 0x10 when both occur in the same render pass.
+        if(draws.material20_inserts[pass]) {if(usage==1)capture_albedo(target);}
+        else if(usage==0 || usage==5)insert(usage);
         if(usage==4){glStencilMask(255);glClearStencil(0);glClear(GL_STENCIL_BUFFER_BIT);}
         if(usage==3)glDisable(GL_STENCIL_TEST);
       };
@@ -500,6 +613,7 @@ void FrameRenderer::reset_targets() {
     clear({3,0xff000000});glClear(GL_STENCIL_BUFFER_BIT);
   }
   if(s.shared_depth.fbo) {glBindFramebuffer(GL_FRAMEBUFFER,s.shared_depth.fbo);clear({2,0},true);}
+  if(s.albedo.fbo) {glBindFramebuffer(GL_FRAMEBUFFER,s.albedo.fbo);clear({1,0xff000000});}
   glFinish();require(glGetError()==GL_NO_ERROR,"frame target reset failed");
 }
 std::vector<std::uint8_t> FrameRenderer::render(const DemoFrame& frame,bool diagnostic) {

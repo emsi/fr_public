@@ -35,8 +35,9 @@ still names `debris.v2m`.
 **Debris does not play yet.** Its opening frame now prepares on the CPU: the
 main viewport contains 76 mesh instances, two lights and 26 ChainLine cables.
 Continuous CPU preparation in 16 ms steps reaches 9,808 ms (beat 32.0394), then
-stops at the unported Glare effect, operator 10464. Full rendering stops at the
-first viewport because Material 2.0 GPU shaders/albedo capture are not ported.
+stops at the unported Glare effect, operator 10464. Full rendering now enters
+the Material 2.0 pipeline, then stops while generating Bump texture operator
+41935 for material 41956 in the first viewport.
 Remaining MINMESH/scene operators and Water/Glare/Color Correction effects
 also remain to be ported.
 The player synthesizes its V2 soundtrack into stereo PCM before playback, using
@@ -68,8 +69,8 @@ build/native/wz3-mesh werkkzeug3/data/debris/debris_9241_c.k 925 build/native/de
 build/native/wz3-mesh-render werkkzeug3/data/debris/debris_9241_c.k 925 build/native/debris-925.ppm
 ```
 
-The image uses diagnostic lighting; the saved Material 2.0 shader is not yet
-rendered. This preview does not establish Debris visual compatibility.
+The image uses diagnostic lighting. This preview does not establish Debris
+visual compatibility; saved materials run through `wz3-frame-render`/`wz3-player`.
 
 The older indexed mesh core also supports Multiply 2, Delete Faces and Extrude
 Normal. Multiply 2 uses the archived nine nested loops and seeded input selection,
@@ -153,9 +154,30 @@ build/native/wz3-material werkkzeug3/data/debris/debris_9241_c.k 8462 0 build/na
 
 The complete material audit covers 226 reachable Material 1.1/2.0 operators,
 749 passes and 1,130 execution checks. These are CPU state checks, not rendered
-image comparisons. Material 2.0 needs its own albedo capture after prelight,
-ambient multiplication, per-light bump/specular shaders and reflection pass;
-it is not translated into the older Material 1.1 combiner.
+image comparisons.
+
+The GLES renderer now implements the archived REALMAT Material 2.0 stages:
+depth/alpha burn, main/detail texture composition, ambient multiplication,
+per-light bump/specular lighting and environment/reflection mapping. Prelight
+copies the current viewport to a separate RGBA8 albedo target, which grows but
+never shrinks. Subsequent light passes sample that preserved image; stencil
+shadow volumes reuse the native shadow finalizer. Material20's insert wins over
+Material11's insert when they share a render pass, matching the original engine.
+Sampler modes and UV program selection come from initialization parameters;
+animated constants remain separate, including the original doubled specular
+exponent in 2x-intensity mode.
+
+`gpu_material20` checks pixel values for lighting, attenuation, blend modes,
+vertex color, signed/detail bump maps, specularity, alpha masks/burn, texture
+combiners, color correction, UV transforms and reflections. It checks capture
+alignment at every interior pixel, target orientation, resizing and reset.
+All 520 non-shadow stages of the 124 saved Debris materials compile and render
+with controlled replacement textures (22 distinct programs). Shadow tests cover
+both material systems, including camera-inside volumes, overlapping casters and
+stencil reset between lights/frames. These establish shader/pipeline behavior;
+they do not establish rendered Debris fidelity with its saved textures.
+Undefined original combinations (specularity without a bump map, or environment
+specularity without the vertex shader's bumped UV output) fail explicitly.
 
 The native `wz3-v2m` tool reads compact music modules, reconstructs their MIDI
 event stream/sample positions and optionally renders stereo float WAV without

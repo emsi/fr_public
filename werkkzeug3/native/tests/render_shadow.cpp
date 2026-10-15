@@ -10,6 +10,14 @@ wz3::Material material(bool casts) {
   shadow.usage=wz3::MaterialUsage::shadow;shadow.program=wz3::MaterialProgram::shadow;shadow.shader.words[0]=0x70220;
   m.passes={base,light};if(casts)m.passes.push_back(shadow);return m;
 }
+wz3::Material material20(bool casts) {
+  auto m=material(casts);const auto shadow=m.passes.back();m.passes.clear();m.material11_insert=false;m.material20_insert=true;
+  for(unsigned i=0;i<4;++i) {
+    wz3::MaterialPass p;p.usage=wz3::MaterialUsage(i==3 ? 4 : i);auto& s=p.shader.material20.emplace();
+    s.stage=wz3::Material20Stage(i);s.parameters[1]=0xffa0a0a0;s.compiled_parameters=s.parameters;m.passes.push_back(p);
+  }
+  if(casts)m.passes.push_back(shadow);return m;
+}
 std::shared_ptr<wz3::Mesh> wall() {
   auto mesh=std::make_shared<wz3::Mesh>();mesh->vertices={{{-10,10,6}},{{10,10,6}},{{10,-10,6}},{{-10,-10,6}}};
   for(auto& v:mesh->vertices)v.tangent={1,0,0};wz3::MeshFace f;f.vertices={0,1,2,3};f.material=1;mesh->faces={f};return mesh;
@@ -47,7 +55,9 @@ void check_receiver(const wz3::SceneFrame& scene,const std::vector<std::uint8_t>
   check(shadowed>30 && clear>100,"shadow fixture lacks clear and occluded receiver pixels");
 }
 void controlled() {
-  FrameFixture fixture;auto s=scene(fixture);wz3::FrameRenderer renderer(fixture.p,fixture.g);
+  for(bool m20:{false,true}) {
+  FrameFixture fixture;auto s=scene(fixture);if(m20){s.materials[0]=material20(true);s.materials[1]=material20(false);s.ambient=0xff202020;}
+  wz3::FrameRenderer renderer(fixture.p,fixture.g);
   for(bool inside:{false,true}) {
     if(inside){s.camera.world[12]=1;s.camera.world[13]=-1;s.camera.world[14]=4.5f;}
     const auto jobs=wz3::scene_draw_jobs(s,128,128);unsigned shadows=0;
@@ -60,6 +70,7 @@ void controlled() {
     auto two=s;auto blue=s.lights[0];blue.flags=0;blue.color=0xff0000ff;two.lights.push_back(blue);
     auto second=s;second.lights={blue};const auto blue_only=render(renderer,second);unshadowed=two;unshadowed.lights[0].flags=0;
     check_receiver(two,render(renderer,unshadowed),render(renderer,two),&blue_only);
+  }
   }
 }
 void coplanar_cap() {
