@@ -81,6 +81,33 @@ void apply_to_scene() {
     near(frame.camera.world[12],0,"scene spline must not replace camera");
   }
 }
+void cached_event_time() {
+  Fixture fx;const auto curve=fx.curve(0,2),plain=fx.add(0x16,{}, {curve});
+  std::vector<std::uint32_t> parameters(17);parameters[0]=3;parameters[1]=f(1);parameters[7]=f(1);
+  const auto shaken=fx.add(0x19,parameters,{curve},"inner"),wrapped=fx.add(0x16,{}, {shaken},"wrapper");
+  fx.event("inner",0,65536);fx.event("wrapper",0,16384);
+  const auto scene=fx.add(0xc1),view=fx.add(0xf0,{3,3,0xff000000,0,0,0,0,0,0,f(4096),f(.125f),0,0,f(1),f(1),0xff000000,f(4096),f(16)},{scene,plain});
+  wz3::SpatialSplines splines(fx.p,fx.g);wz3::EventTimeline timeline(fx.p,fx.g);
+  auto env=wz3::frame_environment(0);env.variables[0].fill(.23f);
+  check(splines.static_curve(curve,env)==splines.static_curve(plain,env),"EventTime must return the same cached spline object");
+  for(int beat:{0,8192,32768,65536,131072}) {
+    timeline.begin_frame(beat);
+    for(float time:{0.f,.35f,.8f,1.f}) {
+      equal(splines.evaluate(wrapped,time,0,env,&timeline),splines.evaluate(shaken,time,0,env,&timeline));
+      equal(splines.evaluate(plain,time,0,env,&timeline),splines.evaluate(curve,time,0,env,&timeline));
+    }
+  }
+  wz3::ScenePlayer player(fx.p,fx.g);
+  near(player.viewport(view,wz3::frame_environment(32768),1).camera.world[12],5,"cached EventTime camera must retain the caller's spline time");
+  for(unsigned kind=0;kind<4;++kind) {
+    Fixture bad;const auto input=bad.curve(),alias=bad.add(0x16,{}, {input});
+    if(kind==0)bad.p.operators[alias].parameters={1};
+    if(kind==1)bad.g.nodes[alias].inputs.clear();
+    if(kind==2)bad.g.nodes[alias].links={input};
+    if(kind==3)bad.g.nodes[alias].inputs={alias};
+    wz3::SpatialSplines broken(bad.p,bad.g);rejects([&]{broken.evaluate(alias,.5f,0,env);});
+  }
+}
 void invalid() {
   for(unsigned kind=0;kind<7;++kind) {
     Fixture fx;const auto id=fx.curve();auto& op=fx.p.operators[id];
@@ -104,10 +131,15 @@ void debris(const char* path) {
     }catch(const std::exception& e) {throw std::runtime_error("spline "+std::to_string(id)+": "+e.what());}
   }
   check(kinds[0]==133 && kinds[2]==31 && kinds[4]==2,"Debris spatial spline inventory changed");
+  check(p.operators.at(6067).command==0x16 && g.nodes[6067].inputs==std::vector<std::size_t>{6066},"Debris final camera alias changed");
+  for(float time:{0.f,.23f,.5f,.9f,1.f}) {
+    auto env=wz3::frame_environment(0);env.variables[0].fill(time);
+    equal(splines.evaluate(6067,time,0,env),splines.evaluate(6066,time,0,env));
+  }
   std::cout<<count<<" Debris spatial splines, "<<samples<<" poses; kinds ";for(auto k:kinds)std::cout<<k<<' ';std::cout<<'\n';
 }
 }
 int main(int argc,char** argv) {
-  try {check(argc==2,"expected Debris project");paths();shake();apply_to_scene();invalid();debris(argv[1]);}
+  try {check(argc==2,"expected Debris project");paths();shake();apply_to_scene();cached_event_time();invalid();debris(argv[1]);}
   catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
 }

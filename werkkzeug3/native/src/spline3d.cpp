@@ -95,6 +95,12 @@ struct SpatialSplines::Impl {
     if(op.command>=1 && op.command<=3) {
       if(op.command==1) {require(node.links.size()==1 && node.links[0],"unresolved spatial spline Load");result=prepare(*node.links[0],env,depth+1);}
       else {require(node.inputs.size()==1,"invalid spatial spline alias");result=prepare(node.inputs[0],env,depth+1);}
+    }else if(op.command==0x16) {
+      require(p.empty() && node.inputs.size()==1 && node.links.empty(),"invalid EventTime spline alias");
+      // Init_Misc_EventTime returns its input cache unchanged. Viewport and
+      // ApplySpline call that cached GenSpline::Eval directly, without running
+      // Exec_Misc_EventTime. Preserve the inner shaker's event identity too.
+      result=prepare(node.inputs[0],env,depth+1);
     }else {
       result=std::make_shared<Node>();result->id=id;
       if(op.command==0x18 || op.command==0x1a) {
