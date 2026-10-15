@@ -7,8 +7,18 @@ struct SceneMeshBatch {
   std::optional<std::size_t> material;
   std::int32_t pass{};
   std::vector<std::uint32_t> faces;
+  Bounds bounds{};
 };
 std::vector<SceneMeshBatch> scene_mesh_batches(const Mesh&);
+// Immutable material groups and local bounds survive camera/instance changes.
+// Animated pose copies are deliberately not retained here.
+class SceneDrawCache {
+  struct Entry {std::shared_ptr<const Mesh> owner;std::vector<SceneMeshBatch> batches;};
+  std::map<const Mesh*,Entry> entries;
+  std::size_t bytes{};
+public:
+  const std::vector<SceneMeshBatch>& batches(const std::shared_ptr<const Mesh>&);
+};
 // Archived dynamic vertex/index buffer cap for one MPP_INSTANCES paint job.
 std::size_t scene_instance_limit(const Mesh&,const SceneMeshBatch&);
 std::uint32_t mesh_vertex_color(const std::array<float,4>&);
@@ -34,5 +44,5 @@ struct SceneDrawList {
   std::array<bool,256> capture_before_pass{};
 };
 // Engine_::BuildPaintJobs/SortPaintJobs, including shared mesh shadow jobs.
-SceneDrawList scene_draw_jobs(const SceneFrame&,unsigned width=1024,unsigned height=768);
+SceneDrawList scene_draw_jobs(const SceneFrame&,unsigned width=1024,unsigned height=768,SceneDrawCache* cache=nullptr);
 } // namespace wz3

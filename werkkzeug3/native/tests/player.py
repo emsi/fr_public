@@ -4,6 +4,7 @@
 import array
 import math
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -27,6 +28,7 @@ with tempfile.TemporaryDirectory(prefix="wz3-player-") as directory:
     assert "Playback complete:" in result.stdout and "2000 ms" in result.stdout
     assert "Video: offscreen; audio: disk;" in result.stdout
     assert "Loading complete:" in result.stdout
+    assert int(re.search(r"Preparation draws: (\d+)", result.stdout)[1]) < 126, "preparation still draws every simulation frame"
     assert "Playback allocations: 0 meshes, 0 fonts, 0 surfaces, 0 bitmaps, 0 mesh uploads, 0 shadow uploads, 0 instance buffers, 0 bitmap renders, 0 programs, 0 lighting tables" in result.stdout
     image = (path / "frame.ppm").read_bytes()
     assert image.startswith(b"P6\n160 120\n255\n"), "invalid player capture dimensions"
@@ -48,6 +50,13 @@ with tempfile.TemporaryDirectory(prefix="wz3-player-") as directory:
         raise RuntimeError(cold.stderr)
     assert image == (path / "cold.ppm").read_bytes(), "preloading changed the opening simulation"
     print("Warm and cold opening frames match byte-for-byte")
+    full = subprocess.run([player, project, "--font-file", font, "--width", "160",
+                           "--height", "120", "--duration", "2", "--preload-full",
+                           "--capture", str(path / "full.ppm")],
+                          env=env, capture_output=True, text=True, timeout=30)
+    assert full.returncode == 0, full.stdout + full.stderr
+    assert "Preparation draws: 126 (full timeline)" in full.stdout
+    assert image == (path / "full.ppm").read_bytes(), "selective and full preparation changed playback"
     prepare = subprocess.run([player, project, "--font-file", font, "--width", "160",
                               "--height", "120", "--duration", ".25", "--preload-only"],
                              env=dict(env, SDL_DISKAUDIOFILE=str(path / "prepare.f32")),
@@ -56,6 +65,10 @@ with tempfile.TemporaryDirectory(prefix="wz3-player-") as directory:
         raise RuntimeError(prepare.stderr)
     assert "Loading complete:" in prepare.stdout and "Playback complete:" not in prepare.stdout
     assert not (path / "prepare.f32").exists(), "preload-only opened an audio device"
+    for incompatible in ("--no-preload", "--offline"):
+        wrong = subprocess.run([player, project, "--preload-full", incompatible],
+                               env=env, capture_output=True, text=True, timeout=5)
+        assert wrong.returncode != 0 and "--preload-full requires preloading" in wrong.stderr
     # Offline rendering uses the same integer sample positions, but must work
     # even when the requested audio driver does not exist.
     requests = [2., .016, 705/44100, math.nextafter(705/44100, 0), math.nextafter(705/44100, math.inf),

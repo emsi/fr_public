@@ -10,6 +10,7 @@
 #include <cmath>
 #include "gles.hpp"
 #include <algorithm>
+#include <bit>
 #include <iostream>
 #include <set>
 
@@ -262,6 +263,12 @@ struct FrameRenderer::Impl {
   std::map<std::size_t,std::shared_ptr<const Texture>> supplied_bitmaps;
   std::map<std::size_t,std::size_t> bitmap_sizes;
   std::map<std::string,GLuint> programs;
+  // Cache before GLSL generation, not only after constructing the source text.
+  // Uniform colors, transforms and texture identities do not change shaders.
+  std::map<std::array<std::uint32_t,26>,GLuint> material_programs;
+  struct Material20Program {GLuint program{};Material20Source source;};
+  std::map<std::array<std::uint32_t,44>,Material20Program> material20_programs;
+  bool anisotropic{};GLfloat maximum_anisotropy=1;
   struct MeshGeometry {
     std::shared_ptr<const Mesh> owner;GLuint buffer{};
     std::size_t bytes{},reserved{};
@@ -290,9 +297,13 @@ struct FrameRenderer::Impl {
   GLuint vao{},particle_buffer{};std::array<GLuint,4> samplers{};
   std::size_t surface_bytes{},bitmap_bytes{};
   FrameRenderer::Stats stats;
+  SceneDrawCache draw_cache;
   Impl(const Project& p,const Graph& g,const TextureOptions& options,FrameRenderer::Context mode):project(p),graph(g),texture_options(rendered_texture_options(p,g,options)) {
     if(mode==FrameRenderer::Context::Headless)context=std::make_unique<gles::Context>(1,1);
     require(glGetString(GL_VERSION)!=nullptr,"FrameRenderer needs a current GLES3 context");
+    const auto extensions=reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS));
+    anisotropic=extensions && std::string_view(extensions).find("GL_EXT_texture_filter_anisotropic")!=std::string_view::npos;
+    if(anisotropic)glGetFloatv(0x84ff,&maximum_anisotropy);
     std::cerr<<"GL vendor: "<<glGetString(GL_VENDOR)<<"\nGL renderer: "<<glGetString(GL_RENDERER)<<"\nGL version: "<<glGetString(GL_VERSION)<<'\n';
     glGenBuffers(1,&particle_buffer);glGenVertexArrays(1,&vao);glGenSamplers(4,samplers.data());
     glGenBuffers(1,&shadow_index_buffer);
@@ -510,11 +521,18 @@ struct FrameRenderer::Impl {
     glActiveTexture(GL_TEXTURE5);glBindTexture(GL_TEXTURE_3D,attenuation_volume);glBindSampler(5,0);glUniform1i(glGetUniformLocation(p,"attenuation_volume"),5);
   }
   GLuint program(const MaterialShader& s,bool particle,bool mesh=false,bool instanced=false) {
+    require(!s.material20,"Material 2.0 requires a mesh draw");
     const bool lit=(s.words[2]&7)!=0;require(!lit || particle,"lighting needs mesh vertex data");
     const bool generated=(s.words[1]&0xf30)!=0;
     require(!generated || (mesh && !lit),"generated environment/projection UVs need an unlit mesh shader");
+    std::array<std::uint32_t,26> configuration{};std::copy_n(s.words.begin(),24,configuration.begin());
+    for(unsigned i=0;i<4;++i)if(s.textures[i])configuration[24]|=1u<<i;
+    configuration[25]=unsigned(particle)|(unsigned(mesh)<<1)|(unsigned(instanced)<<2);
+    if(const auto found=material_programs.find(configuration);found!=material_programs.end())return found->second;
+    require(material_programs.size()<4096,"frame material configuration cache limit");
     auto source=lit ? material_light_fragment_shader(s) : material_fragment_shader(s);if(s.words[0]&0x40)source=fog_fragment_shader(std::move(source));
-    const auto key=std::string(instanced ? "instanced:" : "")+(generated ? "generated:" : lit ? "light:" : particle ? "particle:" : "quad:")+source;if(auto found=programs.find(key);found!=programs.end())return found->second;
+    const auto key=std::string(instanced ? "instanced:" : "")+(generated ? "generated:" : lit ? "light:" : particle ? "particle:" : "quad:")+source;
+    if(auto found=programs.find(key);found!=programs.end()){material_programs.emplace(configuration,found->second);return found->second;}
     require(programs.size()<4096,"frame shader cache limit");
     std::string vertex_source=generated ? generated_uv_vertex : lit ? light_vertex : particle ? particle_vertex : quad_vertex;
     if(instanced)vertex_source=instance_vertex(std::move(vertex_source));
@@ -523,7 +541,7 @@ struct FrameRenderer::Impl {
     const auto p=glCreateProgram();glAttachShader(p,vertex);glAttachShader(p,fragment);glLinkProgram(p);glDeleteShader(vertex);glDeleteShader(fragment);
     GLint ok=0;glGetProgramiv(p,GL_LINK_STATUS,&ok);
     if(!ok) {char log[4096]{};glGetProgramInfoLog(p,sizeof(log),nullptr,log);glDeleteProgram(p);throw std::runtime_error(std::string("frame shader link failed: ")+log);}
-    programs.emplace(key,p);++stats.program_compilations;return p;
+    programs.emplace(key,p);material_programs.emplace(configuration,p);++stats.program_compilations;return p;
   }
   void quad(const FrameQuad& q,const FrameTarget& target,const SceneEffectDraw* effect=nullptr,const SceneMatrix* projection=nullptr,const MeshDraw* mesh=nullptr,const LightDraw* light=nullptr,const SceneFog* fog=nullptr,const SceneCamera* camera=nullptr) {
     const auto destination=target.surface;
@@ -551,10 +569,8 @@ struct FrameRenderer::Impl {
       constexpr GLint min_filter[]={GL_NEAREST,GL_LINEAR,GL_LINEAR_MIPMAP_LINEAR,GL_LINEAR_MIPMAP_LINEAR,GL_NEAREST_MIPMAP_NEAREST,GL_LINEAR_MIPMAP_NEAREST,GL_NEAREST,GL_NEAREST};
       glSamplerParameteri(sampler,GL_TEXTURE_MIN_FILTER,min_filter[filter]);glSamplerParameteri(sampler,GL_TEXTURE_MAG_FILTER,(filter==1 || filter==2 || filter==3 || filter==5) ? GL_LINEAR : GL_NEAREST);
       glSamplerParameteri(sampler,GL_TEXTURE_WRAP_S,(tf&0x100) ? GL_CLAMP_TO_EDGE : GL_REPEAT);glSamplerParameteri(sampler,GL_TEXTURE_WRAP_T,(tf&0x100) ? GL_CLAMP_TO_EDGE : GL_REPEAT);
-      const auto extensions=reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS));
-      const bool anisotropic=extensions && std::string_view(extensions).find("GL_EXT_texture_filter_anisotropic")!=std::string_view::npos;
       require(filter!=3 || anisotropic,"material needs anisotropic filtering");
-      if(anisotropic) {GLfloat maximum=1;glGetFloatv(0x84ff,&maximum);glSamplerParameterf(sampler,0x84fe,filter==3 ? std::min(4.0f,maximum) : 1.0f);}
+      if(anisotropic)glSamplerParameterf(sampler,0x84fe,filter==3 ? std::min(4.0f,maximum_anisotropy) : 1.0f);
       glBindSampler(i,sampler);glUniform1i(glGetUniformLocation(p,("material_tex"+std::to_string(i)).c_str()),GLint(i));
     }
     glUniform4fv(glGetUniformLocation(p,"rectangle"),1,q.rectangle.data());glUniform1f(glGetUniformLocation(p,"depth"),q.depth);
@@ -636,8 +652,12 @@ struct FrameRenderer::Impl {
     for(unsigned slot=0;slot<4;++slot)if(q.shader.textures[slot])q.textures[slot]=resolve_texture(*q.shader.textures[slot],effect);
     return q;
   }
-  void material20(const Material20Shader& shader,const FrameTarget& target,const MeshDraw& mesh,const SceneMatrix& projection,const SceneFrame& scene,const SceneLight* light) {
-    const auto source=material20_source(shader);const auto key=source.vertex+source.fragment;
+  const Material20Program& material20_program(const Material20Shader& shader) {
+    std::array<std::uint32_t,44> configuration{};std::copy(shader.compiled_parameters.begin(),shader.compiled_parameters.end(),configuration.begin());
+    configuration[42]=std::uint32_t(shader.stage);for(unsigned i=0;i<7;++i)if(shader.textures[i])configuration[43]|=1u<<i;
+    if(const auto found=material20_programs.find(configuration);found!=material20_programs.end())return found->second;
+    require(material20_programs.size()<4096,"Material 2.0 configuration cache limit");
+    auto source=material20_source(shader);const auto key=source.vertex+source.fragment;
     GLuint p;
     if(const auto found=programs.find(key);found!=programs.end())p=found->second;
     else {
@@ -649,6 +669,10 @@ struct FrameRenderer::Impl {
       if(!ok){char log[4096]{};glGetProgramInfoLog(p,sizeof(log),nullptr,log);glDeleteProgram(p);throw std::runtime_error(std::string("Material 2.0 shader link failed: ")+log);}
       programs.emplace(key,p);++stats.program_compilations;
     }
+    return material20_programs.emplace(configuration,Material20Program{p,std::move(source)}).first->second;
+  }
+  void material20(const Material20Shader& shader,const FrameTarget& target,const MeshDraw& mesh,const SceneMatrix& projection,const SceneFrame& scene,const SceneLight* light) {
+    const auto& compiled=material20_program(shader);const auto& source=compiled.source;const auto p=compiled.program;
     glUseProgram(p);glBindVertexArray(vao);
     std::array<float,27> matrices{};std::array<float,3> flip{};
     for(std::size_t i=0;i<source.samplers.size();++i) {
@@ -667,10 +691,8 @@ struct FrameRenderer::Impl {
       glBindTexture(GL_TEXTURE_2D,texture);glSamplerParameteri(sampler,GL_TEXTURE_MIN_FILTER,min_filter[filter]);
       glSamplerParameteri(sampler,GL_TEXTURE_MAG_FILTER,filter>=1 && filter<=4 ? GL_LINEAR : GL_NEAREST);
       glSamplerParameteri(sampler,GL_TEXTURE_WRAP_S,flags&0x100 ? GL_CLAMP_TO_EDGE : GL_REPEAT);glSamplerParameteri(sampler,GL_TEXTURE_WRAP_T,flags&0x100 ? GL_CLAMP_TO_EDGE : GL_REPEAT);
-      const auto extensions=reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS));
-      const bool anisotropic=extensions && std::string_view(extensions).find("GL_EXT_texture_filter_anisotropic")!=std::string_view::npos;
       require(filter!=4 || anisotropic,"Material 2.0 needs anisotropic filtering");
-      if(anisotropic){GLfloat maximum=1;glGetFloatv(0x84ff,&maximum);glSamplerParameterf(sampler,0x84fe,filter==4 ? std::min(4.f,maximum) : 1.f);}
+      if(anisotropic)glSamplerParameterf(sampler,0x84fe,filter==4 ? std::min(4.f,maximum_anisotropy) : 1.f);
       glBindSampler(GLuint(i),sampler);glUniform1i(glGetUniformLocation(p,("material_tex"+std::to_string(slot)).c_str()),GLint(i));
       if(slot==6)glUniform1f(glGetUniformLocation(p,"environment_flip"),flip[i]);
     }
@@ -783,9 +805,13 @@ struct FrameRenderer::Impl {
     if(!data.buffer){glGenBuffers(1,&data.buffer);data.owner=owner;++stats.instance_uploads;}
     glBindBuffer(GL_ARRAY_BUFFER,data.buffer);
     if(bytes>data.bytes) {
-      require(bytes-data.bytes<=512u*1024*1024-geometry_bytes,"scene instance buffer budget exceeded");
-      glBufferData(GL_ARRAY_BUFFER,bytes,matrices->data(),GL_DYNAMIC_DRAW);geometry_bytes+=bytes-data.bytes;data.bytes=bytes;
-    }else glBufferSubData(GL_ARRAY_BUFFER,0,bytes,matrices->data());
+      // Grow geometrically as particles appear, instead of reallocating the
+      // entire buffer for every new particle. Draw count still uses live data.
+      const auto capacity=std::bit_ceil(bytes);
+      require(capacity-data.bytes<=512u*1024*1024-geometry_bytes,"scene instance buffer budget exceeded");
+      glBufferData(GL_ARRAY_BUFFER,capacity,nullptr,GL_DYNAMIC_DRAW);geometry_bytes+=capacity-data.bytes;data.bytes=capacity;
+    }
+    glBufferSubData(GL_ARRAY_BUFFER,0,bytes,matrices->data());
     data.matrices=matrices;++stats.instance_updates;return data.buffer;
   }
   const ShadowGeometry& shadow_geometry(const std::shared_ptr<const Mesh>& mesh,const SceneFrame& scene) {
@@ -844,7 +870,7 @@ struct FrameRenderer::Impl {
       animated->instances[i].mesh=found->second;
     }
     const auto& scene=animated ? *animated : source;
-    const auto draws=scene_draw_jobs(scene,target.width,target.height);const auto projection=scene_raster_projection(scene.camera,target.width,target.height);
+    const auto draws=scene_draw_jobs(scene,target.width,target.height,&draw_cache);const auto projection=scene_raster_projection(scene.camera,target.width,target.height);
     if(albedo.color || std::any_of(scene.materials.begin(),scene.materials.end(),[](const auto& m){return std::any_of(m.second.passes.begin(),m.second.passes.end(),[](const auto& p){return bool(p.shader.material20);});}))albedo_surface(target);
     const auto restore_scissor=[&]{glScissor(0,surfaces.at(target.surface).height-target.height,target.width,target.height);};
     const auto insert=[&](unsigned usage) {

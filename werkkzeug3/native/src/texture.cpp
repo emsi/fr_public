@@ -60,6 +60,7 @@ public:
       : project_(project), graph_(graph), options_(options), cache_(project.operators.size()), visiting_(cache_.size()),
         planned_(cache_.size()), consumers_(cache_.size()),stats_(stats) {
     if(graph.nodes.size()!=cache_.size())throw std::runtime_error("texture graph size mismatch");
+    if(options.cache && !options.cache->matches(project,graph,options))throw std::runtime_error("shared texture cache belongs to a different project or options");
     if(stats_)*stats_={};
   }
 
@@ -67,6 +68,7 @@ public:
     if(id>=cache_.size() || !graph_.nodes[id].active)throw std::runtime_error("invalid or inactive texture operator");
     if(visiting_[id] || depth>512)throw std::runtime_error("cycle or excessive depth in texture graph");
     if(planned_[id])return;
+    if(options_.cache)if(auto cached=options_.cache->find(id)){cache_[id]=std::move(cached);planned_[id]=true;return;}
     visiting_[id]=true;
     dependencies(id,[&](std::size_t input) {plan(input,depth+1);++consumers_[input];});
     visiting_[id]=false;planned_[id]=true;
@@ -230,6 +232,7 @@ public:
           std::string(operator_info(op.command).name) + ", command " + std::to_string(op.command) + ") is not ported");
     }
     visiting_[id] = false;
+    if(options_.cache)options_.cache->remember(id,*cache_[id]);
     // Each recipe node runs once. Its inputs remain cached until every
     // reachable consumer has finished, including duplicate edges and aliases.
     // The returned/shared output keeps aliased storage alive independently.

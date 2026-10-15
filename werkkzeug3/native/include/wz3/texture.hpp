@@ -26,9 +26,11 @@ public:
   virtual std::shared_ptr<const Texture> get(std::size_t id,std::size_t input,unsigned width,unsigned height)=0;
   virtual Stats stats() const=0;
 };
+class TextureCache;
 struct TextureOptions {
   std::filesystem::path font_file;
   std::shared_ptr<RenderedBitmapProvider> rendered_bitmaps{};
+  std::shared_ptr<TextureCache> cache{};
 };
 struct FontLayout {
   float x{}, y{}, height{}, width{}, inner_spacing{};
@@ -44,6 +46,20 @@ struct Texture {
   std::uint32_t format = 1, mip_count = 0, mip_threshold = 0;
   std::vector<Pixel> pixels;
   std::array<std::shared_ptr<const FontAtlas>, 8> fonts{};
+};
+// Optional bounded reuse across recipes (materials, mesh displacement, etc.).
+// The referenced project/graph and generation options must remain immutable.
+// Stored pixels have independent ownership from each recipe's scratch budget.
+class TextureCache {
+  struct Impl;std::unique_ptr<Impl> impl;
+public:
+  struct Stats {std::size_t hits{},misses{},evictions{},textures{},pixel_bytes{};};
+  TextureCache(const Project&,const Graph&,const TextureOptions&,std::size_t bytes=128u*1024*1024);
+  ~TextureCache();
+  bool matches(const Project&,const Graph&,const TextureOptions&) const;
+  std::shared_ptr<const Texture> find(std::size_t);
+  void remember(std::size_t,const Texture&);
+  Stats stats() const;
 };
 // ReadTexture expands each RGBA8 byte as (byte<<7)|(byte>>1), preserving rows.
 Texture bitmap_readback(unsigned width,unsigned height,std::span<const std::uint8_t> rgba);

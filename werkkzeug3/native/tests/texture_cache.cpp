@@ -44,7 +44,34 @@ void shared_branches() {
   fixture.g.nodes[shared].inputs={999};rejects([&]{wz3::evaluate_texture(fixture.p,fixture.g,root);});
   fixture.g.nodes.pop_back();rejects([&]{wz3::evaluate_texture(fixture.p,fixture.g,root);});
 }
+void cross_recipe_reuse() {
+  FrameFixture fixture;const auto flat=fixture.add(0x21,{4,3,0xff102030});
+  const auto shared=fixture.add(0x23,{1,0x00112233},{flat}),store=fixture.add(2,{}, {shared});
+  const auto load=fixture.add(1,{}, {},{store});
+  const auto a=fixture.add(0x23,{4,0},{load}),b=fixture.add(0x25,{8,3,7},{store});
+  const auto other=fixture.add(2,{}, {fixture.add(0x21,{4,3,0xffabcdef})});
+  fixture.add(1); // Unreachable invalid branch still does not affect planning.
+  wz3::TextureOptions options;options.cache=std::make_shared<wz3::TextureCache>(fixture.p,fixture.g,options,128*sizeof(wz3::Pixel));
+  wz3::TextureEvaluationStats first,second;
+  const auto left=wz3::evaluate_texture(fixture.p,fixture.g,a,options,&first);
+  const auto right=wz3::evaluate_texture(fixture.p,fixture.g,b,options,&second);
+  check(first.operators==5 && second.operators==1,"shared recipe was regenerated across roots");
+  check(left->pixels==wz3::evaluate_texture(fixture.p,fixture.g,a)->pixels,"memoized texture pixels changed");
+  check(right->pixels==wz3::evaluate_texture(fixture.p,fixture.g,b)->pixels && right->format==8 && right->mip_count==3 && right->mip_threshold==7,"memoized input lost format/mip metadata");
+  const auto retained=wz3::evaluate_texture(fixture.p,fixture.g,store,options);
+  wz3::evaluate_texture(fixture.p,fixture.g,other,options);
+  check(options.cache->stats().evictions>0 && options.cache->stats().pixel_bytes<=128*sizeof(wz3::Pixel),"shared texture cache exceeded its budget");
+  check(retained->pixels==right->pixels,"eviction invalidated a live result");
+  wz3::evaluate_texture(fixture.p,fixture.g,a,options,&second);
+  check(second.operators==first.operators,"evicted recipe did not regenerate");
+  auto changed=options;changed.font_file="different.ttf";
+  rejects([&]{wz3::evaluate_texture(fixture.p,fixture.g,a,changed);});
+  auto project=fixture.p;rejects([&]{wz3::evaluate_texture(project,fixture.g,a,options);});
+  // An oversized reusable texture bypasses the memo without blocking a recipe.
+  wz3::TextureOptions tiny;tiny.cache=std::make_shared<wz3::TextureCache>(fixture.p,fixture.g,tiny,1);
+  check(wz3::evaluate_texture(fixture.p,fixture.g,b,tiny)->pixels==right->pixels && tiny.cache->stats().pixel_bytes==0,"oversized texture memo bypass failed");
+}
 int main() {
-  try{long_recipe();shared_branches();std::cout<<"Texture lifetimes, aliases, shared branches and malformed graph checks passed\n";}
+  try{long_recipe();shared_branches();cross_recipe_reuse();std::cout<<"Texture lifetimes, aliases, cross-recipe reuse, bounded eviction and malformed graph checks passed\n";}
   catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
 }

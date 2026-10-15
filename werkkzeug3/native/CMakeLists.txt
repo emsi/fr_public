@@ -26,6 +26,8 @@ add_library(wz3_project src/project.cpp src/release_project.cpp src/graph.cpp sr
 set_source_files_properties(src/mesh_kernel.cpp src/mesh_noise.cpp src/animation.cpp src/timeline.cpp src/material_shader.cpp src/scene.cpp src/frame.cpp src/particles.cpp src/effect_particles.cpp src/walk.cpp src/print.cpp src/scene_draw.cpp src/lighting.cpp src/shadow.cpp src/fog.cpp PROPERTIES
   COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
 target_link_libraries(wz3_project PRIVATE JPEG::JPEG Freetype::Freetype PkgConfig::GLU)
+target_sources(wz3_project PRIVATE src/frame_preload.cpp)
+target_sources(wz3_project PRIVATE src/texture_cache.cpp)
 target_sources(wz3_project PRIVATE src/glare.cpp src/color_correction.cpp)
 set_source_files_properties(src/glare.cpp src/color_correction.cpp PROPERTIES COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
 add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/dxt_kernel.inc"
@@ -437,6 +439,9 @@ if(BUILD_TESTING)
   add_executable(wz3-scene-draw-tests tests/scene_draw.cpp)
   target_link_libraries(wz3-scene-draw-tests PRIVATE wz3_project)
   add_test(NAME scene_draw_order COMMAND wz3-scene-draw-tests)
+  add_executable(wz3-frame-preload-tests tests/frame_preload.cpp)
+  target_link_libraries(wz3-frame-preload-tests PRIVATE wz3_project)
+  add_test(NAME frame_preload COMMAND wz3-frame-preload-tests)
   add_custom_command(
     OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/print_oracle.inc"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/print_oracle.py"

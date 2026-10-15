@@ -12,10 +12,19 @@ std::vector<SceneMeshBatch> scene_mesh_batches(const Mesh& mesh) {
   std::vector<SceneMeshBatch> result;
   for(std::size_t i=0;i<mesh.faces.size();++i) {
     const auto& f=mesh.faces[i];auto [found,added]=groups.try_emplace({f.material,f.pass,f.cluster},result.size());
-    if(added)result.push_back({f.material,f.pass,{}});
+    if(added){const auto p=mesh.vertices[f.vertices[0]].position;result.push_back({f.material,f.pass,{}, {p,p}});}
     result[found->second].faces.push_back(std::uint32_t(i));
+    auto& bounds=result[found->second].bounds;
+    for(unsigned v=0;v<f.count;++v)for(unsigned c=0;c<3;++c){const auto p=mesh.vertices[f.vertices[v]].position[c];bounds.min[c]=std::min(bounds.min[c],p);bounds.max[c]=std::max(bounds.max[c],p);}
   }
   return result;
+}
+const std::vector<SceneMeshBatch>& SceneDrawCache::batches(const std::shared_ptr<const Mesh>& mesh) {
+  if(const auto found=entries.find(mesh.get());found!=entries.end())return found->second.batches;
+  auto value=scene_mesh_batches(*mesh);std::size_t size=value.size()*sizeof(SceneMeshBatch);
+  for(const auto& batch:value)size+=batch.faces.size()*sizeof(std::uint32_t);
+  if(size>256u*1024*1024-bytes)throw std::runtime_error("scene draw cache budget exceeded");
+  auto found=entries.emplace(mesh.get(),Entry{mesh,std::move(value)}).first;bytes+=size;return found->second.batches;
 }
 std::size_t scene_instance_limit(const Mesh& mesh,const SceneMeshBatch& batch) {
   std::vector<bool> used(mesh.vertices.size());std::size_t indices=0;
@@ -55,12 +64,10 @@ std::array<Plane,5> frustum(const SceneCamera& camera,unsigned width,unsigned he
   return planes;
 }
 float distance(const Plane& p,const Vec3& v){return p[0]*v[0]+p[1]*v[1]+p[2]*v[2]+p[3];}
-Bounds batch_bounds(const SceneInstance& instance,const SceneMeshBatch& batch) {
+Bounds batch_bounds(const SceneInstance& instance,const Bounds& local) {
   // BuildPaintJobs uses this world-space box for every animated mesh, even
   // outside the view. It also keeps animated shadow jobs on the z-fail path.
   if(mesh_has_animation(*instance.mesh))return {{-1073741824.f,-1073741824.f,-1073741824.f},{1073741824.f,1073741824.f,1073741824.f}};
-  const auto& mesh=*instance.mesh;const auto first=mesh.vertices[mesh.faces[batch.faces[0]].vertices[0]].position;Bounds local{first,first};
-  for(auto f:batch.faces)for(unsigned i=0;i<mesh.faces[f].count;++i)for(unsigned c=0;c<3;++c){const auto v=mesh.vertices[mesh.faces[f].vertices[i]].position[c];local.min[c]=std::min(local.min[c],v);local.max[c]=std::max(local.max[c],v);}
   auto p=scene_point(instance.world,local.min);Bounds out{p,p};
   for(unsigned i=1;i<8;++i){Vec3 v;for(unsigned c=0;c<3;++c)v[c]=(i&(1<<c)) ? local.max[c] : local.min[c];v=scene_point(instance.world,v);for(unsigned c=0;c<3;++c){out.min[c]=std::min(out.min[c],v[c]);out.max[c]=std::max(out.max[c],v[c]);}}return out;
 }
@@ -96,7 +103,7 @@ std::vector<ScenePaintLight> scene_lights(const SceneFrame& scene,unsigned width
 const Material& scene_default_material() {
   static const Material material=[] {Material m;MaterialPass p;p.usage=MaterialUsage::light;auto& w=p.shader.words;w[0]=0x300;w[2]=5;w[8]=0x10;w[9]=0x40;w[28]=0x00c0c0c0;w[29]=0x00404040;w[32]=std::bit_cast<std::uint32_t>(32.f);m.passes.push_back(p);return m;}();return material;
 }
-SceneDrawList scene_draw_jobs(const SceneFrame& scene,unsigned width,unsigned height) {
+SceneDrawList scene_draw_jobs(const SceneFrame& scene,unsigned width,unsigned height,SceneDrawCache* cache) {
   SceneDrawList result;result.lights=scene_lights(scene,width,height);const auto planes=frustum(scene.camera,width,height);
   std::map<std::pair<std::size_t,std::size_t>,unsigned> material_ids;unsigned next=1;
   for(const auto& [id,m]:scene.materials)for(std::size_t p=0;p<m.passes.size();++p) {
@@ -111,11 +118,12 @@ SceneDrawList scene_draw_jobs(const SceneFrame& scene,unsigned width,unsigned he
   for(std::size_t i=scene.instances.size();i--;) {
     const auto& instance=scene.instances[i];if(!instance.mesh)throw std::runtime_error("missing scene geometry");
     auto found=result.meshes.find(instance.mesh.get());
-    if(found==result.meshes.end())found=result.meshes.emplace(instance.mesh.get(),scene_mesh_batches(*instance.mesh)).first;
+    if(found==result.meshes.end())found=result.meshes.emplace(instance.mesh.get(),cache && !instance.mesh->animation_source ? cache->batches(instance.mesh) : scene_mesh_batches(*instance.mesh)).first;
     std::optional<std::size_t> first_shadow;
-    SceneMeshBatch whole;
+    Bounds whole{};if(!found->second.empty())whole=found->second[0].bounds;
     for(std::size_t b=0;b<found->second.size();++b) {
-      const auto& batch=found->second[b];whole.faces.insert(whole.faces.end(),batch.faces.begin(),batch.faces.end());
+      const auto& batch=found->second[b];
+      for(unsigned c=0;c<3;++c){whole.min[c]=std::min(whole.min[c],batch.bounds.min[c]);whole.max[c]=std::max(whole.max[c],batch.bounds.max[c]);}
       if(batch.material && !scene.materials.contains(*batch.material))throw std::runtime_error("missing mesh material snapshot");
       const auto& m=batch.material ? scene.materials.at(*batch.material) : scene_default_material();
       if(!first_shadow && std::any_of(m.passes.begin(),m.passes.end(),[](const auto& p){return p.program==MaterialProgram::shadow;}))first_shadow=b;
@@ -123,7 +131,7 @@ SceneDrawList scene_draw_jobs(const SceneFrame& scene,unsigned width,unsigned he
     for(std::size_t b=0;b<found->second.size();++b) {
       const auto& batch=found->second[b];
       if(batch.material && !scene.materials.contains(*batch.material))throw std::runtime_error("missing mesh material snapshot");
-      const auto& material=batch.material ? scene.materials.at(*batch.material) : scene_default_material();const auto batch_box=batch_bounds(instance,batch);
+      const auto& material=batch.material ? scene.materials.at(*batch.material) : scene_default_material();const auto batch_box=batch_bounds(instance,batch.bounds);
       for(std::size_t p=0;p<material.passes.size();++p) {
         const auto& pass=material.passes[p];const auto usage=unsigned(pass.usage);
         if(usage>7)throw std::runtime_error("invalid mesh material usage");

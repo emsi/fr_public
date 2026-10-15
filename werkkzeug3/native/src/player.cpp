@@ -1,5 +1,6 @@
 // Distributed under the BSD license in werkkzeug3/LICENSE.txt.
 #include "wz3/frame.hpp"
+#include "wz3/frame_preload.hpp"
 #include "wz3/texture.hpp"
 #include "wz3/playback_timing.hpp"
 #include "audio_sdl.hpp"
@@ -78,18 +79,20 @@ int main(int argc,char** argv) {
       <<"  [--width PIXELS] [--height PIXELS] [--duration SECONDS] [--mute]\n"
       <<"  [--capture LAST.ppm] [--snapshot SECONDS FRAME.ppm] (repeatable)\n"
       <<"  [--no-preload | --preload-only | --offline]\n"
+      <<"  [--preload-full] (render every preparation frame for comparison)\n"
       <<"Offline mode renders the same sample timeline without an audio device or real-time pacing.\n"
       <<"Escape or close the window to exit. Music defaults to the saved song's basename beside the project.\n";
     return argc<2 ? 2 : 0;
   }
   try {
     wz3::TextureOptions options;std::filesystem::path music,capture;unsigned width=0,height=0;
-    double duration=0;bool mute=false,preload=true,preload_only=false,offline=false;std::vector<Snapshot> snapshots;
+    double duration=0;bool mute=false,preload=true,preload_only=false,offline=false,preload_full=false;std::vector<Snapshot> snapshots;
     for(int i=2;i<argc;++i) {
       const std::string_view option=argv[i];
       if(option=="--mute")mute=true;
       else if(option=="--no-preload")preload=false;
       else if(option=="--preload-only")preload_only=true;
+      else if(option=="--preload-full")preload_full=true;
       else if(option=="--offline")offline=true;
       else if(option=="--music" && i+1<argc)music=argv[++i];
       else if(option=="--font-file" && i+1<argc)options.font_file=argv[++i];
@@ -107,6 +110,7 @@ int main(int argc,char** argv) {
     require(!offline || !preload_only,"--offline conflicts with --preload-only");
     if(offline)preload=false;
     require(preload || !preload_only,"--no-preload conflicts with --preload-only");
+    require(preload || !preload_full,"--preload-full requires preloading");
     const std::filesystem::path project_path=argv[1];const auto project=wz3::read_project(project_path);const auto graph=wz3::connect(project);
     if(project.runtime_graph)std::cerr<<(project.release_timing ? "Released clock: 2396 samples per eighth beat; exit after beat 592\n" : "Released graph: using explicit provisional timing from the native envelope\n");
     const auto root=graph.names.find("root");require(root!=graph.names.end(),"project has no named root");
@@ -133,19 +137,29 @@ int main(int argc,char** argv) {
     std::cout<<"Music: "<<pcm.rate<<" Hz, "<<pcm.channels<<" channels, "<<double(pcm.frames())/pcm.rate<<" seconds\n";
     Sdl sdl(!offline && !preload_only);std::unique_ptr<wz3::SdlAudio> audio;
     if(!preload_only && !offline)audio=std::make_unique<wz3::SdlAudio>(pcm,mute);
-    Window window(width,height);options=wz3::rendered_texture_options(project,graph,options);auto assets=std::make_shared<wz3::SceneAssets>(project,graph,options);
+    Window window(width,height);options=wz3::rendered_texture_options(project,graph,options);
+    options.cache=std::make_shared<wz3::TextureCache>(project,graph,options);
+    auto assets=std::make_shared<wz3::SceneAssets>(project,graph,options);
     wz3::FrameRenderer renderer(project,graph,options,wz3::FrameRenderer::Context::Current);
     std::cout<<"Video: "<<SDL_GetCurrentVideoDriver()<<"; audio: "<<(SDL_GetCurrentAudioDriver() ? SDL_GetCurrentAudioDriver() : "none")
       <<"; callback: "<<(audio ? audio->buffer_frames() : 0)<<" frames; render: "<<width<<'x'<<height<<'\n';
     if(preload) {
-      const auto started=Clock::now();auto progress=started;std::uint64_t frames=0,last_log=0;
+      const auto started=Clock::now();auto progress=started;std::uint64_t frames=0,draws=0,last_log=0;
       window.loading(0);
       {
         wz3::FramePlayer loading(project,graph,options,assets);
+        wz3::FramePreloader preparation;
         for(std::uint64_t ms=0;;ms+=16) {
           if(!window.events()){std::cout<<"Loading cancelled\n";return 0;}
           const auto sample=std::min(ms*pcm.rate/1000,end);
-          try{renderer.draw(loading.frame(root->second,timing.beat(sample),width,height,timing.milliseconds(sample)));}
+          try{
+            const auto frame=loading.frame(root->second,timing.beat(sample),width,height,timing.milliseconds(sample));
+            if(preload_full || preparation.needs_draw(frame)) {
+              renderer.draw(frame);++draws;
+              // Prime both ping-pong images even for a one-frame effect.
+              if(!preload_full){renderer.draw(frame);++draws;}
+            }
+          }
           catch(const std::exception& e){throw std::runtime_error("loading at "+std::to_string(timing.milliseconds(sample))+" ms: "+e.what());}
           ++frames;const auto now=Clock::now();
           if(now-progress>=std::chrono::milliseconds(100)){window.loading(double(sample)/end);progress=now;}
@@ -158,7 +172,10 @@ int main(int argc,char** argv) {
       std::cout<<"Loading complete: "<<frames<<" frames in "<<std::chrono::duration<double>(Clock::now()-started).count()
         <<" seconds; "<<cpu.meshes<<" meshes, "<<cpu.fonts<<" font atlases, "<<gpu.bitmap_uploads
         <<" bitmap uploads, "<<gpu.program_compilations<<" shader programs\n";
+      std::cout<<"Preparation draws: "<<draws<<" ("<<(preload_full ? "full timeline" : "new resource configurations")<<")\n";
       std::cout<<"Bitmap cache: "<<gpu.bitmap_bytes<<" bytes of uploaded mip data\n";
+      const auto textures=options.cache->stats();
+      std::cout<<"Shared texture recipes: "<<textures.hits<<" reused branches, "<<textures.pixel_bytes<<" bytes retained, "<<textures.evictions<<" evictions\n";
       if(preload_only)return 0;
     }
     const auto prepared_cpu=assets->stats();const auto prepared_gpu=renderer.stats();
