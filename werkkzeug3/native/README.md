@@ -42,9 +42,9 @@ and Bitmap Render are supported. The opening city contains 76 mesh instances,
 two lights and 26 ChainLine cables.
 
 The full callback-paced run on the Radeon RX 7900 XT at 1280x640 uses SDL's
-offscreen video and dummy audio backends. It completes in 433.371 wall seconds
-with 25,713 presentations (59.33 per wall second), 18,789 audio callbacks,
-a 24.05 ms maximum draw and 47.28 ms maximum audio-clock catch-up. The first
+offscreen video and dummy audio backends. It completes in 433.378 wall seconds
+with 25,750 presentations (59.42 per wall second), 18,790 audio callbacks,
+a 22.91 ms maximum draw and 50.34 ms maximum audio-clock catch-up. The first
 full run had accumulated 12.82 seconds of lag in the ending. Profiling found
 repeated animated-mesh validation, color conversion and geometry preparation;
 the cached version reduces the isolated ending probe from about 24 ms to 10 ms
@@ -54,10 +54,12 @@ presentations per wall second. A full-length X11 attempt was cancelled during
 loading; the complete-timeline timing above is from offscreen callback playback.
 Physical audio-device latency and synchronization remain unverified.
 
-Preparation for the entire timeline takes 92.45 seconds, excluding music
-synthesis and window setup. It evaluates every simulation frame but performs
+Preparation for the entire timeline takes 72.88 seconds, excluding music
+synthesis and window setup, down from 92.45 seconds before caching each mesh's
+material bindings. It evaluates every simulation frame but performs
 only 768 GPU warm-up draws, preparing 540 meshes, 250 bitmap uploads and 42
-shader programs. Shared texture recipes reuse 347 branches and retain
+shader programs. Music synthesis takes another 16.03 seconds; measured from
+process launch, loading finishes at 88.96 seconds. Shared texture recipes reuse 347 branches and retain
 132,644,864 bytes of CPU pixels. The earlier 330-second preparation took
 71.75 seconds, versus a fresh 343.02-second measurement before the resource
 caches and selective warm-up. Playback creates no additional cached meshes,
@@ -123,6 +125,15 @@ checked for finite values on every update. Cached weighted poses match the
 archived SSE instructions, and retained-pose/core and rebuilt-shadow comparisons
 pass alongside the full release suite and five focused Clang ASan/UBSan checks.
 
+Scene traversal also caches each immutable mesh's distinct material bindings,
+preserving first-face order. Previously, every instance scanned every face on
+every frame to collect these IDs. Only the IDs are cached, within
+a 64 MiB budget. Material values are still snapshotted after scene traversal so
+later MatHack updates and animation remain visible. The material regression
+check covers repeated instances, distinct bindings, unbound faces, retained
+snapshots and backward time. All 86 release checks and four focused Clang
+ASan/UBSan checks pass after this change.
+
 The renderer retains up to 512 MiB of uploaded bitmap mip data. The old 256 MiB
 limit was reached at 333.071 seconds when the later city sequence requested
 material 5628. With the larger bounded cache, the uninterrupted run captures
@@ -130,7 +141,7 @@ material 5628. With the larger bounded cache, the uninterrupted run captures
 callback endpoint byte for byte. The player reports retained bitmap bytes after
 loading and at completion. This accounts for mip payloads, not driver overhead,
 render targets, mesh buffers, audio or CPU procedural working memory; the full
-demo's memory requirement remains unmeasured while its final scene is unported.
+demo's total memory requirement remains unmeasured.
 
 Bitmap Render (`0x3f`) executes its IPP input once in a fresh time-zero
 view, with aspect one and no project events. It clears the master target to
