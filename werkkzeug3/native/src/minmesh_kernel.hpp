@@ -66,9 +66,25 @@ struct GenMinCluster {
   void Init(GenMaterial* m,int p=0,int id=0,int anim=0,int matrix=-1){Mtrl=m;RenderPass=p;Id=id;AnimType=anim;AnimMatrix=matrix;}
   bool Equals(const GenMinCluster& b)const{return Mtrl==b.Mtrl&&RenderPass==b.RenderPass&&Id==b.Id&&AnimType==b.AnimType&&AnimMatrix==b.AnimMatrix;}
 };
+struct GenSpline {
+  virtual ~GenSpline()=default;
+  virtual void Eval(float time,float phase,sMatrix&,float& zoom)=0;
+};
+struct GenMinMatrix {
+  sMatrix BasePose,Temp,NoAnimation;
+  int Parent=-1;
+  float Offset=0,Factor=1,Spread=0;
+  std::shared_ptr<GenSpline> Spline;
+  GenMinMatrix(){BasePose.Init();Temp.Init();NoAnimation.Init();}
+};
 template<class T> struct MinStorage:Storage<T> {
   void SetMax(int n){this->AtLeast(n);}
   void Resize(int n){SetMax(n);this->Count=n;}
+};
+struct GenMinMeshAnim {
+  MinStorage<GenMinMatrix> Matrices;
+  explicit GenMinMeshAnim(int n){Matrices.Resize(n);Matrices.compact();}
+  void EvalAnimation(float time,float metamorph,sMatrix*);
 };
 class GenMinMesh {
   static sU32 HashVector(const GenMinVector&);
@@ -78,6 +94,8 @@ public:
   MinStorage<GenMinFace> Faces;
   MinStorage<GenMinCluster> Clusters;
   std::shared_ptr<MaterialArena> materials;
+  std::shared_ptr<GenMinMeshAnim> Animation;
+  bool CompletelyRigid=false;
   GenMinMesh();
   GenMinMesh(const GenMinMesh&);
   GenMinMesh& operator=(const GenMinMesh&)=delete;
@@ -87,6 +105,7 @@ public:
   void Transform(int,const sMatrix&,int=0,int=0,int=0);
   void CalcNormals();void Add(const GenMinMesh*);void MergeClusters();void Invert();
   void CalcBBox(sAABox&)const;void SelectAll(int,int);
+  void CreateAnimation(int n){Animation=std::make_shared<GenMinMeshAnim>(n);}
   int* CalcMergeVerts()const;bool CalcAdjacencyCore(const int*);bool CalcAdjacency();
   void validate()const;std::size_t bytes()const;
 };
@@ -106,6 +125,7 @@ GenMinMesh* MinMesh_ExtrudeNormal(GenMinMesh*,int,float);
 GenMinMesh* MinMesh_Bend2(GenMinMesh*,sF323,sF323,float,float);
 GenMinMesh* MinMesh_Triangulate(GenMinMesh*);
 GenMinMesh* MinMesh_Center(GenMinMesh*,int);
+GenMinMesh* explode(GenMinMesh&,const Texture*,std::span<const std::uint32_t>);
 Mesh export_mesh(std::shared_ptr<GenMinMesh>);
 std::shared_ptr<const Mesh> evaluate_kernel(const Project&,const Graph&,std::size_t);
 } // namespace wz3::legacy::minimal

@@ -18,7 +18,7 @@ GenMinMesh::GenMinMesh() {
   Vertices.SetMax(1);Faces.SetMax(1);
   Clusters.Add()->Init(nullptr);AddCluster(nullptr,0);
 }
-GenMinMesh::GenMinMesh(const GenMinMesh& m):Vertices(m.Vertices),Faces(m.Faces),Clusters(m.Clusters),materials(m.materials){}
+GenMinMesh::GenMinMesh(const GenMinMesh& m):Vertices(m.Vertices),Faces(m.Faces),Clusters(m.Clusters),materials(m.materials),Animation(m.Animation),CompletelyRigid(m.CompletelyRigid){}
 bool CheckMinMesh(GenMinMesh*& mesh){require(mesh!=nullptr,"missing MINMESH input");return false;}
 #define sVERIFY(x) require(bool(x),"MINMESH kernel invariant: " #x)
 #define sRelease(x) do {if(x)(x)->Release();(x)=nullptr;}while(false)
@@ -40,6 +40,7 @@ void GenMinMesh::validate() const {
     for(const auto& uv:v.UV)for(auto c:uv)require(std::isfinite(c),"nonfinite MINMESH UV");
     require(v.BoneCount<=4,"invalid MINMESH bone count");
     for(auto w:v.Weights)require(std::isfinite(w),"nonfinite MINMESH weight");
+    if(Animation)for(unsigned j=0;j<v.BoneCount;++j)require(v.Matrix[j]<Animation->Matrices.Count,"MINMESH bone index out of bounds");
   }
   for(int i=0;i<Faces.Count;++i) {
     const auto& f=Faces[i];require(f.Count<=8 && f.Cluster<Clusters.Count,"invalid MINMESH face");
@@ -47,7 +48,8 @@ void GenMinMesh::validate() const {
   }
 }
 std::size_t GenMinMesh::bytes()const {
-  return Vertices.storage.capacity()*sizeof(GenMinVert)+Faces.storage.capacity()*sizeof(GenMinFace)+Clusters.storage.capacity()*sizeof(GenMinCluster);
+  return Vertices.storage.capacity()*sizeof(GenMinVert)+Faces.storage.capacity()*sizeof(GenMinFace)+Clusters.storage.capacity()*sizeof(GenMinCluster)+
+    (Animation ? sizeof(GenMinMeshAnim)+Animation->Matrices.storage.capacity()*(sizeof(GenMinMatrix)+sizeof(GenSpline)+4*sizeof(sVector)+sizeof(float)) : 0);
 }
 Mesh export_mesh(std::shared_ptr<GenMinMesh> core) {
   core->validate();core->CalcNormals();core->validate();core->CalcAdjacency();
@@ -61,7 +63,7 @@ Mesh export_mesh(std::shared_ptr<GenMinMesh> core) {
   for(int i=0;i<core->Faces.Count;++i) {
     const auto& f=core->Faces[i];if(!f.Cluster || f.Count<3)continue;
     const auto& cl=core->Clusters[f.Cluster];
-    require(cl.AnimType==0,"animated MINMESH export is not ported");
+    require(cl.AnimType==0 || (cl.AnimType==2 && core->Animation && core->CompletelyRigid),"unsupported MINMESH animation type");
     MeshFace face;face.mask=f.Select;face.material=cl.Mtrl ? cl.Mtrl->binding : std::nullopt;
     face.pass=cl.RenderPass;face.casts_shadow=!(f.Flags&1);
     if(f.Count<=4) {

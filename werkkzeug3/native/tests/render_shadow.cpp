@@ -1,6 +1,7 @@
 // Distributed under the BSD license in werkkzeug3/LICENSE.txt.
 #include "frame_fixture.hpp"
 #include "wz3/scene_draw.hpp"
+#include "minmesh_kernel.hpp"
 #include <iostream>
 namespace {
 wz3::Material material(bool casts) {
@@ -86,6 +87,39 @@ void coplanar_cap() {
     check(std::abs(int(pixels[(64*128+64)*4])-expected)<=1,"shadow cap must fail depth at equality (archived D3DCMP_LESS)");
   }
 }
+void animated() {
+  FrameFixture fixture;auto s=scene(fixture);
+  const auto cube=fixture.add(0x102,{1,1,1,0,f(1),f(1),f(1),0,0,0,0,0,0});
+  std::vector<std::uint32_t> p(21);p[3]=f(.15f);p[4]=f(.2f);p[6]=f(-.1f);p[8]=f(.2f);p[9]=f(.3f);p[10]=f(.1f);
+  const auto explode=fixture.add(0x134,p,{cube}),bound=fixture.add(0x110,{0,0},{explode},{0});
+  const auto mesh=wz3::evaluate_mesh(fixture.p,fixture.g,bound);s.instances[0].mesh=mesh;
+  wz3::FrameRenderer renderer(fixture.p,fixture.g),reference(fixture.p,fixture.g);
+  std::vector<std::uint8_t> previous;unsigned changed=0,checks=0;wz3::FrameRenderer::Stats warm;
+  for(float time:{0.f,.2f,.7f,1.f,.2f,0.f})for(bool second:{false,true}) {
+    auto scene=s;scene.instances[0].time=time;
+    if(second){auto other=scene.instances[0];other.time=time+.4f;other.world[12]=1.5f;scene.instances.push_back(other);}
+    for(const auto& job:wz3::scene_draw_jobs(scene,128,128).jobs)if(((job.sort_key>>16)&15)==3)check(job.shadow_zfail,"animated mesh must use archived unbounded shadow box");
+    const auto actual=render(renderer,scene);
+    // Bake each pose as ordinary static input, preserving the posed shadow
+    // plane path. This checks time delivery, repeated frames, multiple poses
+    // sharing one source, and GPU buffer updates against explicit geometry.
+    for(auto& instance:scene.instances)if(wz3::mesh_has_animation(*instance.mesh)) {
+      const auto pose=wz3::pose_mesh(instance.mesh,instance.time);
+      auto baked=std::make_shared<wz3::Mesh>(*pose);
+      auto core=std::make_shared<wz3::legacy::minimal::GenMinMesh>(*pose->min_kernel);core->Animation.reset();baked->min_kernel=core;instance.mesh=baked;
+    }
+    const auto expected=render(reference,scene);
+    for(std::size_t i=0;i<actual.size();++i)check(std::abs(int(actual[i])-expected[i])<=2,"animated GPU geometry/shadow differs from baked pose");
+    if(!previous.empty())changed+=actual!=previous;previous=actual;
+    if(!checks)warm=renderer.stats();else {check(renderer.stats().mesh_uploads==warm.mesh_uploads,"animation allocated another mesh buffer");check(renderer.stats().shadow_uploads==warm.shadow_uploads,"animation allocated another shadow buffer");}
+    ++checks;
+  }
+  check(changed>5 && renderer.stats().mesh_updates>10 && renderer.stats().shadow_updates>10,"animated GPU test did not exercise changing geometry/shadows");
+  auto outside=s;outside.instances[0].world[12]=10000;const auto jobs=wz3::scene_draw_jobs(outside,128,128).jobs;
+  check(std::any_of(jobs.begin(),jobs.end(),[](const auto& job){return !job.effect && job.instance==0;}),"animated object incorrectly culled");
+  renderer.reset_targets();check(render(renderer,s)==render(renderer,s),"animated reset changed repeated frame");
+  std::cout<<checks<<" animated mesh/shadow frames match baked poses; buffers stay bounded\n";
+}
 void theta(const char* path) {
   const auto p=wz3::read_project(path);const auto g=wz3::connect(p);wz3::FramePlayer player(p,g);wz3::FrameRenderer renderer(p,g);
   for(float beat:{56.f,72.f,96.f,120.f,144.f,184.f,216.f,448.5f,480.f,511.5f}) {
@@ -97,4 +131,4 @@ void theta(const char* path) {
   }
 }
 }
-int main(int argc,char** argv){try{controlled();coplanar_cap();if(argc>1)theta(argv[1]);}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(int argc,char** argv){try{controlled();coplanar_cap();animated();if(argc>1)theta(argv[1]);}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

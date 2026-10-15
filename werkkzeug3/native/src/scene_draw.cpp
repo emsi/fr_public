@@ -36,6 +36,9 @@ std::array<Plane,5> frustum(const SceneCamera& camera,unsigned width,unsigned he
 }
 float distance(const Plane& p,const Vec3& v){return p[0]*v[0]+p[1]*v[1]+p[2]*v[2]+p[3];}
 Bounds batch_bounds(const SceneInstance& instance,const SceneMeshBatch& batch) {
+  // BuildPaintJobs uses this world-space box for every animated mesh, even
+  // outside the view. It also keeps animated shadow jobs on the z-fail path.
+  if(mesh_has_animation(*instance.mesh))return {{-1073741824.f,-1073741824.f,-1073741824.f},{1073741824.f,1073741824.f,1073741824.f}};
   const auto& mesh=*instance.mesh;const auto first=mesh.vertices[mesh.faces[batch.faces[0]].vertices[0]].position;Bounds local{first,first};
   for(auto f:batch.faces)for(unsigned i=0;i<mesh.faces[f].count;++i)for(unsigned c=0;c<3;++c){const auto v=mesh.vertices[mesh.faces[f].vertices[i]].position[c];local.min[c]=std::min(local.min[c],v);local.max[c]=std::max(local.max[c],v);}
   auto p=scene_point(instance.world,local.min);Bounds out{p,p};

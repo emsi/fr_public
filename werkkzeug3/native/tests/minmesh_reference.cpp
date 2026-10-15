@@ -31,18 +31,21 @@ sU32 color(const sVector& v) {
 }
 enum {MPP_SHADOW,MPP_SPRITES,MPP_STATIC,MPP_INSTANCES,MPP_INSTANCES_SH};
 struct SilEdge {int Vert[2],Face[2];};
+struct sVertexTSpace3Big {float x,y,z;};
 struct EngMesh {
   struct Job {
     int Program=MPP_SHADOW,MtrlId=1,VertexCount{},IndexCount{},EdgeCount{},PlaneCount{};
     sAABox BBox;sVector* Planes{};std::vector<int> VertexBuffer,IndexBuffer,FaceMap;SilEdge* Edges{};
     void Alloc(int v,int i,int e,int f,int){VertexCount=v;IndexCount=i;EdgeCount=e;VertexBuffer.resize(v);IndexBuffer.resize(i);FaceMap.resize(f);Edges=new SilEdge[e];}
     ~Job(){delete[] Planes;delete[] Edges;}
+    void UpdatePlanes(sVector*,const sVertexTSpace3Big*);
   };
   void CalcBoundingBox(GenMinMesh*,int,sAABox&);
   void PrepareJob(Job*,GenMinMesh*,bool&,const bool*);
   void PrepareSpriteJob(Job*,GenMinMesh*){throw std::runtime_error("oracle only hosts shadows");}
 };
 #define sVERIFY(x) check(bool(x),"archived MINMESH oracle assertion")
+#define sZONE(x)
 #define SHADOWS 1
 #define THICKLINES 0
 #define sINTRO 1
@@ -51,6 +54,7 @@ struct EngMesh {
 #undef THICKLINES
 #undef SHADOWS
 #undef sVERIFY
+#undef sZONE
 }
 std::unique_ptr<wz3::legacy::minimal::GenMinMesh> minmesh_conversion_reference(const wz3::legacy::GenMesh& source) {
   reference::GenMesh copy(source);
@@ -70,6 +74,11 @@ void check_minmesh_shadow_reference(const wz3::Mesh& mesh,std::span<const std::u
   }
   reference::EngMesh engine;reference::EngMesh::Job expected;bool first=true;
   engine.PrepareJob(&expected,&core,first,has);
+  if(mesh.animation_source) {
+    std::vector<reference::sVertexTSpace3Big> vertices;
+    for(const auto& v:mesh.vertices)vertices.push_back({v.position[0],v.position[1],v.position[2]});
+    if(expected.PlaneCount)expected.UpdatePlanes(expected.Planes,vertices.data());
+  }
   const auto actual=wz3::prepare_shadow_mesh(mesh,mask);
   check(actual.planes.size()==std::size_t(expected.PlaneCount),"MINMESH shadow plane count differs from archive");
   for(std::size_t i=0;i<actual.planes.size();++i)for(unsigned c=0;c<4;++c)

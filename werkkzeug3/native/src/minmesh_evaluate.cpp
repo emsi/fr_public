@@ -1,5 +1,6 @@
 // Distributed under the BSD license in werkkzeug3/LICENSE.txt.
 #include "minmesh_kernel.hpp"
+#include "wz3/texture.hpp"
 #include <bit>
 #include <tuple>
 
@@ -106,6 +107,14 @@ public:
       case 0x104:
         parameters(op,2);require(node.inputs.empty(),"MINMESH Sphere has inputs");
         mesh.reset(MinMesh_Sphere(integer(op,0,256,3),integer(op,1,256,1)));break;
+      case 0x134: {
+        parameters(op,21);require(node.inputs.size()==1 || node.inputs.size()==2,"MINMESH Explode needs a mesh and optional bitmap");
+        for(unsigned i=0;i<21;++i)if(i!=15)real(op,i);
+        integer(op,15,7);
+        auto input_mesh=std::make_shared<GenMinMesh>(*get(node.inputs[0],depth+1));
+        const auto bitmap=node.inputs.size()==2 ? evaluate_texture(project,graph,node.inputs[1]) : nullptr;
+        mesh.reset(explode(*input_mesh,bitmap.get(),op.parameters));break;
+      }
       case 0x111:
         parameters(op,0);require(!node.inputs.empty(),"MINMESH Add requires inputs");
         mesh=std::make_shared<GenMinMesh>(*get(node.inputs[0],depth+1));

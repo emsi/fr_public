@@ -13,5 +13,6 @@ convert = convert.replace("vb[i * vs + vc0].GetColor()", "color(vb[i * vs + vc0]
 convert = convert.replace("return minMesh;", "return owner.release();")
 bodies.append(convert)
 bodies += [extract(engine, "void EngMesh::CalcBoundingBox(GenMinMesh *mesh,sInt clusterId,sAABox &box)"),
-           extract(engine, "void EngMesh::PrepareJob(Job *job,GenMinMesh *mesh,sBool &firstShadowJob,const sBool *hasShadow)")]
+           extract(engine, "void EngMesh::PrepareJob(Job *job,GenMinMesh *mesh,sBool &firstShadowJob,const sBool *hasShadow)"),
+           extract(engine, "void EngMesh::Job::UpdatePlanes(")]
 Path(sys.argv[3]).write_text("// Generated from genmesh.cpp/engine.cpp; see werkkzeug3/LICENSE.txt.\n" + "\n\n".join(bodies) + "\n")

@@ -36,9 +36,13 @@ struct Mesh {
   std::vector<MeshFace> faces;
   std::shared_ptr<const legacy::GenMesh> kernel;
   std::shared_ptr<const legacy::minimal::GenMinMesh> min_kernel;
+  // A posed mesh retains its immutable source identity for bounded GPU caches.
+  std::shared_ptr<const Mesh> animation_source;
 };
 struct Bounds { Vec3 min{}, max{}; };
 std::shared_ptr<const Mesh> evaluate_mesh(const Project&, const Graph&, std::size_t id);
+bool mesh_has_animation(const Mesh&);
+std::shared_ptr<const Mesh> pose_mesh(const std::shared_ptr<const Mesh>&,float time);
 Bounds mesh_bounds(const Mesh&);
 void validate_mesh(const Mesh&);
 std::size_t mesh_storage_bytes(const Mesh&);

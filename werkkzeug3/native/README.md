@@ -37,11 +37,10 @@ main viewport contains 76 mesh instances, two lights and 26 ChainLine cables.
 With an explicit font, the native player renders the opening city at 1280x640:
 1,251 consecutive frames through 20 seconds pass in both offline and
 audio-callback-paced playback, with byte-identical endpoint captures.
-Continuous GPU rendering now also passes 53 seconds in offline mode, with
-captures at 50 and 53 seconds. It stops at 53,887 ms on the unported MINMESH
-Explode at operator 8156; callback-paced playback beyond 20 seconds has not
-been checked. The CPU-only timeline reaches the same operator at 53,888 ms
-(beat 176.034).
+Continuous GPU rendering now also passes 60 seconds in offline mode, with
+captures at 54, 55 and 60 seconds showing the animated fragments. It stops at
+63,680 ms on a Particles operator with an unported GenSpline input;
+callback-paced playback beyond 20 seconds has not been checked.
 DejaVu Sans captures show textured buildings,
 lighting, shadows and cables. The playback test uses dummy audio; physical
 speaker output and synchronization remain unverified. This is progress through
@@ -50,7 +49,7 @@ images. To play the supported opening from the repository root:
 
 ```sh
 build/native/wz3-player werkkzeug3/data/debris/debris_9241_c.k \
-  --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf --duration 53
+  --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf --duration 60
 ```
 
 DejaVu Sans substitutes for the project's Arial font; its appearance is not an
@@ -69,7 +68,7 @@ them between frames and reports missing S3TC support explicitly. Tests compare
 882 synthetic uploads and all five reachable Debris compressed textures against
 the archived `UpdateTexture` handler (using the same archived compressor).
 Separate GPU tests compare every sampled channel, including alpha and 1x1/2x2
-mips, with an independent block decoder. The 69-test Release suite, including
+mips, with an independent block decoder. The 70-test Release suite, including
 23 graphics tests, passes on the Radeon RX 7900 XT; DXT CPU checks also pass
 under Clang ASan/UBSan.
 
@@ -124,10 +123,36 @@ routines. It also supports Add and conversion from the older indexed mesh
 format. MINMESH retains up to eight corners per polygon, both UV sets and
 two-vertex stitch records; normals/tangents and shadow adjacency come from its
 own kernels. Material links retain operator identities and pass numbers.
-Animated mesh initialization, bones, Pipe, Explode, Font3D, Multiply and Perlin
+Animated mesh initialization, weighted bones, Pipe, Font3D, Multiply and Perlin
 displacement still fail explicitly.
 
-Currently 242 of the 563 reachable MINMESH operators evaluate in isolation.
+MINMESH Explode runs the archived handler and kinetic splines directly. Each
+live polygon becomes a closed fragment, with preserved attributes, extrusion
+depth/flatness, optional quad diagonal selection and a rigid bone. Seeded
+velocity, Euler or axis/angle rotation and radial/directional/bitmap delays
+retain the original arithmetic. The bitmap path preserves its unusual use of
+texture width for both coordinate axes, and zero blue delays a fragment by
+9,999 time units. Random function arguments are sequenced explicitly in the
+original Win32 order so GCC and Clang produce the same distribution.
+
+The renderer evaluates these bones at each scene instance's time and transforms
+positions, normals and tangents on the CPU, as the original engine did. GPU
+buffers are reused by source mesh, including multiple instances at different
+times; poses retain bind-pose topology and weld identities. Shadow planes come
+from the first triangle of each posed polygon, matching `Job::UpdatePlanes`.
+Animated meshes retain the original large world-space culling box and shadow
+volume selection.
+
+`minmesh_animation` checks analytic ballistic motion, negative time/delays,
+seeded rotations, extrusion/attributes, bitmap delays, polygon degrees 3–8,
+empty and oversized inputs, all eight mode combinations and all 46 reachable
+Debris Explode parameter sets. Fourteen complete saved mesh graphs also pose.
+Shadow planes, edges and caps match the extracted archived preparation/update
+handlers. Twelve GPU frames compare against explicitly posed geometry, including
+backward time and two simultaneous poses, without allocating additional mesh
+or shadow buffers. The CPU and GPU checks pass under Clang ASan/UBSan.
+
+Currently 277 of the 563 reachable MINMESH operators evaluate in isolation.
 The remaining operators depend on unported commands. These counts describe
 geometry coverage, not rendered scenes.
 Tests compare conversion against the archived `Mesh_ToMin` and shadow planes,

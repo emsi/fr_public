@@ -198,6 +198,7 @@ struct FrameRenderer::Impl {
   std::map<std::string,GLuint> programs;
   struct MeshGeometry {
     std::shared_ptr<const Mesh> owner;GLuint buffer{};
+    std::size_t bytes{};
     std::vector<std::pair<GLint,GLsizei>> batches;
   };
   struct MeshVertex {SceneEffectVertex vertex;Vec3 normal,tangent;};
@@ -626,10 +627,12 @@ struct FrameRenderer::Impl {
     for(const auto& draw:scene.effects)effect(draw,projection,target,scene.camera);
   }
   const MeshGeometry& mesh_geometry(const std::shared_ptr<const Mesh>& mesh,const std::vector<SceneMeshBatch>& batches) {
-    if(const auto found=geometry.find(mesh.get());found!=geometry.end())return found->second;
+    const auto key=mesh->animation_source ? mesh->animation_source.get() : mesh.get();auto found=geometry.find(key);
+    if(found!=geometry.end() && found->second.owner==mesh)return found->second;
     MeshGeometry data;data.owner=mesh;std::vector<MeshVertex> triangles;const auto normals=mesh_normals(*mesh);
     std::size_t count=0;for(const auto& batch:batches)for(auto f:batch.faces)count+=(mesh->faces[f].count-2)*3;
-    const auto bytes=count*sizeof(MeshVertex);require(bytes<=512u*1024*1024-geometry_bytes,"scene GPU geometry budget exceeded");triangles.reserve(count);
+    const auto previous=found==geometry.end() ? 0 : found->second.bytes;
+    const auto bytes=count*sizeof(MeshVertex);require(bytes<=512u*1024*1024-(geometry_bytes-previous),"scene GPU geometry budget exceeded");triangles.reserve(count);data.bytes=bytes;
     std::vector<std::uint32_t> colors;colors.reserve(mesh->vertices.size());
     for(const auto& v:mesh->vertices)colors.push_back(mesh_vertex_color(v.color));
     for(const auto& batch:batches) {
@@ -643,23 +646,34 @@ struct FrameRenderer::Impl {
       }
       data.batches.emplace_back(first,GLsizei(triangles.size()-first));
     }
-    glGenBuffers(1,&data.buffer);glBindBuffer(GL_ARRAY_BUFFER,data.buffer);glBufferData(GL_ARRAY_BUFFER,bytes,triangles.data(),GL_STATIC_DRAW);
-    geometry_bytes+=bytes;++stats.mesh_uploads;return geometry.emplace(mesh.get(),std::move(data)).first->second;
+    if(found==geometry.end()){glGenBuffers(1,&data.buffer);++stats.mesh_uploads;}
+    else {data.buffer=found->second.buffer;++stats.mesh_updates;}
+    glBindBuffer(GL_ARRAY_BUFFER,data.buffer);
+    if(previous==bytes && found!=geometry.end())glBufferSubData(GL_ARRAY_BUFFER,0,bytes,triangles.data());
+    else glBufferData(GL_ARRAY_BUFFER,bytes,triangles.data(),mesh->animation_source ? GL_DYNAMIC_DRAW : GL_STATIC_DRAW);
+    geometry_bytes=geometry_bytes-previous+bytes;
+    if(found!=geometry.end()){found->second=std::move(data);return found->second;}
+    return geometry.emplace(key,std::move(data)).first->second;
   }
   const ShadowGeometry& shadow_geometry(const std::shared_ptr<const Mesh>& mesh,const SceneFrame& scene) {
-    auto mask=shadow_face_mask(*mesh,scene.materials);auto found=shadows.find(mesh.get());
-    if(found!=shadows.end() && found->second.mask==mask)return found->second;
+    const auto key=mesh->animation_source ? mesh->animation_source.get() : mesh.get();
+    auto mask=shadow_face_mask(*mesh,scene.materials);auto found=shadows.find(key);
+    if(found!=shadows.end() && found->second.owner==mesh && found->second.mask==mask)return found->second;
     ShadowGeometry data;data.owner=mesh;data.mask=std::move(mask);data.mesh=prepare_shadow_mesh(*mesh,data.mask);
     const auto previous=found==shadows.end() ? 0 : found->second.bytes;
     data.bytes=data.mask.size()+data.mesh.vertices.size()*(sizeof(Vec3)+2*sizeof(std::array<float,4>))+data.mesh.planes.size()*sizeof(ShadowPlane)+data.mesh.edges.size()*sizeof(ShadowEdge)+(data.mesh.triangles.size()+data.mesh.triangle_planes.size())*sizeof(std::uint32_t);
     require(data.bytes<=512u*1024*1024-(geometry_bytes-previous),"scene shadow geometry budget exceeded");
     std::vector<std::array<float,4>> vertices;vertices.reserve(data.mesh.vertices.size()*2);
     for(const auto& v:data.mesh.vertices)for(float w:{1.f,0.f})vertices.push_back({v[0],v[1],v[2],w});
-    glGenBuffers(1,&data.buffer);glBindBuffer(GL_ARRAY_BUFFER,data.buffer);glBufferData(GL_ARRAY_BUFFER,vertices.size()*sizeof(vertices[0]),vertices.data(),GL_STATIC_DRAW);
+    if(found==shadows.end()){glGenBuffers(1,&data.buffer);++stats.shadow_uploads;}
+    else {data.buffer=found->second.buffer;++stats.shadow_updates;}
+    glBindBuffer(GL_ARRAY_BUFFER,data.buffer);
+    const auto bytes=vertices.size()*sizeof(vertices[0]);
+    if(found!=shadows.end() && vertices.size()==found->second.mesh.vertices.size()*2)glBufferSubData(GL_ARRAY_BUFFER,0,bytes,vertices.data());
+    else glBufferData(GL_ARRAY_BUFFER,bytes,vertices.data(),mesh->animation_source ? GL_DYNAMIC_DRAW : GL_STATIC_DRAW);
     geometry_bytes=geometry_bytes-previous+data.bytes;
-    ++stats.shadow_uploads;
-    if(found!=shadows.end()){glDeleteBuffers(1,&found->second.buffer);found->second=std::move(data);return found->second;}
-    return shadows.emplace(mesh.get(),std::move(data)).first->second;
+    if(found!=shadows.end()){found->second=std::move(data);return found->second;}
+    return shadows.emplace(key,std::move(data)).first->second;
   }
   void shadow(const SceneInstance& instance,const SceneFrame& scene,const MaterialShader& shader,const SceneMatrix& projection,const SceneLight& light,bool zfail) {
     last_model=instance.world;
@@ -683,7 +697,20 @@ struct FrameRenderer::Impl {
     glStencilOpSeparate(GL_BACK,GL_KEEP,zfail ? GL_INCR_WRAP : GL_KEEP,zfail ? GL_KEEP : GL_DECR_WRAP);
     glDrawElements(GL_TRIANGLES,GLsizei(count),GL_UNSIGNED_INT,nullptr);
   }
-  void scene_materials(const SceneFrame& scene,const FrameTarget& target) {
+  void scene_materials(const SceneFrame& source,const FrameTarget& target) {
+    std::optional<SceneFrame> animated;
+    std::map<std::pair<const Mesh*,float>,std::shared_ptr<const Mesh>> poses;
+    for(std::size_t i=0;i<source.instances.size();++i) {
+      const auto& instance=source.instances[i];
+      require(instance.mesh!=nullptr,"missing scene geometry");
+      if(!mesh_has_animation(*instance.mesh))continue;
+      require(std::isfinite(instance.time),"nonfinite mesh animation time");
+      if(!animated)animated=source;
+      const auto key=std::make_pair(instance.mesh.get(),instance.time);auto found=poses.find(key);
+      if(found==poses.end())found=poses.emplace(key,pose_mesh(instance.mesh,instance.time)).first;
+      animated->instances[i].mesh=found->second;
+    }
+    const auto& scene=animated ? *animated : source;
     const auto draws=scene_draw_jobs(scene,target.width,target.height);const auto projection=scene_raster_projection(scene.camera,target.width,target.height);
     if(albedo.color || std::any_of(scene.materials.begin(),scene.materials.end(),[](const auto& m){return std::any_of(m.second.passes.begin(),m.second.passes.end(),[](const auto& p){return bool(p.shader.material20);});}))albedo_surface(target);
     const auto restore_scissor=[&]{glScissor(0,surfaces.at(target.surface).height-target.height,target.width,target.height);};

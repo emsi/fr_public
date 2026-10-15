@@ -42,7 +42,11 @@ ShadowMesh prepare_shadow_mesh(const Mesh& mesh,std::span<const std::uint8_t> ma
     for(std::size_t i=0;i<mask.size();++i)if(mask[i]) {
       const auto& f=core.Faces[i];require(f.Count>=3,"invalid MINMESH shadow polygon");
       mapping[i]=out.planes.size();const auto& n=f.Normal;const auto& p=core.Vertices[f.Vertices[0]].Pos;
-      out.planes.push_back({n.x,n.y,n.z,-n.Dot(p)});
+      if(mesh.animation_source) {
+        // Job::UpdatePlanes uses the first triangle of each posed polygon,
+        // without normalization. The archived adjacency remains unchanged.
+        out.planes.push_back(plane(mesh.vertices[f.Vertices[0]].position,mesh.vertices[f.Vertices[1]].position,mesh.vertices[f.Vertices[2]].position));
+      }else out.planes.push_back({n.x,n.y,n.z,-n.Dot(p)});
     }
     if(out.planes.size()==1)return out;
     for(const auto& v:mesh.vertices)out.vertices.push_back(v.position);
