@@ -10,8 +10,10 @@ Theta plays through its complete timeline on Linux. Native support for
 Audio-callback playback is validated through 330 seconds. Bone animation,
 Pipe meshes, Perlin displacement, 3D font outlines and mesh repetition are supported.
 All 563 reachable MINMESH operators evaluate. The next runtime blocker is an
-EventTime spatial spline wrapper at 401.647 seconds. Rendering also
-needs performance work to keep pace with audio; the full demo is not yet supported.
+EventTime spatial spline wrapper at 401.647 seconds. The optimized native player
+prepares the 330-second sequence in 72 seconds and presents about 59 frames per
+second in the tested X11/Radeon run, with a 42 ms maximum audio-clock catch-up
+using SDL dummy audio. The full demo is not yet supported.
 The original archive follows below.
 
 This is it. Pretty much a history of Farbrausch tools 2001-2011. We've been

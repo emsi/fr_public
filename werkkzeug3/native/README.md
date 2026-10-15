@@ -41,13 +41,23 @@ Continuous GPU rendering and callback-paced playback now pass 330 seconds
 (20,626 frames), including spline-deformed geometry, baked building textures,
 tangled rails and the 3D greetings. Captures at 250, 255, 260, 280 and 300 seconds
 are byte-identical between offline and callback-paced runs.
-The callback-paced check took 331.39 wall seconds after 339.07 seconds of
-preparation and fell up to 22.27 seconds behind the audio clock. These timings
-were recorded alongside other validation work, not in an isolated benchmark.
-It created no additional cached meshes, fonts,
+The optimized X11 run on the Radeon RX 7900 XT completes all 20,626 frames
+through 330 seconds in 327.83 wall seconds with SDL dummy audio: 19,453
+presentations (59.34 per wall second), a 34.26 ms maximum draw and 42.04 ms
+maximum audio-clock catch-up. The earlier unoptimized callback run fell up to
+22.27 seconds behind; that older run overlapped other validation work.
+Preparation now takes 71.75 seconds, compared with a fresh 343.02-second
+offscreen measurement of the previous binary on the same host and resolution.
+These preparation times exclude music synthesis and window setup. Preparation
+still evaluates all 20,626 simulation frames, but needs only 734 GPU draws.
+Its bounded texture cache reuses 341 recipe branches and retains 133,169,152
+bytes of CPU pixels. No other repository builds/tests ran during the final X11
+check. Captures at 20, 30, 60, 180, 250, 300 and 330 seconds match the prior
+continuous rendering byte for byte.
+Playback creates no additional cached meshes, fonts,
 render surfaces, bitmap uploads, mesh/shadow/instance buffers, shaders or lighting
-tables, and did not rebake any textures during playback. Synchronized real-time
-Debris playback still needs performance work.
+tables, and does not rebake textures. Physical audio-device latency remains
+unverified; these measurements establish windowed rendering and callback pacing.
 Optimized particle mesh instancing, Color Correction, Bitmap Render,
 BoneChain/BoneTrain, weighted skinning, Pipe, MINMESH Perlin, Font3D and Multiply
 are supported. An unrestricted run now passes 400 seconds (25,001 consecutive
@@ -56,9 +66,10 @@ Font3D unblocks the 3D greetings from 254.703 seconds;
 captures at 255, 260, 280 and 300 seconds include the saved text scenes.
 The 330-second offline capture matches the callback endpoint byte for byte.
 Font3D geometry and GPU shadow checks also pass under Clang ASan/UBSan.
-The full release suite passes 83 checks, including 27 graphics checks. After the
-bitmap-cache limit change, the five affected bitmap, DXT, presentation and
-Ogg/V2 player checks also pass.
+The full release suite passes 84 checks, including 27 graphics checks. Shared
+texture reuse/eviction, preparation resource discovery and scene draw ordering
+also pass three focused Clang ASan/UBSan checks. The SDL integration test compares
+selective preparation, full preparation, cold playback and offline captures.
 DejaVu Sans captures show textured buildings,
 lighting, shadows and cables. The playback test uses dummy audio; physical
 speaker output and synchronization remain unverified. This is progress through
@@ -593,19 +604,33 @@ the window scales the picture with black bars and preserves render-target histor
 endpoint or `--duration` limit at 44.1 kHz before playback begins.
 Escape or closing the window exits. Seeking, pause and looping are not implemented.
 
-Playback now starts with a cancellable loading screen. The loading pass executes
-the same 16 ms timeline into offscreen render targets, preparing all encountered
-meshes, textures, shadows and shader variants. It shares only immutable geometry
-and font data with a fresh playback instance. Particle RNG, animation, events and
-simulation clocks are recreated; screen/pool/named target color, depth and stencil
-are cleared before music starts. This also warms driver shader variants that may
-compile lazily on their first draw. It currently trades a complete preparation
-pass (about 31 seconds on the tested Radeon) for predictable playback allocation.
+Playback starts with a cancellable loading screen. Preparation advances every
+16 ms simulation step, checking the actual visible draw jobs for new geometry,
+textures, shader configurations and target sizes. It draws only frames that
+introduce resources, twice to prime both images of ping-pong effects. Brief events
+and previously hidden meshes entering view are still checked at every step.
+`--preload-full` retains the previous strategy of drawing every preparation frame
+for comparison. Preparation shares immutable assets with a fresh playback
+instance. Particle RNG, animation, events and simulation clocks are recreated;
+screen/pool/named target color, depth and stencil are cleared before music starts.
+Playback continues to render every 16 ms step, including render-target history.
+
+The renderer caches immutable mesh material groups and local bounds, then
+transforms their eight corners for each instance instead of rescanning faces.
+Shader configuration lookup precedes GLSL generation; animated uniforms still
+update on every draw. Particle instance buffers grow to powers of two as their
+live counts increase. The player also shares a 128 MiB LRU cache of named or
+multiply referenced procedural texture branches across material and mesh recipes.
+Its stored pixels are independent of each recipe's existing 256 MiB scratch
+budget. The project, graph and generation options remain immutable while this
+cache is in use; standalone texture evaluation retains its uncached behavior.
 
 `--no-preload` skips preparation for startup/performance comparisons.
 `--preload-only` prepares the timeline and exits without opening an audio device.
 The window remains responsive during loading, including resize and cancellation.
-`--duration` limits both preparation and playback. The final allocation counters
+`--duration` limits both preparation and playback. Loading reports the number of
+simulation frames, actual preparation draws and reused texture branches.
+The final allocation counters
 report any assets/uploads/programs still created after loading, separately from
 the per-frame dynamic data needed by particles and shadows.
 
