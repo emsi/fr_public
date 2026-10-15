@@ -37,12 +37,15 @@ main viewport contains 76 mesh instances, two lights and 26 ChainLine cables.
 With an explicit font, the native player renders the opening city at 1280x640:
 1,251 consecutive frames through 20 seconds pass in both offline and
 audio-callback-paced playback, with byte-identical endpoint captures.
-Continuous GPU rendering now passes 117 seconds (7,314 frames). The 110-second
-capture remains byte-identical to the previous milestone; the 112- and
-117-second images show the elevated-road sequence and baked building textures.
-The last 110-second callback-paced check took 118.9 wall seconds after 164.7
-seconds of preparation and fell up to 21.6 seconds behind the audio clock.
-Synchronized real-time Debris playback still needs performance work.
+Continuous GPU rendering and callback-paced playback now pass 117 seconds
+(7,314 frames), with byte-identical captures at 112 and 117 seconds showing the
+elevated-road sequence and baked building textures. The 110-second capture also
+remains byte-identical to the previous milestone. The callback-paced check took
+122.26 wall seconds after 170.17 seconds of preparation and fell up to 22.13
+seconds behind the audio clock. It created no additional cached meshes, fonts,
+render surfaces, bitmap uploads, mesh/shadow/instance buffers, shaders or lighting
+tables, and did not rebake any textures during playback. Synchronized real-time
+Debris playback still needs performance work.
 Optimized particle mesh instancing, Color Correction and Bitmap Render are now
 supported. The next continuous-run failure is at 117,551 ms: MINMESH BoneTrain
 operator 8279 requires BoneChain (8263), spatial-spline bone motion and weighted
