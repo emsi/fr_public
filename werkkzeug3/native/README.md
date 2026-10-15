@@ -37,20 +37,24 @@ main viewport contains 76 mesh instances, two lights and 26 ChainLine cables.
 With an explicit font, the native player renders the opening city at 1280x640:
 1,251 consecutive frames through 20 seconds pass in both offline and
 audio-callback-paced playback, with byte-identical endpoint captures.
-Continuous GPU rendering and callback-paced playback now pass 124 seconds
-(7,751 frames), with byte-identical captures at 118, 120 and 124 seconds showing
-the spline-deformed geometry and baked building textures. The callback-paced check took
-127.86 wall seconds after 176.24 seconds of preparation and fell up to 22.18
-seconds behind the audio clock. It created no additional cached meshes, fonts,
+Continuous GPU rendering and callback-paced playback now pass 180 seconds
+(11,251 frames), with byte-identical captures at 124, 130, 140, 160 and 180 seconds
+showing spline-deformed geometry, baked building textures and the tangled rails.
+The callback-paced check took 186.80 wall seconds after 243.27 seconds of
+preparation and fell up to 23.70 seconds behind the audio clock. These timings
+were recorded alongside other validation work, not in an isolated benchmark.
+It created no additional cached meshes, fonts,
 render surfaces, bitmap uploads, mesh/shadow/instance buffers, shaders or lighting
 tables, and did not rebake any textures during playback. Synchronized real-time
 Debris playback still needs performance work.
-Optimized particle mesh instancing, Color Correction and Bitmap Render are now
-supported. BoneChain/BoneTrain and weighted skinning extend continuous
-playback through 124 seconds. Pipe meshes now extend offline rendering through
-180 seconds (11,251 frames), including the tangled-rail sequence. The 124-second
-capture remains byte-identical to the preceding milestone. Later scenes are
-still being checked; this is not a complete Debris playback claim.
+Optimized particle mesh instancing, Color Correction, Bitmap Render,
+BoneChain/BoneTrain, weighted skinning, Pipe and MINMESH Perlin are supported.
+An unrestricted run passes 250 seconds and stops at 254,703 ms on MINMESH Font3D operator
+9462 (`andromedasoftwaredevelopment.`, saved font Arial). The 124- and 180-second
+captures remain byte-identical to the preceding runs. Font3D needs native glyph
+outlines, triangulation and extrusion; the original uses Windows GDI and GLU.
+All 81 release checks pass, including 27 graphics tests. New bone, Pipe and
+Perlin checks also pass under Clang ASan/UBSan.
 DejaVu Sans captures show textured buildings,
 lighting, shadows and cables. The playback test uses dummy audio; physical
 speaker output and synchronization remain unverified. This is progress through
@@ -59,7 +63,7 @@ images. To play the supported opening from the repository root:
 
 ```sh
 build/native/wz3-player werkkzeug3/data/debris/debris_9241_c.k \
-  --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf --duration 124
+  --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf --duration 180
 ```
 
 DejaVu Sans substitutes for the project's Arial font; its appearance is not an
@@ -202,7 +206,7 @@ Animated mesh initialization, Font3D and Multiply still fail explicitly.
 MINMESH Perlin displacement runs its original vector-lattice interpolation with
 the archived permutation/gradient tables and float32 downward rounding. It
 preserves all/selected/unselected masks, both UV sets and vertex colors, and
-restores the caller's floating-point environment on success or failure.
+restores the caller's rounding mode on success or failure.
 `minmesh_noise` compares 24 transform/selection combinations over 257 vertices
 and all eight complete saved graphs with the archived GenMesh Perlin routine;
 the older routine also passes independent bit-exact golden samples. Saved shadow
