@@ -1,5 +1,6 @@
 // Distributed under the BSD license in werkkzeug3/LICENSE.txt.
 #include "frame_fixture.hpp"
+#include "wz3/chainline.hpp"
 #include <iostream>
 #include <algorithm>
 namespace {
@@ -82,6 +83,33 @@ void target_texture() {
   auto& rendered=std::get<wz3::SceneFrame>(output.commands.back().draw);auto& sh=rendered.materials[1].passes[0].shader;
   sh.words[4]|=0x1000;sh.words[24]=f(.4f);pixels=renderer.render(output);pixel(pixels,32,44,{255,0,0});
 }
+void chainline_order() {
+  FrameFixture x;wz3::FrameRenderer renderer(x.p,x.g);wz3::SceneFrame scene;
+  // Keep a rotated mesh inside the frustum, black on black, before the cable.
+  // Its rotation changes the cable's facing vector even though the cable's
+  // points are already in world space and its own model matrix is identity.
+  scene.materials[1]=material(0xff000000,2);scene.instances={{0,square(1,0)}};
+  scene.instances[0].world=wz3::scene_srt(std::array<std::uint32_t,9>{f(1),f(1),f(1),0,0,0,0,0,f(5)});
+  wz3::SceneEffectDraw cable;cable.sort_key=(1u<<24)|(7u<<16);cable.shader=material(0xffff0000,2).passes[0].shader;
+  wz3::SceneRibbon line;line.thickness=.8f;for(unsigned i=0;i<32;++i)line.points[i]={-2+4*i/31.f,0,5};cable.ribbon=line;scene.effects={cable};
+  const auto visible=[](const auto& pixels){unsigned n=0;for(std::size_t i=0;i<pixels.size();i+=4)n+=pixels[i]>128;return n;};
+  const auto front=renderer.render(frame(scene));check(visible(front)>100,"ChainLine ribbon did not render");
+  scene.instances[0].world=wz3::scene_srt(std::array<std::uint32_t,9>{f(1),f(1),f(1),0,f(.25f),0,0,0,f(5)});
+  check(visible(renderer.render(frame(scene)))==0,"ChainLine ignored the previous mesh material's transform");
+  wz3::SceneEffectDraw empty;empty.sort_key=cable.sort_key;empty.material_on_empty=true;
+  scene.effects={empty,cable};check(renderer.render(frame(scene))==front,"empty Print material must still change ChainLine facing");
+  scene.effects[0].material_on_empty=false;
+  check(visible(renderer.render(frame(scene)))==0,"empty particle draw must leave the previous transform intact");
+  scene.effects={cable};
+  // A following cable sees the identity model left by the first cable.
+  scene.effects.push_back(cable);check(renderer.render(frame(scene))==front,"ChainLine did not publish its identity model for the next draw");
+  // Material state also survives into the next frame when a viewport is empty.
+  scene.effects.clear();renderer.render(frame(scene));scene.instances.clear();scene.effects={cable};
+  check(visible(renderer.render(frame(scene)))==0,"viewport boundary reset previous material transform");
+  check(renderer.render(frame(scene))==front,"previous cable material did not reset facing for next frame");
+  // A torn segment must retain exactly the original degenerate triangles.
+  scene.effects[0].ribbon->ripped=15;const auto torn=renderer.render(frame(scene));check(visible(torn)<visible(front),"ChainLine torn segment was still drawn");
+}
 void theta(const char* path) {
   const auto p=wz3::read_project(path);const auto g=wz3::connect(p);wz3::MaterialRuntime runtime(p,g);wz3::FrameRenderer renderer(p,g);
   for(const char* name:{"mesh.LineCircle","mesh.FireGradientCircle","mesh.fireball","mesh.fireball2","mesh.fireballBlackBody",
@@ -97,6 +125,6 @@ void theta(const char* path) {
 }
 }
 int main(int argc,char** argv) {
-  try {binding_and_cache();released_sample_centers();depth_culling_and_color();mesh_effect_order();target_texture();if(argc>1)theta(argv[1]);std::cout<<"Saved mesh material bindings, camera/SRT, depth, culling, colors, blending and target UVs passed\n";}
+  try {binding_and_cache();released_sample_centers();depth_culling_and_color();mesh_effect_order();target_texture();chainline_order();if(argc>1)theta(argv[1]);std::cout<<"Saved mesh material bindings, camera/SRT, depth, culling, colors, blending, target UVs and ChainLine draw order passed\n";}
   catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
 }

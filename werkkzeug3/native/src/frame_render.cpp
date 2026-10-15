@@ -2,6 +2,7 @@
 #include "wz3/frame.hpp"
 #include "wz3/texture.hpp"
 #include "wz3/print.hpp"
+#include "wz3/chainline.hpp"
 #include "wz3/scene_draw.hpp"
 #include "wz3/lighting.hpp"
 #include "wz3/fog.hpp"
@@ -122,7 +123,8 @@ struct FrameRenderer::Impl {
     std::vector<std::pair<GLint,GLsizei>> batches;
   };
   struct MeshVertex {SceneEffectVertex vertex;Vec3 normal,tangent;};
-  struct MeshDraw {GLuint buffer;GLint first;GLsizei count;};
+  struct MeshDraw {GLuint buffer;GLint first;GLsizei count;SceneMatrix model;};
+  SceneMatrix last_model=scene_identity();
   struct LightDraw {Vec3 position,eye;std::array<float,4> attenuation,color;std::array<float,2> specular;bool directional;};
   struct ShadowGeometry {
     std::shared_ptr<const Mesh> owner;std::vector<std::uint8_t> mask;
@@ -297,6 +299,7 @@ struct FrameRenderer::Impl {
       constexpr GLenum dst[]={0,GL_ONE_MINUS_SRC_ALPHA,GL_ONE,GL_SRC_COLOR,GL_SRC_COLOR,GL_ONE_MINUS_SRC_COLOR,GL_ONE,GL_ONE_MINUS_SRC_COLOR,GL_ONE,GL_ONE};
       glEnable(GL_BLEND);glBlendEquation(blend==6 ? GL_FUNC_REVERSE_SUBTRACT : GL_FUNC_ADD);glBlendFunc(src[blend],dst[blend]);
     }
+    last_model=mesh ? mesh->model : effect ? effect->material_model : scene_identity();
     if(!vertices)glDrawArrays(GL_TRIANGLE_STRIP,0,4);
     else {
       require(projection,"missing mesh/effect projection");
@@ -337,10 +340,19 @@ struct FrameRenderer::Impl {
     return q;
   }
   void effect(const SceneEffectDraw& draw,const SceneMatrix& projection,const FrameTarget& target,const SceneCamera& camera) {
-    if(draw.vertices.empty())return;
-    const auto matrix=draw.normalized ? print_normalized_projection(target.width,target.height) : projection;
-    std::optional<SceneFog> fog;if(draw.shader.words[0]&0x40){require(!draw.normalized,"normalized text fog is not ported");fog=scene_fog(camera,scene_identity());}
-    quad(resolve_material(draw.shader,&draw),target,&draw,&matrix,nullptr,nullptr,fog ? &*fog : nullptr);
+    if(draw.vertices.empty() && !draw.ribbon) {if(draw.material_on_empty)last_model=draw.material_model;return;}
+    std::optional<SceneEffectDraw> resolved;const auto* geometry=&draw;
+    if(draw.ribbon) {
+      // GetTransform(MODELVIEW) uses the previous material's model matrix.
+      // Only its rotational part contributes to the ribbon's facing vector.
+      auto view=scene_identity();for(unsigned c=0;c<3;++c)for(unsigned r=0;r<3;++r)view[c*4+r]=camera.world[r*4+c];
+      resolved=draw;resolved->vertices=chainline_vertices(*draw.ribbon,scene_combine(view,last_model));geometry=&*resolved;
+    }
+    auto matrix=draw.normalized ? print_normalized_projection(target.width,target.height) : projection;
+    auto draw_camera=camera;
+    if(draw.camera_world && !draw.normalized) {draw_camera.world=*draw.camera_world;matrix=scene_raster_projection(draw_camera,target.width,target.height);}
+    std::optional<SceneFog> fog;if(draw.shader.words[0]&0x40){require(!draw.normalized,"normalized text fog is not ported");fog=scene_fog(draw_camera,scene_identity());}
+    quad(resolve_material(draw.shader,&draw),target,geometry,&matrix,nullptr,nullptr,fog ? &*fog : nullptr);
   }
   void effects(const SceneFrame& scene,const FrameTarget& target) {
     const auto projection=scene_raster_projection(scene.camera,target.width,target.height);
@@ -383,6 +395,7 @@ struct FrameRenderer::Impl {
     return shadows.emplace(mesh.get(),std::move(data)).first->second;
   }
   void shadow(const SceneInstance& instance,const SceneFrame& scene,const MaterialShader& shader,const SceneMatrix& projection,const SceneLight& light,bool zfail) {
+    last_model=instance.world;
     require(shader.words[0]==0x70220 && !(shader.words[2]&7),"unsupported shadow material state");
     const auto& data=shadow_geometry(instance.mesh,scene);const auto position=light_model_vector(instance.world,light.position,true);
     const auto indices=shadow_indices(data.mesh,position);const auto count=zfail ? indices.indices.size() : indices.silhouette_count;if(!count)return;
@@ -422,7 +435,7 @@ struct FrameRenderer::Impl {
           require(job.light.has_value(),"shadow job needs a light");shadow(instance,scene,pass.shader,projection,draws.lights[*job.light].light,job.shadow_zfail);return;
         }
         const auto& data=mesh_geometry(instance.mesh,batches);const auto [first,count]=data.batches[job.batch];
-        const auto matrix=scene_combine(projection,instance.world);const MeshDraw mesh{data.buffer,first,count};
+        const auto matrix=scene_combine(projection,instance.world);const MeshDraw mesh{data.buffer,first,count,instance.world};
         std::optional<LightDraw> setup;
         if(job.light) {
           const auto& l=draws.lights[*job.light].light;LightDraw draw;draw.directional=l.flags&4;
@@ -480,7 +493,7 @@ FrameRenderer::FrameRenderer(const Project& p,const Graph& g,const TextureOption
 FrameRenderer::~FrameRenderer()=default;
 FrameRenderer::Stats FrameRenderer::stats() const {return impl->stats;}
 void FrameRenderer::reset_targets() {
-  auto& s=*impl;s.activate();glDisable(GL_SCISSOR_TEST);
+  auto& s=*impl;s.activate();s.last_model=scene_identity();glDisable(GL_SCISSOR_TEST);
   glClearStencil(0);glStencilMask(255);
   for(const auto& [id,surface]:s.surfaces) {
     static_cast<void>(id);glBindFramebuffer(GL_FRAMEBUFFER,surface.fbo);

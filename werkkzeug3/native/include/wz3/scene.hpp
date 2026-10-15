@@ -43,6 +43,11 @@ struct SceneEffectVertex {
   std::array<float,2> uv{};
   std::uint32_t color{};
 };
+struct SceneRibbon {
+  std::array<Vec3,32> points{};
+  float thickness{};
+  int ripped=-1;
+};
 struct SceneEffectDraw {
   std::size_t operator_id{};
   std::uint32_t sort_key{};
@@ -50,6 +55,12 @@ struct SceneEffectDraw {
   // Four vertices per source quad, in perimeter order.
   std::vector<SceneEffectVertex> vertices;
   bool normalized{};
+  // ChainLine reads the preceding material's model transform at draw time.
+  std::optional<SceneRibbon> ribbon;
+  SceneMatrix material_model=scene_identity();
+  bool material_on_empty{};
+  // Print explicitly sets view/projection from KEnvironment::CurrentCam.
+  std::optional<SceneMatrix> camera_world;
   // Retain font pixels with the metrics that generated the glyph geometry.
   std::map<std::size_t,std::shared_ptr<const Texture>> textures;
 };

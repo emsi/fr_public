@@ -269,7 +269,7 @@ void write_frame(std::ostream& out,const DemoFrame& f) {
   for(const auto& c:f.commands) {
     out<<(first ? "" : ",")<<"{\"operator\":"<<c.operator_id<<",\"target\":"<<c.target.surface<<",\"viewport\":["<<c.target.width<<','<<c.target.height<<']';first=false;
     if(const auto* scene=std::get_if<SceneFrame>(&c.draw)) {
-      std::size_t particles=0;for(const auto& effect:scene->effects)particles+=effect.vertices.size()/4;
+      std::size_t particles=0;for(const auto& effect:scene->effects)particles+=effect.ribbon ? 31 : effect.vertices.size()/4;
       out<<",\"kind\":\"scene\",\"instances\":"<<scene->instances.size()<<",\"lights\":"<<scene->lights.size()<<",\"effect_draws\":"<<scene->effects.size()<<",\"effect_quads\":"<<particles;
     }
     else if(const auto* clear=std::get_if<FrameClear>(&c.draw))out<<",\"kind\":\"clear\",\"flags\":"<<clear->flags<<",\"color\":"<<clear->color;

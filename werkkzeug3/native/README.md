@@ -32,11 +32,13 @@ current graph connection finds 20,989 operators reachable from its entry points.
 The `_c` project names the included `debris/debris_ost.v2m`; the other project
 still names `debris.v2m`.
 
-**Debris does not play yet.** CPU frame preparation now passes material
-initialization, spline-camera evaluation and the first MINMESH objects, then
-stops at `ChainLine` effect operator 16577.
-Material 2.0 GPU shaders/albedo capture, remaining MINMESH/scene operators and
-Water/Glare/Color Correction effects also remain to be ported.
+**Debris does not play yet.** Its opening frame now prepares on the CPU: the
+main viewport contains 76 mesh instances, two lights and 26 ChainLine cables.
+Continuous CPU preparation in 16 ms steps reaches 9,808 ms (beat 32.0394), then
+hits the current 256 MiB scene mesh-cache limit. Full rendering stops at the
+first viewport because Material 2.0 GPU shaders/albedo capture are not ported.
+Remaining MINMESH/scene operators and Water/Glare/Color Correction effects
+also remain to be ported.
 The player synthesizes its V2 soundtrack into stereo PCM before playback, using
 the same SDL callback clock as Ogg music. The existing Theta renderer and released-clock profile
 do not establish compatibility with Debris. `debris_projects` compares the real
@@ -84,6 +86,24 @@ boundaries and backward time, matching `KEnvironment::InitView`; deferred effect
 can read the most recently stored attachments. Apply Spline evaluates its
 animated time and composes the spatial spline with the parent scene transform,
 without applying its zoom to the camera.
+
+ChainLine uses the archived 32-point Verlet/spring simulation, including Perlin
+wind, ground/axis constraints, the initial damping period, endpoint movement,
+tearing and the static sag mode. It advances ten substeps per 10 ms time slice;
+crossing a slice boundary with a shorter frame interval still advances it.
+Instance memory persists through backward time and advances even without a
+material. Deferred jobs read the final scene markers. Ribbon expansion waits
+until GPU drawing, preserving the original dependency on the preceding
+material's model transform, UVs, packed vertex color and degenerate torn segment.
+The renderer retains that transform across frames and records Print's explicit
+view changes separately from the viewport camera.
+
+A recording of the complete archived handler checks 288 synthetic cases and
+all 53 reachable Debris recipes. Cases include moving/rotated anchors, all flag
+combinations, absent materials, backward time and an interval above the editor's
+50-slice cap (the original player has no such cap). GPU tests check preceding
+mesh transforms, consecutive cables, frame boundaries and tearing. These checks
+establish cable behavior independently of the still-missing Material 2.0 scene.
 
 Spatial camera paths use the archived Hermite, derivative, quaternion and
 orientation kernels, with bounded blob readers and cached native spline objects.

@@ -38,6 +38,13 @@ add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/minmesh_kernel.
     "${CMAKE_CURRENT_SOURCE_DIR}/../genminmesh.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/minmesh_kernel.inc"
   DEPENDS tools/minmesh_kernel.py tools/particles_oracle.py ../genminmesh.cpp VERBATIM)
 target_sources(wz3_project PRIVATE src/minmesh_kernel.cpp src/minmesh_evaluate.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/minmesh_kernel.inc")
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/chainline_kernel.inc" "${CMAKE_CURRENT_BINARY_DIR}/generated/chainline_oracle.inc"
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/chainline_kernel.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../geneffectdebris.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/chainline_kernel.inc"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/chainline_oracle.inc"
+  DEPENDS tools/chainline_kernel.py tools/particles_oracle.py ../geneffectdebris.cpp VERBATIM)
+target_sources(wz3_project PRIVATE src/chainline.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/chainline_kernel.inc")
+set_source_files_properties(src/chainline.cpp PROPERTIES COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
 set_source_files_properties(src/minmesh_kernel.cpp src/minmesh_evaluate.cpp PROPERTIES COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
 add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/spline_kernel.inc"
   COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/spline_kernel.py"
@@ -148,6 +155,11 @@ if(WZ3_BUILD_PLAYER)
 endif()
 
 if(BUILD_TESTING)
+  add_executable(wz3-chainline-tests tests/chainline.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/chainline_oracle.inc")
+  target_include_directories(wz3-chainline-tests PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_compile_options(wz3-chainline-tests PRIVATE -frounding-math -ffp-contract=off)
+  target_link_libraries(wz3-chainline-tests PRIVATE wz3_project)
+  add_test(NAME chainline_simulation COMMAND wz3-chainline-tests "${CMAKE_CURRENT_SOURCE_DIR}/../data/debris/debris_9241_c.k")
   add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/minmesh_oracle.inc"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/minmesh_oracle.py"
       "${CMAKE_CURRENT_SOURCE_DIR}/../genmesh.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/../engine.cpp"

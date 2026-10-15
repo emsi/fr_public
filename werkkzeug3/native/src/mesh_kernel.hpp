@@ -65,6 +65,7 @@ struct sVector {
   float Abs3() const {return std::sqrt(Dot3(*this));}
   void Unit3() {Scale3(sFInvSqrt(Dot3(*this)));}
   void UnitSafe3() {if(Dot3(*this)>1e-20f)Unit3();else Init3(1,0,0);}
+  float UnitAbs3() {const float e=std::sqrt(double(Dot3(*this)));if(e>1e-10f)Scale3(1/e);else Init3(1,0,0);return e;}
   void Rotate3(const sMatrix& m,const sVector& v);
   void Rotate3(const sMatrix& m) {Rotate3(m,*this);}
   void Rotate34(const sMatrix& m,const sVector& v);

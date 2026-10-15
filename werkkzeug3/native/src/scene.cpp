@@ -4,6 +4,7 @@
 #include "wz3/scene.hpp"
 #include "wz3/particles.hpp"
 #include "wz3/effect_particles.hpp"
+#include "wz3/chainline.hpp"
 #include "wz3/walk.hpp"
 #include "wz3/print.hpp"
 #include "wz3/spline3d.hpp"
@@ -98,6 +99,7 @@ struct ScenePlayer::Impl {
   const Project& project;const Graph& graph;SplineLibrary splines;MaterialRuntime materials;SpatialSplines spatial;
   std::shared_ptr<ParticleRandom> random=std::make_shared<ParticleRandom>();
   SceneParticles particles;EffectParticles effects;FrameClock clock;SceneWalk walker;
+  ChainLines chains;
   SceneMarkers markers;
   struct EffectJob {std::size_t id;SceneMatrix world;std::array<AnimationVector,32> variables;std::uint32_t key;};
   std::vector<EffectJob> jobs;
@@ -143,10 +145,10 @@ struct ScenePlayer::Impl {
     const auto [owner,token]=chain[cursor.next++];require(owner==id,"particle instance chain changed operator order");return token;
   }
   void prepare_effect(std::size_t id,std::span<const std::uint32_t> p) {
-    valid(id);const auto cmd=project.operators[id].command;if((cmd!=0x64 && cmd!=0x61) || effect_order.contains(id))return;
-    require((cmd==0x64 ? p.size()==12 : (p.size()==5 || p.size()==6)) && graph.nodes[id].inputs.empty() && graph.nodes[id].links.size()==1,"unsupported particle/Print effect layout");
+    valid(id);const auto cmd=project.operators[id].command;if((cmd!=0x64 && cmd!=0x61 && cmd!=0x6b) || effect_order.contains(id))return;
+    require((cmd==0x64 ? p.size()==12 : cmd==0x6b ? p.size()==21 : (p.size()==5 || p.size()==6)) && graph.nodes[id].inputs.empty() && graph.nodes[id].links.size()==1,"unsupported particle/Print/ChainLine effect layout");
     std::int32_t pass=0;unsigned usage=7;
-    if(const auto material=graph.nodes[id].links[0]) {const auto m=materials.snapshot(*material);if(!m.passes.empty()) {pass=m.passes[0].render_pass;if(cmd==0x61)usage=unsigned(m.passes[0].usage);}}
+    if(const auto material=graph.nodes[id].links[0]) {const auto m=materials.snapshot(*material);if(!m.passes.empty()) {pass=m.passes[0].render_pass;if(cmd!=0x64)usage=unsigned(m.passes[0].usage);}}
     if(cmd==0x64)effects.initialize(p[0],p[1]);
     effect_order.emplace(id,EffectOrder{pass,usage});
   }
@@ -166,17 +168,21 @@ struct ScenePlayer::Impl {
     }
     prepared[id]=true;
   }
-  void effect(std::size_t id,AnimationEnvironment& env,const SceneMatrix& world,SceneFrame& frame,std::uint32_t key,unsigned depth=0) {
+  void effect(std::size_t id,AnimationEnvironment& env,const SceneMatrix& world,SceneFrame& frame,SceneCamera& current_camera,std::uint32_t key,unsigned depth=0) {
     valid(id);require(depth<512,"effect alias depth limit");Visit visit(visiting,id);
     const auto& op=project.operators[id];const auto& node=graph.nodes[id];const AnimationScope scope(program(id),splines,op.parameters,env);
-    if(op.command>=1 && op.command<=3) {effect(alias(id),env,world,frame,key,depth+1);return;}
-    require(op.command==0x64 || op.command==0x61,"effect alias execution is not ported");
+    if(op.command>=1 && op.command<=3) {effect(alias(id),env,world,frame,current_camera,key,depth+1);return;}
+    require(op.command==0x64 || op.command==0x61 || op.command==0x6b,"effect alias execution is not ported");
+    std::optional<SceneRibbon> ribbon;
+    if(op.command==0x6b)ribbon=chains.update(instance(id,env),scope.parameters,markers,clock);
     // The handler reads its first cached material pass; it does not execute the
     // material link. Later MatHack operations have already run at this point.
     if(node.links[0]) {const auto material=materials.snapshot(*node.links[0]);if(!material.passes.empty()) {
       SceneEffectDraw draw;draw.operator_id=id;draw.sort_key=key;draw.shader=material.passes[0].shader;
       if(op.command==0x64)draw.vertices=effects.draw(scope.parameters,frame.camera,world,clock);
+      else if(op.command==0x6b) {draw.ribbon=std::move(ribbon);current_camera.world=scene_identity();}
       else {
+        draw.material_on_empty=true;
         require(op.strings.size()==1,"Print needs one text string");
         const auto page=(scope.parameters[0]>>4)&7;require(page!=0,"Print built-in font page zero is not ported");
         std::shared_ptr<const FontAtlas> atlas;
@@ -188,7 +194,7 @@ struct ScenePlayer::Impl {
         }
         require(atlas!=nullptr,"Print material has no matching font atlas page");
         auto layout=layout_print(scope.parameters,op.strings[0],atlas->glyphs,project.runtime_graph);draw.normalized=layout.normalized;draw.vertices=std::move(layout.vertices);
-        if(!draw.normalized)for(auto& vertex:draw.vertices)vertex.position=scene_point(world,vertex.position);
+        if(!draw.normalized) {draw.material_model=world;draw.camera_world=current_camera.world;for(auto& vertex:draw.vertices)vertex.position=scene_point(world,vertex.position);}
       }
       frame.effects.push_back(std::move(draw));
     }}
@@ -220,7 +226,7 @@ struct ScenePlayer::Impl {
       frame.instances.push_back({id,geometry(target),world,env.variables[0][0],pass});return;
     }
     if(operator_info(project.operators[target].command).category=="EFFECT") {
-      if((project.operators[target].command!=0x64 && project.operators[target].command!=0x61))throw std::runtime_error("scene effect "+std::to_string(target)+" ("+std::string(operator_info(project.operators[target].command).name)+") is not ported");
+      if((project.operators[target].command!=0x64 && project.operators[target].command!=0x61 && project.operators[target].command!=0x6b))throw std::runtime_error("scene effect "+std::to_string(target)+" ("+std::string(operator_info(project.operators[target].command).name)+") is not ported");
       require(jobs.size()<65536,"effect job limit");
       const auto key=effect_order.at(target);const auto render_pass=std::clamp(std::int64_t(key.pass)+pass,std::int64_t(0),std::int64_t(255));
       jobs.push_back({id,world,env.variables,(std::uint32_t(render_pass)<<24)|(key.usage<<16)});return;
@@ -340,10 +346,11 @@ struct ScenePlayer::Impl {
     // Engine prepends effect jobs, then performs a stable sort by pass/usage.
     std::reverse(jobs.begin(),jobs.end());std::stable_sort(jobs.begin(),jobs.end(),[](const auto& a,const auto& b){return a.key<b.key;});
     const auto saved_variables=env.variables;const auto saved_instances=env.instances;
+    auto current_camera=frame.camera;
     try {for(const auto& job:jobs) {
       env.variables=job.variables; // EventSpline deliberately stays at paint scope.
       env.instances=std::make_shared<AnimationInstanceCursor>(AnimationInstanceCursor{(std::uint64_t(1)<<63)|job.id,0});
-      effect(job.id,env,job.world,frame,job.key);
+      effect(job.id,env,job.world,frame,current_camera,job.key);
     }}catch(...) {env.variables=saved_variables;env.instances=saved_instances;throw;}
     env.variables=saved_variables;env.instances=saved_instances;
 
@@ -412,7 +419,7 @@ void write_scene(const std::filesystem::path& path,const SceneFrame& frame) {
     out<<",\"direction\":";array(v.direction);out<<",\"flags\":"<<v.flags<<",\"color\":"<<v.color<<",\"amplify\":"<<v.amplify<<",\"range\":"<<v.range<<'}';
   }
   out<<"],\"effects\":[";
-  for(std::size_t i=0;i<frame.effects.size();++i) {const auto& e=frame.effects[i];out<<(i ? "," : "")<<"{\"operator\":"<<e.operator_id<<",\"sort_key\":"<<e.sort_key<<",\"quads\":"<<e.vertices.size()/4<<'}';}
+  for(std::size_t i=0;i<frame.effects.size();++i) {const auto& e=frame.effects[i];out<<(i ? "," : "")<<"{\"operator\":"<<e.operator_id<<",\"sort_key\":"<<e.sort_key<<",\"quads\":"<<(e.ribbon ? 31 : e.vertices.size()/4)<<'}';}
   out<<"],\"materials\":{";bool first_material=true;
   for(const auto& [id,material]:frame.materials) {out<<(first_material ? "" : ",")<<'\"'<<id<<"\":";write_material(out,material);first_material=false;}
   out<<"}}\n";require(bool(out),"cannot write scene output");
