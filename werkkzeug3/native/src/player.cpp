@@ -158,6 +158,7 @@ int main(int argc,char** argv) {
       std::cout<<"Loading complete: "<<frames<<" frames in "<<std::chrono::duration<double>(Clock::now()-started).count()
         <<" seconds; "<<cpu.meshes<<" meshes, "<<cpu.fonts<<" font atlases, "<<gpu.bitmap_uploads
         <<" bitmap uploads, "<<gpu.program_compilations<<" shader programs\n";
+      std::cout<<"Bitmap cache: "<<gpu.bitmap_bytes<<" bytes of uploaded mip data\n";
       if(preload_only)return 0;
     }
     const auto prepared_cpu=assets->stats();const auto prepared_gpu=renderer.stats();
@@ -209,6 +210,7 @@ int main(int argc,char** argv) {
       <<double(timing.beat(current))/65536<<", "<<std::chrono::duration<double>(Clock::now()-started).count()
       <<" wall seconds; max draw "<<max_draw_ms<<" ms; max catch-up "<<max_lag_ms<<" ms\n";
     const auto cpu=assets->stats();const auto gpu=renderer.stats();
+    std::cout<<"Bitmap cache: "<<gpu.bitmap_bytes<<" bytes of uploaded mip data\n";
     std::cout<<(offline ? "Offline allocations: " : "Playback allocations: ")<<cpu.meshes-prepared_cpu.meshes<<" meshes, "<<cpu.fonts-prepared_cpu.fonts
       <<" fonts, "<<gpu.surface_allocations-prepared_gpu.surface_allocations<<" surfaces, "<<gpu.bitmap_uploads-prepared_gpu.bitmap_uploads
       <<" bitmaps, "<<gpu.mesh_uploads-prepared_gpu.mesh_uploads<<" mesh uploads, "<<gpu.shadow_uploads-prepared_gpu.shadow_uploads

@@ -50,13 +50,15 @@ tables, and did not rebake any textures during playback. Synchronized real-time
 Debris playback still needs performance work.
 Optimized particle mesh instancing, Color Correction, Bitmap Render,
 BoneChain/BoneTrain, weighted skinning, Pipe, MINMESH Perlin, Font3D and Multiply
-are supported. An unrestricted run now passes 330 seconds and stops at
-333,071 ms when material 5628 exceeds the renderer's 256 MiB bitmap-cache budget.
+are supported. An unrestricted run now passes 400 seconds (25,001 consecutive
+frames) and stops at 401,647 ms on spatial spline operator 6067 (EventTime).
 Font3D unblocks the 3D greetings from 254.703 seconds;
 captures at 255, 260, 280 and 300 seconds include the saved text scenes.
 The 330-second offline capture matches the callback endpoint byte for byte.
 Font3D geometry and GPU shadow checks also pass under Clang ASan/UBSan.
-All 83 release checks pass, including 27 graphics checks.
+The full release suite passes 83 checks, including 27 graphics checks. After the
+bitmap-cache limit change, the five affected bitmap, DXT, presentation and
+Ogg/V2 player checks also pass.
 DejaVu Sans captures show textured buildings,
 lighting, shadows and cables. The playback test uses dummy audio; physical
 speaker output and synchronization remain unverified. This is progress through
@@ -70,12 +72,21 @@ build/native/wz3-player werkkzeug3/data/debris/debris_9241_c.k \
 
 DejaVu Sans substitutes for the project's Arial font; its appearance is not an
 original-output match. DXT textures require S3TC support from the GLES driver.
-Remaining MINMESH/scene operators, RenderAuto and the Water effect
-also remain to be ported.
+Remaining work includes the EventTime spatial spline wrapper and the Water
+effect. RenderAuto is also unported, but it is not reachable in this project.
 The player synthesizes its V2 soundtrack into stereo PCM before playback, using
 the same SDL callback clock as Ogg music. The existing Theta renderer and released-clock profile
 do not establish compatibility with Debris. `debris_projects` compares the real
 wrapped files with their legacy documents and tests malformed container handling.
+
+The renderer retains up to 512 MiB of uploaded bitmap mip data. The old 256 MiB
+limit was reached at 333.071 seconds when the later city sequence requested
+material 5628. With the larger bounded cache, the uninterrupted run captures
+340, 360 and 400 seconds; its 330-second frame still matches the earlier
+callback endpoint byte for byte. The player reports retained bitmap bytes after
+loading and at completion. This accounts for mip payloads, not driver overhead,
+render targets, mesh buffers, audio or CPU procedural working memory; the full
+demo's memory requirement remains unmeasured while its final scene is unported.
 
 Bitmap Render (`0x3f`) executes its IPP input once in a fresh time-zero
 view, with aspect one and no project events. It clears the master target to

@@ -481,7 +481,11 @@ struct FrameRenderer::Impl {
     const auto colors=t->format==5 || dxt ? std::vector<ColorTextureLevel>{} : color_texture_levels(*t);
     const auto compressed=dxt ? compressed_texture_levels(*t) : std::vector<CompressedTextureLevel>{};
     std::size_t bytes=0;for(const auto& level:colors)bytes+=level.pixels.size();for(const auto& level:levels)bytes+=level.pixels.size();for(const auto& level:compressed)bytes+=level.blocks.size();
-    require(bytes<=256u*1024*1024-(bitmap_bytes-previous),"frame bitmap budget exceeded");
+    // Retain the complete demo's static uploads across loading and playback.
+    // Debris exceeds 256 MiB when its final city sequence starts.
+    constexpr std::size_t bitmap_limit=512u*1024*1024;
+    if(bytes>bitmap_limit-(bitmap_bytes-previous))throw std::runtime_error("frame bitmap budget exceeded: texture "+std::to_string(id)+
+      ", retained "+std::to_string(bitmap_bytes-previous)+", requested "+std::to_string(bytes)+", limit "+std::to_string(bitmap_limit)+" bytes");
     GLuint texture=0;if(found!=bitmaps.end())texture=found->second;else glGenTextures(1,&texture);glBindTexture(GL_TEXTURE_2D,texture);
     if(dxt) {
       // GL_COMPRESSED_RGB_S3TC_DXT1_EXT / GL_COMPRESSED_RGBA_S3TC_DXT5_EXT.
@@ -925,7 +929,7 @@ struct FrameRenderer::Impl {
 };
 FrameRenderer::FrameRenderer(const Project& p,const Graph& g,const TextureOptions& options,Context mode):impl(std::make_unique<Impl>(p,g,options,mode)) {}
 FrameRenderer::~FrameRenderer()=default;
-FrameRenderer::Stats FrameRenderer::stats() const {auto stats=impl->stats;stats.bitmap_renders=impl->texture_options.rendered_bitmaps->stats().textures;return stats;}
+FrameRenderer::Stats FrameRenderer::stats() const {auto stats=impl->stats;stats.bitmap_renders=impl->texture_options.rendered_bitmaps->stats().textures;stats.bitmap_bytes=impl->bitmap_bytes;return stats;}
 void FrameRenderer::reset_targets() {
   auto& s=*impl;s.activate();s.last_model=scene_identity();glDisable(GL_SCISSOR_TEST);
   glClearStencil(0);glStencilMask(255);
