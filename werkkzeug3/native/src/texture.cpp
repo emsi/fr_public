@@ -354,6 +354,30 @@ std::vector<std::uint8_t> rgba8(const Texture& texture) {
   return result;
 }
 
+std::vector<ColorTextureLevel> color_texture_levels(const Texture& texture) {
+  unsigned width=texture.width,height=texture.height;
+  if(texture.format!=1 || !width || !height || width>4096 || height>4096 ||
+     texture.pixels.size()!=std::size_t(width)*height)
+    throw std::runtime_error("invalid ARGB8 upload texture");
+  auto source=texture.pixels;std::vector<ColorTextureLevel> levels;
+  for(unsigned level=0;;++level) {
+    ColorTextureLevel output{width,height,{}};output.pixels.reserve(source.size()*4);
+    for(const auto& p:source)for(auto c:p)output.pixels.push_back(std::uint8_t((c>>7)&255));
+    levels.push_back(std::move(output));
+    if(width<=1 || height<=1 || (width&(width-1)) || (height&(height-1)) ||
+       (texture.mip_count && level+1>=texture.mip_count))break;
+    bool filter=(texture.mip_threshold&15)<=level;if(texture.mip_threshold&16)filter=!filter;
+    std::vector<Pixel> next(std::size_t(width/2)*(height/2));
+    for(unsigned y=0;y<height/2;++y)for(unsigned x=0;x<width/2;++x)for(unsigned c=0;c<4;++c) {
+      const auto i=std::size_t(2*y)*width+2*x;
+      next[std::size_t(y)*(width/2)+x][c]=filter ?
+        (unsigned(source[i][c])+source[i+1][c]+source[i+width][c]+source[i+width+1][c]+2)>>2 : source[i][c];
+    }
+    source=std::move(next);width/=2;height/=2;
+  }
+  return levels;
+}
+
 void write_ppm(const std::filesystem::path& path, unsigned width, unsigned height, std::span<const std::uint8_t> rgba) {
   if (rgba.size() != std::size_t(width) * height * 4) throw std::runtime_error("invalid output pixel count");
   std::ofstream out(path, std::ios::binary);

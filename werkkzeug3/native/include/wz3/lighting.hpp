@@ -6,7 +6,8 @@ namespace wz3 {
 struct LightingTables {std::vector<std::uint8_t> cube,attenuation;};
 LightingTables lighting_tables();
 struct SignedNormalLevel {unsigned width,height;std::vector<std::int8_t> pixels;};
-std::vector<SignedNormalLevel> signed_normal_levels(const Texture&);
+// Released x87 conversion rounds to nearest-even; the later editor truncates.
+std::vector<SignedNormalLevel> signed_normal_levels(const Texture&,bool released=false);
 // sMaterial11::Set uses TransR (transpose rotation), even for scaled models.
 Vec3 light_model_vector(const SceneMatrix&,const Vec3&,bool point);
 std::array<float,4> light_color(const MaterialShader&,const SceneLight&);

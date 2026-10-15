@@ -72,8 +72,25 @@ void textures() {
   image=wz3::render_material_quad(material,textures,16,16);pixel(image,10,2,{1,1,0,1});
   s.words[23]=0xe0;s.words[28]=0x40ffffff;image=wz3::render_material_quad(material,textures,16,16);pixel(image,10,2,{1,1,0,128/255.0f});
 }
+void texture_mips() {
+  auto t=std::make_shared<wz3::Texture>();t->width=t->height=64;t->pixels.resize(64*64);
+  for(unsigned y=0;y<64;++y)for(unsigned x=0;x<64;++x)t->pixels[y*64+x]=wz3::color64((x%2==0 && y%2==0) ? 0xffff0000 : 0xff0000ff);
+  auto material=base();auto& s=material.passes[0].shader;s.textures[0]=12;s.words[9]=0;s.words[11]=16;s.words[4]=4;
+  const std::map<std::size_t,std::shared_ptr<const wz3::Texture>> textures={{12,t}};
+  const auto expect=[&](std::array<float,4> color){const auto image=wz3::render_material_quad(material,textures,16,16);for(unsigned y=0;y<16;++y)for(unsigned x=0;x<16;++x)pixel(image,x,y,color);};
+  expect({64/255.f,0,191/255.f,1});
+  t->mip_threshold=4;expect({1,0,0,1}); // Released texture 55 requests this threshold.
+  t->mip_threshold=16;expect({1,0,0,1});
+  t->mip_threshold=0;t->mip_count=1;expect({1,0,0,1}); // Maximum level must clamp sampling.
+  t->mip_count=0;
+  // Every 2x2 average is 128 in the 15-bit source, hence byte 1. Reducing
+  // already packed bytes (0,0,0,1) would lose this signal before the next mip.
+  for(unsigned y=0;y<64;++y)for(unsigned x=0;x<64;++x)t->pixels[y*64+x]={std::uint16_t(x%2 && y%2 ? 131 : 127),0,0,32767};
+  const auto image=wz3::render_material_quad(material,textures,16,16);
+  for(unsigned y=0;y<16;++y)for(unsigned x=0;x<16;++x)check(image[(y*16+x)*4]==1,"GPU mip lost the original 15-bit reduction precision");
+}
 }
 int main() {
-  try {combiners();blends();textures();std::cout<<"GLES material combiners, alpha, blend equations, UV transforms and sampler isolation passed\n";}
+  try {combiners();blends();textures();texture_mips();std::cout<<"GLES material combiners, alpha, blend equations, UV transforms and sampler isolation passed\n";}
   catch(const std::exception& error) {std::cerr<<error.what()<<'\n';return 1;}
 }

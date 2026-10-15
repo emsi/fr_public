@@ -28,7 +28,7 @@ LightingTables lighting_tables() {
   }
   return out;
 }
-std::vector<SignedNormalLevel> signed_normal_levels(const Texture& texture) {
+std::vector<SignedNormalLevel> signed_normal_levels(const Texture& texture,bool released) {
   const Nearest rounding;require(texture.format==5,"signed normal upload needs Q8W8V8U8 format");
   unsigned width=texture.width,height=texture.height;
   require(width && height && width<=4096 && height<=4096 && !(width&(width-1)) && !(height&(height-1)) && texture.pixels.size()==std::size_t(width)*height,"invalid signed normal texture");
@@ -36,8 +36,14 @@ std::vector<SignedNormalLevel> signed_normal_levels(const Texture& texture) {
   for(unsigned level=0;;++level) {
     SignedNormalLevel output{width,height,{}};output.pixels.reserve(std::size_t(width)*height*4);
     for(const auto& p:source) {
-      const auto n=unit({float(int(p[0])-0x4000),float(int(p[1])-0x4000),float(int(p[2])-0x4000)});
-      for(auto c:n)output.pixels.push_back(std::int8_t(int(c*127.f)));
+      auto n=Vec3{float(int(p[0])-0x4000),float(int(p[1])-0x4000),float(int(p[2])-0x4000)};
+      if(released) {
+        // Original x87 uses single-precision sqrt/division and nearest-even
+        // FISTP, unlike the later archive's truncating C++ integer conversion.
+        const float d=n[2]*n[2]+n[1]*n[1]+n[0]*n[0];if(d<=1e-20f)n={1,0,0};
+        else {const float inverse=1.f/std::sqrt(d);for(auto& c:n)c*=inverse;}
+      } else n=unit(n);
+      for(auto c:n)output.pixels.push_back(std::int8_t(released ? int(std::nearbyint(c*127.f)) : int(c*127.f)));
       const int a=(int(p[3])-0x4000)>>7;output.pixels.push_back(std::bit_cast<std::int8_t>(std::uint8_t(a&255)));
     }
     levels.push_back(std::move(output));if(width<=1 || height<=1 || (texture.mip_count && level+1>=texture.mip_count))break;

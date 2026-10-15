@@ -9,7 +9,7 @@ The player renders the complete timeline with saved materials, lighting, shadows
 fog, particles, credits and image effects. It supports both the archived editor
 project and the recovered final 1.01 release graph. The release runs through its
 verified beat-592 endpoint: **16,083 consecutive frames at 1024×768**, advancing
-in 16 ms steps. Its cached fonts need no host font substitution. Six captures
+in 16 ms steps. Its cached fonts need no host font substitution. Eight captures
 and the endpoint match byte for byte between offline rendering and callback-paced playback.
 The editor project has different content and a beat-609 endpoint. Audible
 synchronization on a physical sound device and whole-demo original-output
@@ -26,6 +26,19 @@ cmake -S werkkzeug3/native -B build/native -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DWZ3_BUILD_RENDERER=ON -DWZ3_BUILD_PLAYER=ON -DWZ3_TEST_GRAPHICS=ON
 cmake --build build/native
 ctest --test-dir build/native --output-on-failure
+```
+
+For the final released demo, first follow the one-time Linux-only
+[release extraction instructions](#release-reference-audit), then run:
+
+```sh
+build/native/wz3-player build/reference/theta/extracted/theta.wz3r
+```
+
+The repository also contains an earlier editor project, with different content.
+To preview that version with a substitute for its uncached Arial font:
+
+```sh
 build/native/wz3-player werkkzeug3/data/theta/theta_final.k \
   --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
 ```
@@ -213,8 +226,8 @@ The scalar interpolation is checked against an independent SSE2 instruction
 oracle for all 65,536 normal fade values on x86. All eleven Merge modes are also
 checked against a separate SIMD translation of the original MMX instructions.
 Dots retains the original seeded random generator. Format records pixel format
-and mipmap metadata; the frame renderer now uploads signed normal maps with
-source-style mip generation (see lighting below).
+and mipmap metadata; the frame renderer uploads color and signed normal maps
+with the original mip generation and conversion rules (see below).
 Texture generation uses the original default size offset of zero and a bounded
 256 MiB intermediate cache. JPEG decoding uses a separate temporary RGB buffer
 and rejects images larger than 4096 pixels on either axis.
@@ -950,13 +963,78 @@ GPU tests check analytical pixel values for combiners, intermediate saturation,
 alpha, blending, texture orientation, transformed UVs and sampler independence;
 they also pass with llvmpipe. CPU initialization/update tests pass with ASan/UBSan.
 
-The swatches use RGBA8 uploads and native mipmap generation; legacy pixel-format,
-mipmap-count and alpha-threshold rules still need reproduction for ordinary color
-textures. The frame compositor supports signed normal textures and bump lighting.
+The swatches use RGBA8 uploads with CPU-generated original color mipmaps.
+The frame compositor also supports signed normal textures and bump lighting;
+other legacy upload formats are rejected explicitly.
 Environment mapping remains pending; the frame compositor now supports scene fog.
 `wz3-scene-render` continues to use diagnostic shading. Individual
 swatches do not execute the demo root's global-variable or compositing scopes,
 and comparison against original Windows frames is still required.
+
+### Original texture uploads
+
+Color mipmaps now reduce the procedural **15-bit lanes before converting each
+level to eight bits**. A filtered reduction adds four source values and two,
+then shifts right by two; an unfiltered reduction selects the top-left source
+pixel. The low four threshold bits select the first filtered reduction, and
+bit 4 reverses that choice. The saved mip count limits the chain. Reduction
+stops when either dimension reaches one. Released texture 55 requests four
+point-sampled reductions; ordinary GLES mip generation had ignored this and
+discarded the procedural pixels' extra precision too early.
+
+The final player's signed normal conversion also differs from the later source:
+its single-precision x87 normalization sums Z/Y/X squares, then rounds each
+normalized component times 127 to nearest-even. The later archived conversion
+truncates instead. Runtime graphs now select the released arithmetic; editor
+normal maps retain their archived conversion. Signed alpha remains unchanged.
+
+`tools/release_texture_oracle.py` executes the final 1.01 executable's complete
+`AddTexture` at `0x8042bd` and `UpdateTexture` at `0x802655`, including copying,
+mip reduction, normalization and byte packing. Hooks only provide allocation and
+the CreateTexture/LockRect/UnlockRect methods. Padded rows check pitch handling,
+and the original code discovers the mip limit through failed LockRect calls.
+The oracle uses the original `0x103f` FPU control word, without a Windows driver
+or the application's entry point.
+
+The CPU exporter traverses all 16,083 frames and collects the **31 referenced
+textures**, plus 168 controlled fixtures covering square/rectangular sizes,
+mip limits, thresholds, signed alpha and 16-bit boundary values. GCC Release
+and Clang ASan/UBSan both match **199 uploads, 708 mip levels and 70,727,188 bytes
+exactly**. This validates uploading the native-generated pixels; it does not
+independently validate procedural generation or a driver's texture filtering.
+
+```sh
+build/native/wz3-texture-upload-tests --export \
+  build/reference/theta/extracted/theta.wz3r build/reference/theta/texture-upload/fixtures
+uv run --no-project --with unicorn python werkkzeug3/native/tools/release_texture_oracle.py \
+  build/reference/theta/extracted/restored-code-image.bin \
+  build/reference/theta/texture-upload/fixtures --output build/reference/theta/texture-upload/original
+build/native/wz3-texture-upload-tests --verify \
+  build/reference/theta/texture-upload/fixtures build/reference/theta/texture-upload/original
+```
+
+All **44 local tests** pass, including 16 graphics tests. GPU checks distinguish
+filtered and point mipmaps, enforce the saved maximum level, and retain a signal
+that disappears when eight-bit pixels are reduced first. The previous GLES mip
+generator fails the new regression. Upload, lighting, material and compositor
+checks pass under Clang ASan/UBSan; material and compositor tests also pass
+llvmpipe. The complete Radeon render still produces all 16,083 frames and 148
+recorded captures, in 25.97 seconds.
+Against the same reference-video search windows, 49 captures have lower RGB
+MSE, 89 have higher MSE and ten are unchanged; the median changes from 311.40
+to 311.43. The largest absolute change is 6.96. The byte audit establishes the
+upload correction independently of this small change against a lossy recording
+with uncertain visual phase.
+
+The full SDL run completes all 16,083 frames with 15,272 presentations and
+11,084 dummy-audio callbacks in 255.62 wall seconds. It creates no new cached
+assets, surfaces, uploads or programs after preparation. Eight captures at 0,
+8, 36, 120, 132, 195, 220 and 250 seconds, plus the endpoint, match the offline
+run byte for byte. A separate clean build with testing disabled produces a
+native x86-64 Linux ELF player; its eight-second X11/Radeon run also matches the
+offline image. Rechecking the retained SDL disk capture against the current
+decoder matches all 11,450,185 stereo PCM frames. This verifies PCM delivery;
+physical sound-device latency and audible synchronization remain unmeasured.
 
 ## Saved mesh material drawing
 
@@ -1032,9 +1110,10 @@ only OTHER mesh phases. Event-prioritized weapon lights remain unsupported.
 
 Signed `Q8W8V8U8` maps now use GLES `RGBA8_SNORM`. Each mip is generated from the
 original 15-bit image, using its filtered/point threshold and mip count, then
-normalized and truncated to signed bytes as in the non-intro upload path. This
-also preserves signed alpha for specularity masks. Color textures still use the
-earlier RGBA8/native-mipmap path; their legacy format rules remain separate work.
+normalized and converted to signed bytes. Editor graphs truncate as in the
+archived non-intro upload path; runtime graphs use the released nearest-even
+conversion described above. This also preserves signed alpha for specularity
+masks. Color mipmaps likewise retain the original 15-bit reduction arithmetic.
 
 `lighting_math` compiles the two unmodified archived lookup generators and signed
 normal conversion in a portable test host. All 24,576 cube texels, 32,768 volume
@@ -1207,8 +1286,9 @@ Current limits: unsupported IPP commands/flags fail explicitly, including Merge'
 texture-alpha mode. New GPU target storage starts black with depth one because
 the original initial contents are unspecified; later draws retain color history.
 For released graphs, depth/stencil is shared across targets and reset at frame
-start as described below. Editor previews retain separate attachments. Imported/procedural textures still
-use RGBA8 and native mipmaps rather than all legacy format rules. Saved-material mesh
+start as described below. Editor previews retain separate attachments. Color and
+signed-normal uploads use the verified conversion rules above; other legacy
+upload formats remain unsupported. Saved-material mesh
 uploads are retained across frames; the diagnostic checker still rebuilds them
 for each viewport draw.
 Full-demo visual fidelity and physical audio latency measurement remain open.

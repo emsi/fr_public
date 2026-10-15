@@ -48,6 +48,9 @@ void generate_font_atlas(Texture&, const FontLayout&, const std::filesystem::pat
 void write_font_metrics(const std::filesystem::path&, const Texture&);
 std::shared_ptr<const Texture> evaluate_texture(const Project&, const Graph&, std::size_t id, const TextureOptions& = {});
 std::vector<std::uint8_t> rgba8(const Texture& texture);
+struct ColorTextureLevel {unsigned width,height;std::vector<std::uint8_t> pixels;};
+// Original ARGB8 upload: reduce 15-bit lanes before packing each mip to bytes.
+std::vector<ColorTextureLevel> color_texture_levels(const Texture&);
 void write_ppm(const std::filesystem::path&, unsigned width, unsigned height, std::span<const std::uint8_t> rgba);
 // Throws on context/shader/framebuffer failure or any readback pixel mismatch.
 std::vector<std::uint8_t> render_texture(const Texture& texture);

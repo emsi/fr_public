@@ -212,12 +212,12 @@ struct FrameRenderer::Impl {
     if(found!=bitmaps.end() && (!supplied || (supplied_bitmaps.contains(id) && supplied_bitmaps.at(id)==supplied)))return found->second;
     const auto t=supplied ? supplied : evaluate_texture(project,graph,id,texture_options);
     const auto previous=bitmap_sizes.contains(id) ? bitmap_sizes.at(id) : 0;
-    const auto levels=t->format==5 ? signed_normal_levels(*t) : std::vector<SignedNormalLevel>{};
-    const auto pixels=t->format==5 ? std::vector<std::uint8_t>{} : rgba8(*t);
-    std::size_t bytes=pixels.size();for(const auto& level:levels)bytes+=level.pixels.size();
+    const auto levels=t->format==5 ? signed_normal_levels(*t,project.runtime_graph) : std::vector<SignedNormalLevel>{};
+    const auto colors=t->format==5 ? std::vector<ColorTextureLevel>{} : color_texture_levels(*t);
+    std::size_t bytes=0;for(const auto& level:colors)bytes+=level.pixels.size();for(const auto& level:levels)bytes+=level.pixels.size();
     require(bytes<=256u*1024*1024-(bitmap_bytes-previous),"frame bitmap budget exceeded");
     GLuint texture=0;if(found!=bitmaps.end())texture=found->second;else glGenTextures(1,&texture);glBindTexture(GL_TEXTURE_2D,texture);
-    if(levels.empty()){glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,t->width,t->height,0,GL_RGBA,GL_UNSIGNED_BYTE,pixels.data());glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAX_LEVEL,1000);glGenerateMipmap(GL_TEXTURE_2D);}
+    if(levels.empty()){for(std::size_t i=0;i<colors.size();++i){const auto& level=colors[i];glTexImage2D(GL_TEXTURE_2D,GLint(i),GL_RGBA8,level.width,level.height,0,GL_RGBA,GL_UNSIGNED_BYTE,level.pixels.data());}glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAX_LEVEL,GLint(colors.size()-1));}
     else {for(std::size_t i=0;i<levels.size();++i){const auto& level=levels[i];glTexImage2D(GL_TEXTURE_2D,GLint(i),GL_RGBA8_SNORM,level.width,level.height,0,GL_RGBA,GL_BYTE,level.pixels.data());}glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAX_LEVEL,GLint(levels.size()-1));}
     bitmap_bytes=bitmap_bytes-previous+bytes;bitmap_sizes[id]=bytes;bitmaps[id]=texture;if(supplied)supplied_bitmaps[id]=std::move(supplied);++stats.bitmap_uploads;return texture;
   }

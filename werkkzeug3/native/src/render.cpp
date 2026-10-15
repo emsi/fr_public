@@ -319,10 +319,12 @@ std::vector<std::uint8_t> render_material_quad(const Material& material,
     for(unsigned i=0;i<4;++i)if(s.textures[i]) {
       const auto id=*s.textures[i];glActiveTexture(GL_TEXTURE0+i);auto [found,created]=uploaded.try_emplace(id);
       if(created) {
-        const auto& source=*textures.at(id);const auto pixels=rgba8(source);bytes+=pixels.size();
+        const auto& source=*textures.at(id);const auto levels=color_texture_levels(source);
+        for(const auto& level:levels)bytes+=level.pixels.size();
         if(bytes>256u*1024*1024)throw std::runtime_error("material texture upload budget exceeded");
         glGenTextures(1,&found->second);glBindTexture(GL_TEXTURE_2D,found->second);
-        glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,source.width,source.height,0,GL_RGBA,GL_UNSIGNED_BYTE,pixels.data());glGenerateMipmap(GL_TEXTURE_2D);
+        for(std::size_t level=0;level<levels.size();++level){const auto& mip=levels[level];glTexImage2D(GL_TEXTURE_2D,GLint(level),GL_RGBA8,mip.width,mip.height,0,GL_RGBA,GL_UNSIGNED_BYTE,mip.pixels.data());}
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAX_LEVEL,GLint(levels.size()-1));
       } else glBindTexture(GL_TEXTURE_2D,found->second);
       const auto tf=s.words[4+i];const auto filter=tf&7;const auto sampler=samplers[i];
       constexpr GLint min_filter[]={GL_NEAREST,GL_LINEAR,GL_LINEAR_MIPMAP_LINEAR,GL_LINEAR_MIPMAP_LINEAR,GL_NEAREST_MIPMAP_NEAREST,GL_LINEAR_MIPMAP_NEAREST,GL_NEAREST,GL_NEAREST};
