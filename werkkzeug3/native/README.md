@@ -36,8 +36,8 @@ still names `debris.v2m`.
 main viewport contains 76 mesh instances, two lights and 26 ChainLine cables.
 Continuous CPU preparation in 16 ms steps reaches 9,808 ms (beat 32.0394), then
 stops at the unported Glare effect, operator 10464. Full rendering now enters
-the Material 2.0 pipeline, then reaches the 256 MiB intermediate texture-cache
-limit in the dependencies of material 41956 in the first viewport.
+the Material 2.0 pipeline, then stops at unported Bricks texture operator 43557
+in the dependencies of material 12050 in the first viewport.
 Remaining MINMESH/scene operators and Water/Glare/Color Correction effects
 also remain to be ported.
 The player synthesizes its V2 soundtrack into stereo PCM before playback, using
@@ -211,6 +211,14 @@ Sharpen references use the separately tested native sampler/blur primitives;
 the real parameter sets use controlled inputs, not complete Debris texture graphs.
 Distort retains its displacement input's dimensions, format and font metadata,
 including the original equal-pixel-count behavior for differently shaped inputs.
+
+Texture evaluation releases an intermediate after its last reachable consumer.
+Shared branches, duplicate inputs and Load/Store aliases still evaluate once;
+returned results retain their own pixels and font metadata. The 256 MiB recipe
+pixel budget remains in force. `texture_cache` exercises a 342 MiB cumulative
+recipe with a 4 MiB peak, shared branches, aliases, result lifetimes and invalid
+graphs. Optional `TextureEvaluationStats` reports completed operators, allocation
+count and peak tracked pixel bytes, including evaluator scratch buffers.
 
 The native `wz3-v2m` tool reads compact music modules, reconstructs their MIDI
 event stream/sample positions and optionally renders stereo float WAV without

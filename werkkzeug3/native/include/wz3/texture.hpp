@@ -56,7 +56,9 @@ void draw_cached_text(Texture&, std::span<const std::uint8_t> blob, std::uint32_
                       float inner_spacing = 0, std::string_view family = {});
 void generate_font_atlas(Texture&, const FontLayout&, const std::filesystem::path& font_file);
 void write_font_metrics(const std::filesystem::path&, const Texture&);
-std::shared_ptr<const Texture> evaluate_texture(const Project&, const Graph&, std::size_t id, const TextureOptions& = {});
+// Recipe-local allocations (including scratch), not GPU storage or font tables.
+struct TextureEvaluationStats {std::size_t operators{},allocations{},peak_pixel_bytes{};};
+std::shared_ptr<const Texture> evaluate_texture(const Project&, const Graph&, std::size_t id, const TextureOptions& = {},TextureEvaluationStats* = nullptr);
 std::vector<std::uint8_t> rgba8(const Texture& texture);
 struct ColorTextureLevel {unsigned width,height;std::vector<std::uint8_t> pixels;};
 // Original ARGB8 upload: reduce 15-bit lanes before packing each mip to bytes.

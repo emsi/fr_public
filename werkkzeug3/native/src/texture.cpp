@@ -49,8 +49,21 @@ int clamp15(double value) {
 
 class Evaluator {
 public:
-  Evaluator(const Project& project, const Graph& graph, const TextureOptions& options)
-      : project_(project), graph_(graph), options_(options), cache_(project.operators.size()), visiting_(cache_.size()) {}
+  Evaluator(const Project& project, const Graph& graph, const TextureOptions& options,TextureEvaluationStats* stats)
+      : project_(project), graph_(graph), options_(options), cache_(project.operators.size()), visiting_(cache_.size()),
+        planned_(cache_.size()), consumers_(cache_.size()),stats_(stats) {
+    if(graph.nodes.size()!=cache_.size())throw std::runtime_error("texture graph size mismatch");
+    if(stats_)*stats_={};
+  }
+
+  void plan(std::size_t id,unsigned depth=0) {
+    if(id>=cache_.size() || !graph_.nodes[id].active)throw std::runtime_error("invalid or inactive texture operator");
+    if(visiting_[id] || depth>512)throw std::runtime_error("cycle or excessive depth in texture graph");
+    if(planned_[id])return;
+    visiting_[id]=true;
+    dependencies(id,[&](std::size_t input) {plan(input,depth+1);++consumers_[input];});
+    visiting_[id]=false;planned_[id]=true;
+  }
 
   std::shared_ptr<const Texture> evaluate(std::size_t id, unsigned depth = 0) {
     if (id >= cache_.size() || !graph_.nodes.at(id).active) throw std::runtime_error("invalid or inactive texture operator");
@@ -193,6 +206,11 @@ public:
           std::string(operator_info(op.command).name) + ", command " + std::to_string(op.command) + ") is not ported");
     }
     visiting_[id] = false;
+    // Each recipe node runs once. Its inputs remain cached until every
+    // reachable consumer has finished, including duplicate edges and aliases.
+    // The returned/shared output keeps aliased storage alive independently.
+    dependencies(id,[&](std::size_t input) {if(--consumers_[input]==0)cache_[input].reset();});
+    if(stats_)++stats_->operators;
     return cache_[id];
   }
 private:
@@ -201,7 +219,17 @@ private:
   const TextureOptions& options_;
   std::vector<std::shared_ptr<const Texture>> cache_;
   std::vector<bool> visiting_;
+  std::vector<bool> planned_;
+  std::vector<std::size_t> consumers_;
+  TextureEvaluationStats* stats_;
   std::shared_ptr<std::size_t> allocated_ = std::make_shared<std::size_t>(0);
+  template<class F> void dependencies(std::size_t id,F action) const {
+    const auto& node=graph_.nodes[id];
+    if(project_.operators[id].command==1) {
+      if(node.links.size()!=1 || !node.links[0])throw std::runtime_error("texture Load has no resolved link");
+      action(*node.links[0]);
+    }else for(auto input:node.inputs)action(input);
+  }
   static void require(const Operator& op, std::size_t count) {
     if (op.parameters.size() != count) throw std::runtime_error("unsupported texture parameter layout");
   }
@@ -218,6 +246,7 @@ private:
     auto texture = std::make_unique<Texture>();
     texture->width = width; texture->height = height; texture->pixels.resize(size);
     *allocated_ += size * sizeof(Pixel);
+    if(stats_){++stats_->allocations;stats_->peak_pixel_bytes=std::max(stats_->peak_pixel_bytes,*allocated_);}
     return std::shared_ptr<Texture>(texture.release(), [budget = allocated_, size](Texture* object) {
       delete object;
       *budget -= size * sizeof(Pixel);
@@ -372,8 +401,8 @@ private:
 };
 }
 
-std::shared_ptr<const Texture> evaluate_texture(const Project& project, const Graph& graph, std::size_t id, const TextureOptions& options) {
-  return Evaluator(project, graph, options).evaluate(id);
+std::shared_ptr<const Texture> evaluate_texture(const Project& project, const Graph& graph, std::size_t id, const TextureOptions& options,TextureEvaluationStats* stats) {
+  Evaluator evaluator(project,graph,options,stats);evaluator.plan(id);return evaluator.evaluate(id);
 }
 
 std::vector<std::uint8_t> rgba8(const Texture& texture) {
