@@ -77,12 +77,18 @@ void scene_update_order() {
   Fixture fx;const auto material=fx.add(0xd0,parameters());fx.animate(material,0,28,0xb4);
   const auto cube=fx.add(0x81,{1,1,1,1,f(1),f(1),f(1),0,0,0,0,0,0});
   const auto mesh=fx.add(0x96,{0,0},{cube},{material});
-  const auto hack=fx.add(0xd2,{}, {},{material}),scene=fx.add(0xc1,{}, {mesh,hack});
+  auto other_parameters=parameters();other_parameters[28]=0xff070809;
+  const auto other_material=fx.add(0xd0,other_parameters),other_mesh=fx.add(0x96,{0,0},{cube},{other_material});
+  const auto hack=fx.add(0xd2,{}, {},{material}),scene=fx.add(0xc1,{}, {mesh,mesh,other_mesh,cube,hack});
   const auto root=fx.add(0xf0,{3,3,0xff000000,0,0,0,0,0,f(-5),f(4096),f(.125f),0,0,f(1),f(1),0xff000000,f(4096),f(16)},{scene});
   wz3::ScenePlayer player(fx.p,fx.g);const auto first=player.viewport(root,wz3::frame_environment(49152),1);
-  check(first.instances.size()==1 && first.materials.at(material).passes[0].shader.words[28]==0xffbf5030,"MatHack after mesh emission must affect the paint snapshot");
+  check(first.instances.size()==4 && first.materials.at(material).passes[0].shader.words[28]==0xffbf5030,"MatHack after repeated mesh emission must affect the paint snapshot");
+  check(first.materials.size()==2 && first.materials.at(other_material).passes[0].shader.words[28]==0xff070809,"distinct mesh bindings or unbound faces changed material collection");
   const auto next=player.viewport(root,wz3::frame_environment(65536),1);
   check(next.materials.at(material).passes[0].shader.words[28]==0xffff5030 && first.materials.at(material).passes[0].shader.words[28]==0xffbf5030,"previous frame material snapshot is immutable");
+  check(next.materials.size()==2 && next.materials.at(other_material).passes[0].shader.words[28]==0xff070809,"cached bindings lost an independent material");
+  const auto restarted=player.viewport(root,wz3::frame_environment(0),1);
+  check(restarted.materials.at(material).passes[0].shader.words[28]==0xff005030,"cached bindings froze material animation after time moved backward");
 }
 void theta(const char* file) {
   const auto p=wz3::read_project(file);const auto g=wz3::connect(p);wz3::MaterialRuntime runtime(p,g);unsigned count=0,passes=0;

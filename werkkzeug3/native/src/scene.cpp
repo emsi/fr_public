@@ -15,6 +15,7 @@
 #include <cmath>
 #include <fstream>
 #include <iomanip>
+#include <set>
 #include <stdexcept>
 
 namespace wz3 {
@@ -111,6 +112,10 @@ struct ScenePlayer::Impl {
   std::map<std::uint64_t,std::vector<std::pair<std::size_t,std::size_t>>> instances;
   std::size_t instance_count{};
   std::map<const Mesh*,std::shared_ptr<const std::vector<SceneMatrix>>> mesh_instances;
+  // SceneAssets retains every emitted immutable mesh for this player's lifetime.
+  // Only bindings are cached here; material values are snapshotted after traversal.
+  std::map<const Mesh*,std::vector<std::size_t>> mesh_materials;
+  std::size_t material_binding_bytes{};
   std::vector<bool> prepared;
   std::vector<std::optional<AnimationProgram>> programs;
   std::vector<bool> visiting;
@@ -140,6 +145,15 @@ struct ScenePlayer::Impl {
   }
   std::shared_ptr<const Mesh> geometry(std::size_t id) {
     return assets->mesh(id);
+  }
+  const std::vector<std::size_t>& material_bindings(const Mesh& mesh) {
+    if(const auto found=mesh_materials.find(&mesh);found!=mesh_materials.end())return found->second;
+    std::vector<std::size_t> ids;std::set<std::size_t> seen;
+    for(const auto& face:mesh.faces)if(face.material && seen.insert(*face.material).second)ids.push_back(*face.material);
+    const auto bytes=sizeof(ids)+ids.capacity()*sizeof(std::size_t);
+    require(bytes<=64u*1024*1024-material_binding_bytes,"scene material binding cache budget exceeded");
+    const auto found=mesh_materials.emplace(&mesh,std::move(ids)).first;material_binding_bytes+=bytes;
+    return found->second;
   }
   std::shared_ptr<const Mesh> cached_draw_mesh(std::size_t id,unsigned depth=0) {
     require(depth<512,"cached scene mesh alias depth limit");valid(id);
@@ -410,8 +424,8 @@ struct ScenePlayer::Impl {
 
     // Engine painting consumes material state after all scene jobs have been
     // collected, including updates executed later in the same scene traversal.
-    for(const auto& instance:frame.instances)for(const auto& face:instance.mesh->faces)
-      if(face.material && !frame.materials.contains(*face.material))frame.materials.emplace(*face.material,materials.snapshot(*face.material));
+    for(const auto& instance:frame.instances)for(const auto binding:material_bindings(*instance.mesh))
+      if(!frame.materials.contains(binding))frame.materials.emplace(binding,materials.snapshot(binding));
     if(frame.lights.empty())frame.lights.push_back({id,column(camera.world,3),{0,0,1},0,0x78787878,1,32});
     return frame;
   }
