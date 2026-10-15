@@ -54,6 +54,16 @@ target_compile_options(wz3-frame PRIVATE -Wall -Wextra -Wpedantic -Werror)
 add_executable(wz3-inspect src/inspect.cpp)
 target_link_libraries(wz3-inspect PRIVATE wz3_project)
 target_compile_options(wz3-inspect PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_library(wz3_v2m src/v2m.cpp)
+target_include_directories(wz3_v2m PUBLIC include)
+target_compile_features(wz3_v2m PUBLIC cxx_std_20)
+target_compile_options(wz3_v2m PRIVATE -Wall -Wextra -Wpedantic -Werror)
+if(WZ3_SANITIZE)
+  target_compile_options(wz3_v2m PUBLIC -fsanitize=address,undefined -fno-omit-frame-pointer)
+  target_link_options(wz3_v2m PUBLIC -fsanitize=address,undefined)
+endif()
+add_executable(wz3-v2m src/v2m_inspect.cpp)
+target_link_libraries(wz3-v2m PRIVATE wz3_v2m)
 add_executable(wz3-animate src/animate.cpp)
 target_link_libraries(wz3-animate PRIVATE wz3_project)
 target_compile_options(wz3-animate PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -121,6 +131,17 @@ if(WZ3_BUILD_PLAYER)
 endif()
 
 if(BUILD_TESTING)
+  add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/v2_schedule_oracle.cpp"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/v2_schedule_oracle.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../v2" "${CMAKE_CURRENT_BINARY_DIR}/generated/v2_schedule_oracle.cpp"
+    DEPENDS tools/v2_schedule_oracle.py ../../v2/v2mplayer.cpp ../../v2/v2mplayer.h VERBATIM)
+  # The reference retains its original x86 unaligned word loads. Native parsing
+  # uses bounded byte reads and stays fully instrumented under ASan/UBSan.
+  set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/generated/v2_schedule_oracle.cpp"
+    PROPERTIES COMPILE_OPTIONS "-fno-sanitize=alignment;-fno-strict-aliasing")
+  add_executable(wz3-v2m-tests tests/v2m.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/v2_schedule_oracle.cpp")
+  target_link_libraries(wz3-v2m-tests PRIVATE wz3_v2m)
+  add_test(NAME v2m_sequence COMMAND wz3-v2m-tests "${CMAKE_CURRENT_SOURCE_DIR}/../..")
   add_executable(wz3-timing-tests tests/playback_timing.cpp)
   target_link_libraries(wz3-timing-tests PRIVATE wz3_project)
   target_compile_options(wz3-timing-tests PRIVATE -Wall -Wextra -Wpedantic -Werror)

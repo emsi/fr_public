@@ -40,6 +40,26 @@ must also be implemented. The existing Theta renderer and released-clock profile
 do not establish compatibility with Debris. `debris_projects` compares the real
 wrapped files with their legacy documents and tests malformed container handling.
 
+The native `wz3-v2m` tool reads compact music modules and reconstructs their MIDI
+event stream and sample positions without Windows or an audio device:
+
+```sh
+build/native/wz3-v2m werkkzeug3/data/debris/debris_ost.v2m
+```
+
+The soundtrack contains 116 patches, 13,245 note events and 37,306 total MIDI
+events. Its 26,838 scheduled packets match the archived V2 player at 44.1 and
+48 kHz, including simultaneous controls/notes and the original integer clock's
+remainder carry. The effects track, Patient Zero, Zeitmaschine and `.kkrieger`
+fixtures pass the same comparison. Tests also cover tempo changes, repeated
+same-tick control changes, truncated sections and invalid event data. The
+reference uses the archived `v2mplayer.cpp` event loop with a recording synth;
+four MSVC assembly utility blocks are translated into portable integer/fill
+operations. This verifies scheduling, **not audio fidelity**. The reader preserves
+raw instrument/global/speech data; historical patch conversion, DSP synthesis
+and integration into `wz3-player` remain to be done. `synthesis: false` in the
+tool's JSON output makes that boundary explicit.
+
 ## Play Theta on Linux
 
 In addition to the base dependencies below, install SDL2, Vorbis, EGL and GLES
