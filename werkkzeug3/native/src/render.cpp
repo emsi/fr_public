@@ -196,7 +196,7 @@ std::vector<std::uint8_t> render_mesh(const Mesh& mesh, unsigned width, unsigned
   return output;
 }
 void draw_scene_geometry(const SceneFrame& frame,unsigned width,unsigned height) {
-  const auto view_projection=scene_view_projection(frame.camera,width,height);
+  const auto view_projection=scene_raster_projection(frame.camera,width,height);
   const auto vertex=shader(GL_VERTEX_SHADER,R"(#version 300 es
     layout(location=0) in vec3 position;
     layout(location=1) in vec3 uv;

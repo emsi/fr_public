@@ -56,10 +56,21 @@ SceneMatrix scene_view_projection(const SceneCamera& camera,unsigned width,unsig
   for(unsigned c=0;c<3;++c)for(unsigned r=0;r<3;++r)view[c*4+r]=camera.world[r*4+c];
   for(unsigned r=0;r<3;++r)view[12+r]=-(view[r]*camera.world[12]+view[4+r]*camera.world[13]+view[8+r]*camera.world[14]);
   // Original infinite-far D3D projection, with z_GL = 2*z_D3D - w.
-  // Keep its constant half-pixel shifts; pixel fidelity needs reference captures.
+  // The released 0x8034cf projection has zero XY translation; the later archive
+  // adds constant half-pixel terms. Keep each engine's geometric matrix.
   const SceneMatrix projection={camera.zoom_x,0,0,0,0,camera.zoom_y,0,0,
-    camera.center_x,camera.center_y,1,1,-1.0f/width,1.0f/height,-2*camera.near_clip,0};
+    camera.center_x,camera.center_y,1,1,camera.released_projection ? 0 : -1.0f/width,
+    camera.released_projection ? 0 : 1.0f/height,-2*camera.near_clip,0};
   return scene_combine(projection,view);
+}
+SceneMatrix scene_raster_projection(const SceneCamera& camera,unsigned width,unsigned height) {
+  auto m=scene_view_projection(camera,width,height);
+  if(camera.released_projection)for(unsigned c=0;c<4;++c) {
+    // D3D9 samples integer pixel centers; GLES samples half-integers. Move
+    // geometry right/down half a pixel after division, independent of depth.
+    m[c*4]+=m[c*4+3]/width;m[c*4+1]-=m[c*4+3]/height;
+  }
+  return m;
 }
 
 SceneAssets::SceneAssets(const Project& p,const Graph& g,const TextureOptions& o):project(p),graph(g),options(o) {
@@ -294,7 +305,8 @@ struct ScenePlayer::Impl {
     if(p.size()==24)require(real(p,20)==0 && real(p,21)==0 && real(p,22)==1 && real(p,23)==1,"viewport cropping is not ported");
     SceneFrame frame;frame.viewport_id=id;frame.viewport_flags=p[1];frame.background=p[2];
     std::array<std::uint32_t,9> srt={std::bit_cast<std::uint32_t>(1.0f),std::bit_cast<std::uint32_t>(1.0f),std::bit_cast<std::uint32_t>(1.0f),p[3],p[4],p[5],p[6],p[7],p[8]};
-    auto& camera=frame.camera;camera.world=scene_srt(srt);camera.far_clip=real(p,9);camera.near_clip=real(p,10);
+    auto& camera=frame.camera;camera.released_projection=project.runtime_graph;
+    camera.world=scene_srt(srt);camera.far_clip=real(p,9);camera.near_clip=real(p,10);
     camera.center_x=real(p,11);camera.center_y=real(p,12);camera.zoom_x=real(p,13);camera.zoom_y=real(p,14)*((p[1]&0x1000) ? 1 : aspect);
     camera.fog_color=p[15];camera.fog_end=real(p,16);camera.fog_start=real(p,17);
     require(camera.near_clip>0 && camera.far_clip>camera.near_clip && camera.zoom_x>0 && camera.zoom_y>0,"invalid saved scene camera");
@@ -361,7 +373,8 @@ void write_scene(const std::filesystem::path& path,const SceneFrame& frame) {
     <<",\"viewport_flags\":"<<frame.viewport_flags<<",\"background\":"<<frame.background<<",\"ambient\":"<<frame.ambient<<",\"camera\":{";
   out<<"\"world\":";array(frame.camera.world);out<<",\"near\":"<<frame.camera.near_clip<<",\"far\":"<<frame.camera.far_clip
     <<",\"center\":["<<frame.camera.center_x<<','<<frame.camera.center_y<<"],\"zoom\":["<<frame.camera.zoom_x<<','<<frame.camera.zoom_y
-    <<"],\"fog_color\":"<<frame.camera.fog_color<<",\"fog_start\":"<<frame.camera.fog_start<<",\"fog_end\":"<<frame.camera.fog_end<<"},\"instances\":[";
+    <<"],\"released_projection\":"<<(frame.camera.released_projection ? "true" : "false")
+    <<",\"fog_color\":"<<frame.camera.fog_color<<",\"fog_start\":"<<frame.camera.fog_start<<",\"fog_end\":"<<frame.camera.fog_end<<"},\"instances\":[";
   for(std::size_t i=0;i<frame.instances.size();++i) {
     const auto& v=frame.instances[i];out<<(i ? "," : "")<<"{\"operator\":"<<v.operator_id<<",\"world\":";array(v.world);
     out<<",\"time\":"<<v.time<<",\"pass_adjust\":"<<v.pass_adjust<<",\"vertices\":"<<v.mesh->vertices.size()<<",\"faces\":"<<v.mesh->faces.size()<<'}';

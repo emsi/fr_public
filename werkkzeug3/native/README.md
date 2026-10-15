@@ -488,11 +488,62 @@ the isolated viewport. These commands do not execute ancestor nodes or the full
 timeline/postprocessing graph. The current render size is 1024×768 at 4:3.
 
 The GLES geometry pass uses the saved perspective camera, zoom and center,
-positive-Z orientation, infinite far projection and original pixel shifts. D3D's
+positive-Z orientation, infinite far projection and engine-specific pixel placement. D3D's
 depth interval is converted to GLES clip space. Unique meshes are uploaded once
 per render and reused for each instance. Shading is still the diagnostic UV
 checker; saved material shaders, light accumulation, shadows, fog and compositing
 are not applied. This is animated scene geometry, not a finished Theta frame.
+
+The final 1.01 executable's `MakeProjectionMatrix` at `0x8034cf` writes **zero
+perspective XY translation**. The later archived implementation adds constant
+`(-1/width, +1/height)` terms, which the native release path previously inherited.
+Runtime graphs now use the released geometric projection. Rasterization then
+adds `clip.w / width` to X and subtracts `clip.w / height` from Y, matching
+[Direct3D 9's integer pixel centers](https://learn.microsoft.com/en-us/windows/win32/direct3d10/d3d10-graphics-programming-guide-resources-coordinates)
+on [GLES's half-integer centers](https://registry.khronos.org/OpenGL/specs/es/3.0/es_spec_3.0.pdf).
+This moves geometry right/down half a pixel
+independently of depth. Culling uses the geometric matrix before this adjustment.
+The diagnostic scene renderer and compositor's meshes, lighting, particles and
+shadow volumes use the same raster matrix.
+
+`tools/release_camera_oracle.py` executes the original viewport camera setup,
+Euler/vector math and graphics `SetViewProject`, including its switch from the
+single-precision `0x103f` FPU control word to `0x123f`. The existing animation
+oracle supplies nine controlled inputs for each of 23 released viewports, at
+three aspect ratios and two resolutions. All **1,242 camera/view/projection
+cases** match on GCC Release and Clang ASan/UBSan within `2e-4 + 2e-6*abs(reference)`;
+**65,552 of 67,068 components are bitwise equal**, and the largest absolute
+difference is **0.0000305176**. The trace SHA-256 is
+`5f68acad3ad00815ae9635388edbe6de38f048d53420cc49d2ddf7a7c5c0a7fd`.
+No camera/projection math is replaced by hooks; no graphics driver or application
+entry point executes. The GPU regression separately checks every pixel of a
+rectangle whose D3D screen edges are 16.25 through 31.25: mesh and particle draws
+at depths 1 and 4 cover exactly integer centers 17 through 31 in both axes.
+
+```sh
+uv run --no-project --with unicorn python werkkzeug3/native/tools/release_camera_oracle.py \
+  build/reference/theta/extracted/restored-code-image.bin --output build/reference/theta/camera-projection
+build/native/wz3-scene-tests --release-camera-oracle \
+  build/reference/theta/camera-projection/cameras.txt
+```
+
+All 43 local Release tests pass, including 16 graphics tests. Camera execution
+and mesh-material GPU tests pass under Clang ASan/UBSan; the GPU coverage test
+also passes on llvmpipe. A complete Radeon render produces 16,083 frames and 148
+recorded snapshots in 25.85 seconds. Against the same video search windows,
+144 images change: 106 have lower RGB MSE and 38 have higher MSE. The median
+falls from **340.30 to 312.77**; the 32-second image improves from 455.82 to
+50.83, while 30 seconds rises from 724.88 to 1247.82. This is a correction
+grounded in the original code and pixel-coordinate convention, not a claim of
+uniform improvement against a compressed video with uncertain frame phase.
+
+A full SDL run with the dummy audio backend prepares in 23.56 seconds and
+reaches the released endpoint in 255.61 wall seconds, rendering all 16,083
+simulation frames with 15,275 presentations and 11,084 audio callbacks. There
+are no new cached assets, surfaces, uploads or shader compilations during
+playback. Captures at 36, 120, 195, 220 and 250 seconds and the endpoint match
+the offline run byte for byte. This run uses SDL's offscreen video backend and
+does not establish physical audio latency or audible synchronization.
 
 ```sh
 python3 werkkzeug3/native/tools/scene_audit.py \

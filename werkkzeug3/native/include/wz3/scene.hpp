@@ -18,8 +18,12 @@ struct SceneCamera {
   float near_clip=.125f,far_clip=4096,center_x{},center_y{},zoom_x=1,zoom_y=1;
   std::uint32_t fog_color=0xff000000;
   float fog_start{},fog_end=4096;
+  bool released_projection{};
 };
+// Geometric clip matrix, including D3D-to-GL depth conversion. Culling uses it
+// before the rasterizer's pixel-center adjustment.
 SceneMatrix scene_view_projection(const SceneCamera&,unsigned width,unsigned height);
+SceneMatrix scene_raster_projection(const SceneCamera&,unsigned width,unsigned height);
 struct SceneInstance {
   std::size_t operator_id{};
   std::shared_ptr<const Mesh> mesh;

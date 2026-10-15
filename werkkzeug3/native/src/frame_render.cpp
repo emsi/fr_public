@@ -327,7 +327,7 @@ struct FrameRenderer::Impl {
     quad(resolve_material(draw.shader,&draw),target.surface,&draw,&matrix,nullptr,nullptr,fog ? &*fog : nullptr);
   }
   void effects(const SceneFrame& scene,const FrameTarget& target) {
-    const auto projection=scene_view_projection(scene.camera,target.width,target.height);
+    const auto projection=scene_raster_projection(scene.camera,target.width,target.height);
     for(const auto& draw:scene.effects)effect(draw,projection,target,scene.camera);
   }
   const MeshGeometry& mesh_geometry(const std::shared_ptr<const Mesh>& mesh,const std::vector<SceneMeshBatch>& batches) {
@@ -388,7 +388,7 @@ struct FrameRenderer::Impl {
     glDrawElements(GL_TRIANGLES,GLsizei(count),GL_UNSIGNED_INT,nullptr);
   }
   void scene_materials(const SceneFrame& scene,const FrameTarget& target) {
-    const auto draws=scene_draw_jobs(scene,target.width,target.height);const auto projection=scene_view_projection(scene.camera,target.width,target.height);
+    const auto draws=scene_draw_jobs(scene,target.width,target.height);const auto projection=scene_raster_projection(scene.camera,target.width,target.height);
     const auto restore_scissor=[&]{glScissor(0,surfaces.at(target.surface).height-target.height,target.width,target.height);};
     const auto insert=[&](unsigned usage) {
       restore_scissor();FrameQuad q;auto& w=q.shader.words;w[0]=0x30002|(usage==0 ? 0x3000 : 0x8000);w[9]=0x10;w[28]=0x00ffffff;w[23]=8;quad(q,target.surface);

@@ -3,6 +3,7 @@
 #include <bit>
 #include <cmath>
 #include <iostream>
+#include <fstream>
 #include <stdexcept>
 
 namespace {
@@ -39,6 +40,47 @@ void composition() {
   near(projection[0],1,"projection horizontal zoom");near(projection[5],1,"projection vertical zoom");near(projection[11],1,"positive Z perspective divide");
   near(projection[10],1,"infinite far plane");near(projection[14],-.25f,"D3D-to-GL near depth");near(projection[12],-1/640.0f,"original horizontal pixel shift");
   near((projection[10]*.125f+projection[14])/.125f,-1,"near plane maps to GL negative one");
+  camera.released_projection=true;
+  const auto released=wz3::scene_view_projection(camera,640,480);
+  check(released[12]==0 && released[13]==0,"released projection has no archived constant pixel shift");
+  check(released==wz3::scene_view_projection(camera,1024,768),"released geometric projection depends on raster resolution");
+  const auto raster=wz3::scene_raster_projection(camera,640,480);
+  for(float z:{.125f,1.f,4.f,128.f}) {
+    near((raster[8]*z+raster[12])/z*320,.5f,"D3D-to-GLES horizontal sample-center conversion");
+    near((raster[9]*z+raster[13])/z*240,-.5f,"D3D-to-GLES vertical sample-center conversion");
+  }
+  fxt.p.runtime_graph=true;wz3::ScenePlayer runtime(fxt.p,fxt.g);
+  check(runtime.viewport(root,wz3::frame_environment(0),1).camera.released_projection,"runtime camera projection profile was lost");
+  check(!frame.camera.released_projection,"editor camera acquired release projection semantics");
+}
+void released_camera_oracle(const char* path) {
+  std::ifstream in(path);std::string magic;unsigned cases=0,exact=0,total=0;float maximum=0;
+  in>>magic>>cases;check(in.good() && magic=="theta-camera-v1" && cases>0 && cases<=10000,"invalid camera oracle");
+  for(unsigned trial=0;trial<cases;++trial) {
+    unsigned id=0,sample=0,width=0,height=0;std::uint32_t aspect=0;
+    std::vector<std::uint32_t> p(18);std::array<std::uint32_t,22> camera{};std::array<std::uint32_t,16> projection{},vp{};
+    in>>id>>sample>>width>>height>>aspect;for(auto& v:p)in>>v;for(auto& v:camera)in>>v;
+    for(auto& v:projection)in>>v;for(auto& v:vp)in>>v;check(in.good(),"truncated camera oracle");
+    Fixture x;x.p.runtime_graph=true;const auto empty=x.add(0xc1);const auto view=x.add(0xf0,p,{empty});
+    wz3::ScenePlayer player(x.p,x.g);const auto scene=player.viewport(view,wz3::frame_environment(0),wz3::as_float(aspect));
+    const auto compare=[&](float actual,float expected) {
+      check(std::isfinite(actual) && std::isfinite(expected),"nonfinite camera oracle value");
+      const auto error=std::abs(actual-expected);maximum=std::max(maximum,error);exact+=f(actual)==f(expected);++total;
+      if(error>2e-4f+2e-6f*std::abs(expected))throw std::runtime_error("original camera mismatch: viewport "+std::to_string(id)+
+        ", sample "+std::to_string(sample)+", expected "+std::to_string(expected)+", got "+std::to_string(actual));
+    };
+    for(unsigned c=0;c<16;++c)compare(scene.camera.world[c],wz3::as_float(camera[c]));
+    const std::array<float,6> fields{scene.camera.zoom_x,scene.camera.zoom_y,scene.camera.center_x,scene.camera.center_y,scene.camera.near_clip,scene.camera.far_clip};
+    for(unsigned c=0;c<6;++c)compare(fields[c],wz3::as_float(camera[c+16]));
+    auto identity=scene.camera;identity.world=wz3::scene_identity();
+    const auto projected=wz3::scene_view_projection(identity,width,height),combined=wz3::scene_view_projection(scene.camera,width,height);
+    for(unsigned c=0;c<16;++c) {
+      const auto gl_depth=[&](const auto& matrix){return c%4==2 ? 2*wz3::as_float(matrix[c])-wz3::as_float(matrix[c+1]) : wz3::as_float(matrix[c]);};
+      compare(projected[c],gl_depth(projection));compare(combined[c],gl_depth(vp));
+    }
+  }
+  in>>std::ws;check(in.eof(),"trailing camera oracle data");
+  std::cout<<cases<<" original camera/view/projection cases match; "<<exact<<'/'<<total<<" components bitwise equal; max absolute error "<<maximum<<'\n';
 }
 void animation_and_instances() {
   Fixture fxt;const auto cube=fxt.cube();const auto child=fxt.add(0xc3,srt(),{cube});fxt.animate(child,3,6,2);
@@ -98,7 +140,8 @@ void theta(const char* file) {
 }
 }
 int main(int argc,char** argv) {
-  try {check(argc==2,"expected Theta project");composition();animation_and_instances();lights();selection_and_passes();theta(argv[1]);
+  try {if(argc==3 && std::string_view(argv[1])=="--release-camera-oracle") {released_camera_oracle(argv[2]);return 0;}
+    check(argc==2,"expected Theta project");composition();animation_and_instances();lights();selection_and_passes();theta(argv[1]);
     std::cout<<"scene transforms, instancing, scoped animation, lights and Theta viewports passed\n";
   }catch(const std::exception& error) {std::cerr<<error.what()<<'\n';return 1;}
 }

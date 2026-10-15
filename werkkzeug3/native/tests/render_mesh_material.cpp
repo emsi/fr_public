@@ -30,6 +30,25 @@ void binding_and_cache() {
   const auto next=renderer.render(frame(scene));pixel(next,22,32,{0,0,0});pixel(next,32,32,{0,255,0});pixel(next,48,32,{0,0,255});
   pixel(first,24,32,{255,0,0});
 }
+void released_sample_centers() {
+  FrameFixture x;x.p.runtime_graph=true;wz3::FrameRenderer renderer(x.p,x.g);
+  for(float z:{1.f,4.f})for(bool particle:{false,true}) {
+    wz3::SceneFrame scene;scene.camera.released_projection=true;scene.materials[1]=material(0xffff0000);
+    auto mesh=square(1,z,-.4921875f*z,-.0234375f*z);
+    mesh->vertices[0].position[1]=mesh->vertices[1].position[1]=.4921875f*z;
+    mesh->vertices[2].position[1]=mesh->vertices[3].position[1]=.0234375f*z;
+    if(particle) {
+      wz3::SceneEffectDraw draw;draw.sort_key=7u<<16;draw.shader=scene.materials[1].passes[0].shader;
+      for(const auto& v:mesh->vertices)draw.vertices.push_back({v.position,{0,0},0xffffffff});
+      scene.effects.push_back(draw);
+    }else scene.instances={{0,mesh}};
+    const auto pixels=renderer.render(frame(scene));
+    // Original D3D screen edges are 16.25..31.25 in both axes. Integer
+    // pixel centers cover 17..31, regardless of depth or draw type.
+    for(unsigned y=0;y<64;++y)for(unsigned x=0;x<64;++x)
+      pixel(pixels,x,y,{x>=17 && x<=31 && y>=17 && y<=31 ? 255u : 0u,0,0});
+  }
+}
 void depth_culling_and_color() {
   FrameFixture x;wz3::FrameRenderer renderer(x.p,x.g);wz3::SceneFrame scene;scene.materials[1]=material(0xffff0000);scene.materials[2]=material(0xff0000ff);
   auto front=square(1),back=square(2,3);scene.instances={{0,front},{0,back}};
@@ -78,6 +97,6 @@ void theta(const char* path) {
 }
 }
 int main(int argc,char** argv) {
-  try {binding_and_cache();depth_culling_and_color();mesh_effect_order();target_texture();if(argc>1)theta(argv[1]);std::cout<<"Saved mesh material bindings, camera/SRT, depth, culling, colors, blending and target UVs passed\n";}
+  try {binding_and_cache();released_sample_centers();depth_culling_and_color();mesh_effect_order();target_texture();if(argc>1)theta(argv[1]);std::cout<<"Saved mesh material bindings, camera/SRT, depth, culling, colors, blending and target UVs passed\n";}
   catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
 }
