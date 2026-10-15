@@ -82,14 +82,15 @@ public:
       cache_[id] = evaluate(*node.links[0], depth + 1);
     } else if (op.command == 2 || op.command == 3) {
       cache_[id] = input();
-    } else if (op.command == 0x21 || op.command == 0x22 || op.command == 0x34) {
+    } else if (op.command == 0x21 || op.command == 0x22 || op.command == 0x34 || op.command==0x3d) {
       if (!node.inputs.empty()) throw std::runtime_error("texture generator has unexpected inputs");
-      require(op, op.command == 0x21 ? 3 : op.command == 0x22 ? 11 : 8);
+      require(op, op.command == 0x21 ? 3 : op.command == 0x22 ? 11 : op.command==0x3d ? 14 : 8);
       const auto width = 1u << std::clamp<int>(op.parameters[0] & 0x7f, 0, 12);
       const auto height = 1u << std::clamp(std::bit_cast<std::int32_t>(op.parameters[1]), 0, 12);
       auto texture = allocate(width, height);
       if (op.command == 0x21) std::fill(texture->pixels.begin(), texture->pixels.end(), color64(op.parameters[2]));
       else if(op.command==0x22)perlin_bitmap(*texture,op.parameters);
+      else if(op.command==0x3d)bricks_bitmap(*texture,op.parameters);
       else gradient(*texture, op);
       cache_[id] = std::move(texture);
     } else if (op.command == 0x24) {
@@ -131,6 +132,9 @@ public:
       transform_bitmap(*source, *texture, number(op, 0), number(op, 1), number(op, 2),
                        number(op, 3), number(op, 4), op.parameters[5]);
       cache_[id] = std::move(texture);
+    } else if(op.command==0x3e) {
+      require(op,1);const auto source=input();auto texture=clone(*source);
+      bulge_bitmap(*source,*texture,number(op,0));cache_[id]=std::move(texture);
     } else if(op.command==0x2d) {
       require(op,2);if(node.inputs.size()!=2)throw std::runtime_error("Distort requires two inputs");
       const auto image=evaluate(node.inputs[0],depth+1),displacement=evaluate(node.inputs[1],depth+1);

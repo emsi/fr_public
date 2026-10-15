@@ -36,7 +36,7 @@ still names `debris.v2m`.
 main viewport contains 76 mesh instances, two lights and 26 ChainLine cables.
 Continuous CPU preparation in 16 ms steps reaches 9,808 ms (beat 32.0394), then
 stops at the unported Glare effect, operator 10464. Full rendering now enters
-the Material 2.0 pipeline, then stops at unported Bricks texture operator 43557
+the Material 2.0 pipeline, then stops at unported Cell texture operator 42893
 in the dependencies of material 12050 in the first viewport.
 Remaining MINMESH/scene operators and Water/Glare/Color Correction effects
 also remain to be ported.
@@ -219,6 +219,17 @@ pixel budget remains in force. `texture_cache` exercises a 342 MiB cumulative
 recipe with a 4 MiB peak, shared branches, aliases, result lifetimes and invalid
 graphs. Optional `TextureEvaluationStats` reports completed operators, allocation
 count and peak tracked pixel bytes, including evaluator scratch buffers.
+
+Bricks preserves the archived seeded head pattern, pattern repetition, row
+stagger, random color distribution and both mortar-edge modes. All 36 reachable
+Debris Bricks images match the original handler at their saved 512x512 size;
+433 additional cases exercise seed wrapping, colors, repetition and mortar.
+Bulge preserves the spherical coordinate warp and wrapped bilinear sampling.
+Its saved parameter set is checked with a controlled input: the complete saved
+graph still depends on unported uncached text paragraphs, even with an explicit
+font file. Both kernels restore the caller's floating-point environment.
+The opening scene's material dependencies now evaluate 80 of 107 distinct
+texture recipes; Cell and text dependencies remain.
 
 The native `wz3-v2m` tool reads compact music modules, reconstructs their MIDI
 event stream/sample positions and optionally renders stereo float WAV without

@@ -52,6 +52,8 @@ void perlin_bitmap(Texture&,std::span<const std::uint32_t> parameters);
 void balance_bitmap(Texture&,std::span<const std::uint32_t> parameters);
 void distort_bitmap(const Texture& image,const Texture& displacement,Texture& destination,float amount,unsigned border);
 void sharpen_bitmap(Texture& blurred,const Texture& original,float amplitude);
+void bricks_bitmap(Texture&,std::span<const std::uint32_t> parameters);
+void bulge_bitmap(const Texture& source,Texture& destination,float warp);
 void draw_cached_text(Texture&, std::span<const std::uint8_t> blob, std::uint32_t color, unsigned flags,
                       float inner_spacing = 0, std::string_view family = {});
 void generate_font_atlas(Texture&, const FontLayout&, const std::filesystem::path& font_file);
