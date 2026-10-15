@@ -37,22 +37,26 @@ main viewport contains 76 mesh instances, two lights and 26 ChainLine cables.
 With an explicit font, the native player renders the opening city at 1280x640:
 1,251 consecutive frames through 20 seconds pass in both offline and
 audio-callback-paced playback, with byte-identical endpoint captures.
-Continuous GPU rendering and callback-paced playback now pass 180 seconds
-(11,251 frames), with byte-identical captures at 124, 130, 140, 160 and 180 seconds
-showing spline-deformed geometry, baked building textures and the tangled rails.
-The callback-paced check took 186.80 wall seconds after 243.27 seconds of
-preparation and fell up to 23.70 seconds behind the audio clock. These timings
+Continuous GPU rendering and callback-paced playback now pass 330 seconds
+(20,626 frames), including spline-deformed geometry, baked building textures,
+tangled rails and the 3D greetings. Captures at 250, 255, 260, 280 and 300 seconds
+are byte-identical between offline and callback-paced runs.
+The callback-paced check took 331.39 wall seconds after 339.07 seconds of
+preparation and fell up to 22.27 seconds behind the audio clock. These timings
 were recorded alongside other validation work, not in an isolated benchmark.
 It created no additional cached meshes, fonts,
 render surfaces, bitmap uploads, mesh/shadow/instance buffers, shaders or lighting
 tables, and did not rebake any textures during playback. Synchronized real-time
 Debris playback still needs performance work.
 Optimized particle mesh instancing, Color Correction, Bitmap Render,
-BoneChain/BoneTrain, weighted skinning, Pipe, MINMESH Perlin and Font3D are supported.
-An unrestricted run now passes 330 seconds and stops at 333,071 ms on MINMESH
-Multiply operator 11077. Font3D unblocks the 3D greetings from 254.703 seconds;
+BoneChain/BoneTrain, weighted skinning, Pipe, MINMESH Perlin, Font3D and Multiply
+are supported. An unrestricted run now passes 330 seconds and stops at
+333,071 ms when material 5628 exceeds the renderer's 256 MiB bitmap-cache budget.
+Font3D unblocks the 3D greetings from 254.703 seconds;
 captures at 255, 260, 280 and 300 seconds include the saved text scenes.
+The 330-second offline capture matches the callback endpoint byte for byte.
 Font3D geometry and GPU shadow checks also pass under Clang ASan/UBSan.
+All 83 release checks pass, including 27 graphics checks.
 DejaVu Sans captures show textured buildings,
 lighting, shadows and cables. The playback test uses dummy audio; physical
 speaker output and synchronization remain unverified. This is progress through
@@ -61,7 +65,7 @@ images. To play the supported opening from the repository root:
 
 ```sh
 build/native/wz3-player werkkzeug3/data/debris/debris_9241_c.k \
-  --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf --duration 180
+  --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf --duration 330
 ```
 
 DejaVu Sans substitutes for the project's Arial font; its appearance is not an
@@ -199,7 +203,22 @@ routines. It also supports Add and conversion from the older indexed mesh
 format. MINMESH retains up to eight corners per polygon, both UV sets and
 two-vertex stitch records; normals/tangents and shadow adjacency come from its
 own kernels. Material links retain operator identities and pass numbers.
-Animated mesh initialization and Multiply still fail explicitly.
+Animated mesh initialization still fails explicitly.
+
+MINMESH Multiply runs the archived repetition handler: the first copy retains
+the input transform, subsequent copies accumulate the saved SRT and local
+rotation, and optional UV offsets advance by copy number. Random mode replaces
+the global transform with an independently drawn SRT after each copy, using
+the original generator seeded by the count. The archived extrusion argument
+remains inactive. Material clusters and vertex/face attributes survive; cluster
+indices that would overflow the byte-sized source format fail explicitly.
+
+`minmesh_multiply` checks 52 count/mode/transform combinations against independent
+double-precision SRT composition and an independent integer random stream.
+All seven saved repetition graphs match their transforms and archived shadow
+topology. The broader checks now evaluate all 563 reachable MINMESH operators
+and pose all 46 complete Explode graphs without skipped dependencies. These
+three checks pass with optimized Clang ASan/UBSan.
 
 MINMESH Font3D obtains unhinted quadratic TrueType contours from FreeType and
 feeds Linux GLU's CPU tessellator. Each glyph is triangulated separately, keeping

@@ -7,9 +7,10 @@ native GPU mesh previews.
 Theta plays through its complete timeline on Linux. Native support for
 **fr-041: Debris** is now in progress: its archived project renders through
 330 seconds offline on Linux and its V2 soundtrack synthesizes natively.
-Audio-callback playback is validated through 180 seconds. Bone animation,
-Pipe meshes, Perlin displacement and 3D font outlines are supported. The next
-missing operator is Multiply at 333.071 seconds. Rendering also
+Audio-callback playback is validated through 330 seconds. Bone animation,
+Pipe meshes, Perlin displacement, 3D font outlines and mesh repetition are supported.
+All 563 reachable MINMESH operators evaluate. The full run currently reaches the
+renderer’s 256 MiB texture-cache limit at 333.071 seconds. Rendering also
 needs performance work to keep pace with audio; the full demo is not yet supported.
 The original archive follows below.
 

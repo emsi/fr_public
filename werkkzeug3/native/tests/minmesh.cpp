@@ -152,21 +152,12 @@ void debris(const char* path,const char* font) {
   const auto box=mesh_bounds(*mesh);for(unsigned c=0;c<3;++c){near(box.min[c],-6,"Debris object lower bound");near(box.max[c],6,"Debris object upper bound");}
   for(const auto& face:mesh->faces)check(face.material==8462 && face.pass==0,"Debris MatLink binding lost");
   check_minmesh_shadow_reference(*mesh,all_shadow(*mesh));
-  unsigned converted=0;std::map<std::string,unsigned> unsupported;
+  unsigned converted=0;
   for(std::size_t i=0;i<p.operators.size();++i)if(g.nodes[i].reachable && operator_info(p.operators[i].command).category=="MINMESH") {
-    try {const auto value=evaluate_mesh(p,g,i,options);validate_mesh(*value);++converted;}
-    catch(const std::runtime_error& e) {
-      const std::string message=e.what();const auto begin=message.find('('),end=message.find(')',begin);
-      if(begin==std::string::npos || end==std::string::npos || !message.ends_with(" is not ported"))throw;
-      const auto name=message.substr(begin+1,end-begin-1);
-      const std::set<std::string> remaining={"Multiply"};
-      if(!remaining.contains(name))throw;
-      ++unsupported[name];
-    }
+    const auto value=evaluate_mesh(p,g,i,options);validate_mesh(*value);++converted;
   }
-  check(converted>=277,"real Debris MINMESH coverage regressed");
-  std::cout<<converted<<" reachable Debris MINMESH operators evaluate; remaining dependencies:\n";
-  for(const auto& [message,count]:unsupported)std::cout<<count<<" blocked: "<<message<<'\n';
+  check(converted==563,"real Debris MINMESH coverage regressed");
+  std::cout<<converted<<" reachable Debris MINMESH operators evaluate with no skipped dependencies\n";
 }
 }
 int main(int argc,char** argv) {

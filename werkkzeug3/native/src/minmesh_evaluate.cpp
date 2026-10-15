@@ -116,6 +116,8 @@ public:
         mesh=font3d_mesh(options.font_file,op.strings[0],real(op,0),real(op,1),real(op,2));break;
       case 0x128:
         parameters(op,8);mesh=std::make_shared<GenMinMesh>(*input());bone_chain(*mesh,op.parameters);break;
+      case 0x12f:
+        parameters(op,17);mesh.reset(multiply_mesh(*input(),op.parameters));break;
       case 0x129: {
         parameters(op,3);require(node.inputs.size()==2,"BoneTrain needs a mesh and spline");
         mesh=std::make_shared<GenMinMesh>(*get(node.inputs[0],depth+1));

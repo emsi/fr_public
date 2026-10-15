@@ -92,6 +92,12 @@ add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/font3d_kernel.i
   DEPENDS tools/font3d_kernel.py tools/particles_oracle.py ../genminmesh.cpp VERBATIM)
 target_sources(wz3_project PRIVATE src/minmesh_font.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/font3d_kernel.inc")
 set_source_files_properties(src/minmesh_font.cpp PROPERTIES COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/minmesh_multiply.inc"
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/minmesh_multiply.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../genminmesh.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/../_types.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/minmesh_multiply.inc"
+  DEPENDS tools/minmesh_multiply.py tools/particles_oracle.py ../genminmesh.cpp ../_types.cpp VERBATIM)
+target_sources(wz3_project PRIVATE src/minmesh_multiply.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/minmesh_multiply.inc")
+set_source_files_properties(src/minmesh_multiply.cpp PROPERTIES COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
 add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/spline_kernel.inc"
   COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/spline_kernel.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/../genblobspline.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/../_types.cpp"
@@ -260,6 +266,10 @@ if(BUILD_TESTING)
   target_include_directories(wz3-font3d-tests PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
   target_compile_options(wz3-font3d-tests PRIVATE -frounding-math -ffp-contract=off)
   target_link_libraries(wz3-font3d-tests PRIVATE wz3_project)
+  add_executable(wz3-minmesh-multiply-tests tests/minmesh_multiply.cpp tests/minmesh_reference.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/minmesh_oracle.inc")
+  target_include_directories(wz3-minmesh-multiply-tests PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_compile_options(wz3-minmesh-multiply-tests PRIVATE -frounding-math -ffp-contract=off)
+  target_link_libraries(wz3-minmesh-multiply-tests PRIVATE wz3_project)
   if(WZ3_SANITIZE)
     set_tests_properties(debris_bones PROPERTIES TIMEOUT 900)
   endif()
@@ -473,6 +483,7 @@ if(BUILD_TESTING)
   find_file(WZ3_TEST_FONT_FILE NAMES DejaVuSans.ttf PATHS /usr/share/fonts/truetype/dejavu
     DOC "Font used for native atlas tests (override with an explicit TTF path)")
   if(WZ3_TEST_FONT_FILE)
+    add_test(NAME minmesh_multiply COMMAND wz3-minmesh-multiply-tests "${CMAKE_CURRENT_SOURCE_DIR}/../data/debris/debris_9241_c.k" "${WZ3_TEST_FONT_FILE}")
     add_test(NAME minmesh_geometry COMMAND wz3-minmesh-tests "${CMAKE_CURRENT_SOURCE_DIR}/../data/debris/debris_9241_c.k" "${WZ3_TEST_FONT_FILE}")
     add_test(NAME minmesh_animation COMMAND wz3-minmesh-animation-tests "${CMAKE_CURRENT_SOURCE_DIR}/../data/debris/debris_9241_c.k" "${WZ3_TEST_FONT_FILE}")
     add_test(NAME minmesh_font3d COMMAND wz3-font3d-tests "${WZ3_TEST_FONT_FILE}" "${CMAKE_CURRENT_SOURCE_DIR}/../data/debris/debris_9241_c.k")
@@ -485,6 +496,7 @@ if(BUILD_TESTING)
     add_test(NAME theta_font_atlas COMMAND wz3-font-tests
       "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta/theta_final.k" "${WZ3_TEST_FONT_FILE}")
   else()
+    add_test(NAME minmesh_multiply COMMAND wz3-minmesh-multiply-tests)
     add_test(NAME minmesh_geometry COMMAND wz3-minmesh-tests)
     add_test(NAME minmesh_animation COMMAND wz3-minmesh-animation-tests)
     add_test(NAME minmesh_font3d COMMAND wz3-font3d-tests)

@@ -136,6 +136,7 @@ GenMinMesh* bone_chain(GenMinMesh&,std::span<const std::uint32_t>);
 GenMinMesh* bone_train(GenMinMesh&,std::shared_ptr<GenSpline>,float delta,unsigned mode,float offset);
 std::shared_ptr<GenSpline> bone_spline(const Project&,const Graph&,std::size_t);
 GenMinMesh* pipe_mesh(BlobSpline&,BlobPipe&,const GenMinMesh&,const GenMinMesh*,const GenMinMesh*,std::span<const std::uint32_t>);
+GenMinMesh* multiply_mesh(const GenMinMesh&,std::span<const std::uint32_t>);
 Mesh export_mesh(std::shared_ptr<GenMinMesh>);
 std::shared_ptr<const Mesh> evaluate_kernel(const Project&,const Graph&,std::size_t,const TextureOptions& = {});
 } // namespace wz3::legacy::minimal

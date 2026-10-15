@@ -127,11 +127,10 @@ void recipes(const char* path,const char* font) {
   }
   for(std::size_t i=0;i<p.operators.size();++i)if(g.nodes[i].reachable && p.operators[i].command==0x134) {
     const auto mesh=exploded(p.operators[i].parameters);for(float t:{0.f,.2f,1.f,10.f})validate_mesh(*pose_mesh(mesh,t));++recipes;
-    try{const auto real=evaluate_mesh(p,g,i,options);for(float t:{0.f,.2f,1.f})validate_mesh(*pose_mesh(real,t));++complete;}
-    catch(const std::runtime_error& e){if(!std::string(e.what()).ends_with(" is not ported"))throw;}
+    const auto real=evaluate_mesh(p,g,i,options);for(float t:{0.f,.2f,1.f})validate_mesh(*pose_mesh(real,t));++complete;
   }
   const auto first=evaluate_mesh(p,g,8157);check(mesh_has_animation(*first),"material link discarded Explode animation");
-  check(recipes>0 && complete>0,"Debris Explode coverage missing");
+  check(recipes==46 && complete==46,"Debris Explode coverage missing");
   std::cout<<recipes<<" saved Explode recipes and "<<complete<<" complete graphs pose; analytic motion, RNG, bitmap delays and archived shadow planes pass\n";
 }
 }
