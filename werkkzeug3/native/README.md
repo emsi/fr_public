@@ -197,8 +197,17 @@ routines. It also supports Add and conversion from the older indexed mesh
 format. MINMESH retains up to eight corners per polygon, both UV sets and
 two-vertex stitch records; normals/tangents and shadow adjacency come from its
 own kernels. Material links retain operator identities and pass numbers.
-Animated mesh initialization, Font3D, Multiply and Perlin
-displacement still fail explicitly.
+Animated mesh initialization, Font3D and Multiply still fail explicitly.
+
+MINMESH Perlin displacement runs its original vector-lattice interpolation with
+the archived permutation/gradient tables and float32 downward rounding. It
+preserves all/selected/unselected masks, both UV sets and vertex colors, and
+restores the caller's floating-point environment on success or failure.
+`minmesh_noise` compares 24 transform/selection combinations over 257 vertices
+and all eight complete saved graphs with the archived GenMesh Perlin routine;
+the older routine also passes independent bit-exact golden samples. Saved shadow
+topology matches the archived engine. Both displacement tests pass under
+Clang ASan/UBSan.
 
 MINMESH Pipe runs the archived constructor with borrowed source meshes and an
 owned result. Pipe splines retain their original corner positions and setbacks

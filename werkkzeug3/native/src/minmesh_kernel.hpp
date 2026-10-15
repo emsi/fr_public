@@ -129,6 +129,7 @@ GenMinMesh* MinMesh_ExtrudeNormal(GenMinMesh*,int,float);
 GenMinMesh* MinMesh_Bend2(GenMinMesh*,sF323,sF323,float,float);
 GenMinMesh* MinMesh_Triangulate(GenMinMesh*);
 GenMinMesh* MinMesh_Center(GenMinMesh*,int);
+GenMinMesh* MinMesh_Perlin(GenMinMesh*,int,sFSRT,sF323);
 GenMinMesh* explode(GenMinMesh&,const Texture*,std::span<const std::uint32_t>);
 GenMinMesh* bone_chain(GenMinMesh&,std::span<const std::uint32_t>);
 GenMinMesh* bone_train(GenMinMesh&,std::shared_ptr<GenSpline>,float delta,unsigned mode,float offset);

@@ -1,6 +1,7 @@
 // Distributed under the BSD license in werkkzeug3/LICENSE.txt.
 // sInitPerlin from _types.cpp and GenMesh::Perlin from genmesh.cpp.
 #include "mesh_kernel.hpp"
+#include "minmesh_kernel.hpp"
 #include "noise.hpp"
 #include <cfenv>
 
@@ -61,4 +62,7 @@ const NoiseData& noise_data() {static const NoiseData data;return data;}
 const std::array<std::uint8_t,512>& perlin_permutation() {return noise_data().permutation;}
 const std::array<std::array<float,2>,256>& perlin_gradients2() {return noise_data().gradient2;}
 #include "mesh_noise.inc"
+namespace minimal {
+#include "minmesh_noise.inc"
+}
 } // namespace wz3::legacy

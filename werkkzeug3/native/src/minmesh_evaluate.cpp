@@ -154,7 +154,7 @@ public:
         break;
       }
       case 0x112:case 0x113:case 0x114:case 0x115:case 0x120:case 0x121:
-      case 0x122:case 0x125:case 0x12a:case 0x131:case 0x132:
+      case 0x122:case 0x124:case 0x125:case 0x12a:case 0x131:case 0x132:
         mesh=std::make_shared<GenMinMesh>(*input());
         switch(op.command) {
         case 0x112:parameters(op,1);MinMesh_SelectAll(mesh.get(),integer(op,0,7));break;
@@ -167,6 +167,7 @@ public:
           MinMesh_TransformEx(mesh.get(),mask,srt(op,1));break;
         }
         case 0x122:parameters(op,2);MinMesh_ExtrudeNormal(mesh.get(),integer(op,0,2),real(op,1));break;
+        case 0x124:parameters(op,13);MinMesh_Perlin(mesh.get(),integer(op,0,2),srt(op,1),vector(op,10));break;
         case 0x125:parameters(op,8);require(real(op,6)>0,"MINMESH Bend requires positive length");MinMesh_Bend2(mesh.get(),vector(op,0),vector(op,3),real(op,6),real(op,7));break;
         case 0x12a:parameters(op,0);MinMesh_Triangulate(mesh.get());break;
         case 0x131:parameters(op,1);MinMesh_Center(mesh.get(),integer(op,0,7));break;

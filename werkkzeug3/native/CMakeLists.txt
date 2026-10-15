@@ -105,6 +105,11 @@ add_custom_command(
           "${CMAKE_CURRENT_BINARY_DIR}/generated/mesh_noise.inc"
   DEPENDS tools/mesh_kernel.py ../genmesh.cpp VERBATIM)
 target_sources(wz3_project PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated/mesh_kernel.inc" "${CMAKE_CURRENT_BINARY_DIR}/generated/mesh_noise.inc")
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/minmesh_noise.inc"
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/minmesh_noise.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../genminmesh.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/minmesh_noise.inc"
+  DEPENDS tools/minmesh_noise.py tools/particles_oracle.py ../genminmesh.cpp VERBATIM)
+target_sources(wz3_project PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated/minmesh_noise.inc")
 
 add_executable(wz3-frame src/frame_preview.cpp)
 target_link_libraries(wz3-frame PRIVATE wz3_project)
@@ -240,6 +245,11 @@ if(BUILD_TESTING)
   target_compile_options(wz3-pipe-tests PRIVATE -frounding-math -ffp-contract=off)
   target_link_libraries(wz3-pipe-tests PRIVATE wz3_project)
   add_test(NAME minmesh_pipe COMMAND wz3-pipe-tests "${CMAKE_CURRENT_SOURCE_DIR}/../data/debris/debris_9241_c.k")
+  add_executable(wz3-minmesh-noise-tests tests/minmesh_noise.cpp tests/minmesh_reference.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/minmesh_oracle.inc")
+  target_include_directories(wz3-minmesh-noise-tests PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_compile_options(wz3-minmesh-noise-tests PRIVATE -frounding-math -ffp-contract=off)
+  target_link_libraries(wz3-minmesh-noise-tests PRIVATE wz3_project)
+  add_test(NAME minmesh_noise COMMAND wz3-minmesh-noise-tests "${CMAKE_CURRENT_SOURCE_DIR}/../data/debris/debris_9241_c.k")
   if(WZ3_SANITIZE)
     set_tests_properties(debris_bones PROPERTIES TIMEOUT 900)
   endif()
