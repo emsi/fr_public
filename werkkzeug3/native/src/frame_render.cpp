@@ -103,6 +103,39 @@ constexpr const char* shadow_vertex=R"(#version 300 es
     // material11.vsh: finite vertex w=1; extruded direction w=0.
     gl_Position=view_projection*vec4(position.xyz+light_position*(position.w-1.0),position.w);
   })";
+constexpr const char* glare_vertex=R"(#version 300 es
+  out vec2 uv;
+  void main(){uv=vec2(float((gl_VertexID>>1)&1),float(gl_VertexID&1));gl_Position=vec4(uv.x*2.0-1.0,1.0-uv.y*2.0,0.0,1.0);}
+)";
+constexpr const char* glare_fragment=R"(#version 300 es
+  precision highp float;
+  uniform sampler2D input_image,original_image;
+  uniform int mode;
+  uniform vec2 input_scale,original_scale;
+  uniform vec3 taps[9];
+  uniform vec4 constants[3];
+  in vec2 uv;
+  out vec4 color;
+  vec4 sample_input(vec2 p){return texture(input_image,vec2(p.x,1.0-p.y));}
+  void main(){
+    vec2 p=uv*input_scale;
+    if(mode==0){
+      vec4 acc=constants[0];
+      for(int i=0;i<9;++i)acc=sample_input(p+taps[i].xy)*taps[i].z+acc;
+      color=clamp(acc,0.0,1.0);
+    }else if(mode==1){color=sample_input(p);}
+    else if(mode==2){
+      vec4 col=sample_input(p);col.rgb-=constants[0].rgb;
+      float gray=dot(col.rgb,vec3(constants[0].w));
+      color=vec4(gray)*constants[1].y+col*constants[1].x;
+    }else{
+      vec4 a=sample_input(p)*constants[0];
+      vec2 q=uv*original_scale;
+      vec4 b=texture(original_image,vec2(q.x,1.0-q.y))*constants[1];
+      color=(a-a*b*constants[2].x)+b;
+    }
+  }
+)";
 void clear(FrameClear c,bool stencil=false) {
   glDepthMask(GL_TRUE);glClearDepthf(1);glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
   glClearColor(((c.color>>16)&255)/255.0f,((c.color>>8)&255)/255.0f,(c.color&255)/255.0f,(c.color>>24)/255.0f);
@@ -115,6 +148,9 @@ struct FrameRenderer::Impl {
   struct Surface {GLuint color{},depth{},fbo{};unsigned width{},height{};};
   std::map<std::size_t,Surface> surfaces;
   Surface shared_depth,albedo;
+  std::array<Surface,3> glare_images;
+  std::array<Surface,2> glare_scratch;
+  unsigned capture_width{},capture_height{};
   std::map<std::size_t,GLuint> bitmaps;
   std::map<std::size_t,std::shared_ptr<const Texture>> supplied_bitmaps;
   std::map<std::size_t,std::size_t> bitmap_sizes;
@@ -151,6 +187,8 @@ struct FrameRenderer::Impl {
     for(const auto& [id,s]:surfaces) {static_cast<void>(id);destroy(s);}
     destroy(shared_depth);
     destroy(albedo);
+    for(const auto& s:glare_images)destroy(s);
+    for(const auto& s:glare_scratch)destroy(s);
     for(const auto& [id,t]:bitmaps) {static_cast<void>(id);glDeleteTextures(1,&t);}
     for(const auto& [source,p]:programs) {static_cast<void>(source);glDeleteProgram(p);}
     for(const auto& [id,g]:geometry) {static_cast<void>(id);glDeleteBuffers(1,&g.buffer);}
@@ -232,6 +270,52 @@ struct FrameRenderer::Impl {
     glBlitFramebuffer(0,from.height-target.height,target.width,from.height,
       0,albedo.height-target.height,target.width,albedo.height,GL_COLOR_BUFFER_BIT,GL_NEAREST);
     glBindFramebuffer(GL_FRAMEBUFFER,from.fbo);glEnable(GL_SCISSOR_TEST);
+  }
+  void glare_surface(Surface& s,unsigned width,unsigned height) {
+    if(s.width==width && s.height==height)return;
+    surface_bytes-=std::size_t(s.width)*s.height*4;destroy(s);s={};
+    const auto bytes=std::size_t(width)*height*4;require(bytes<=256u*1024*1024-surface_bytes,"Glare target budget exceeded");surface_bytes+=bytes;
+    s.width=width;s.height=height;glGenTextures(1,&s.color);glBindTexture(GL_TEXTURE_2D,s.color);
+    glTexStorage2D(GL_TEXTURE_2D,1,GL_RGBA8,width,height);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAX_LEVEL,0);
+    glGenFramebuffers(1,&s.fbo);glBindFramebuffer(GL_FRAMEBUFFER,s.fbo);glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,s.color,0);
+    require(glCheckFramebufferStatus(GL_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE,"incomplete Glare surface");++stats.surface_allocations;
+  }
+  void glare(const GlareEffect& effect,const FrameTarget& target) {
+    const auto passes=glare_passes(effect.parameters,target.width,target.height,capture_width,capture_height);
+    const auto& output=surfaces.at(target.surface);
+    glare_surface(glare_images[0],capture_width,capture_height);
+    glDisable(GL_SCISSOR_TEST);glBindFramebuffer(GL_FRAMEBUFFER,glare_images[0].fbo);clear({1,0xff000000});
+    glBindFramebuffer(GL_READ_FRAMEBUFFER,output.fbo);
+    glBlitFramebuffer(0,output.height-target.height,target.width,output.height,0,capture_height-target.height,target.width,capture_height,GL_COLOR_BUFFER_BIT,GL_NEAREST);
+    GLuint program;
+    if(const auto found=programs.find("glare");found!=programs.end())program=found->second;
+    else {
+      const auto vertex=gles::shader(GL_VERTEX_SHADER,glare_vertex),fragment=gles::shader(GL_FRAGMENT_SHADER,glare_fragment);
+      program=glCreateProgram();glAttachShader(program,vertex);glAttachShader(program,fragment);glLinkProgram(program);glDeleteShader(vertex);glDeleteShader(fragment);
+      GLint ok=0;glGetProgramiv(program,GL_LINK_STATUS,&ok);if(!ok){glDeleteProgram(program);throw std::runtime_error("Glare shader link failed");}
+      programs.emplace("glare",program);++stats.program_compilations;
+    }
+    glUseProgram(program);glBindVertexArray(vao);
+    glDisable(GL_DEPTH_TEST);glDepthMask(GL_FALSE);glDisable(GL_STENCIL_TEST);glDisable(GL_BLEND);glDisable(GL_CULL_FACE);glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
+    glUniform1i(glGetUniformLocation(program,"input_image"),0);glUniform1i(glGetUniformLocation(program,"original_image"),1);
+    for(unsigned i=0;i<2;++i) {
+      glBindSampler(i,samplers[i]);glSamplerParameteri(samplers[i],GL_TEXTURE_MIN_FILTER,GL_LINEAR);glSamplerParameteri(samplers[i],GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+      glSamplerParameteri(samplers[i],GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);glSamplerParameteri(samplers[i],GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+    }
+    for(const auto& pass:passes) {
+      if(pass.target!=3)glare_surface(glare_scratch[pass.target-1],pass.width,pass.height);
+      const auto& dest=pass.target==3 ? output : glare_scratch[pass.target-1];
+      glBindFramebuffer(GL_FRAMEBUFFER,dest.fbo);glViewport(0,dest.height-pass.height,pass.width,pass.height);
+      glUniform1i(glGetUniformLocation(program,"mode"),pass.mode);glUniform2fv(glGetUniformLocation(program,"input_scale"),1,pass.uv.data());
+      glUniform2fv(glGetUniformLocation(program,"original_scale"),1,pass.original_uv.data());glUniform3fv(glGetUniformLocation(program,"taps"),9,pass.taps[0].data());
+      glUniform4fv(glGetUniformLocation(program,"constants"),3,pass.constants[0].data());
+      glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,glare_images[pass.source].color);
+      glActiveTexture(GL_TEXTURE1);glBindTexture(GL_TEXTURE_2D,glare_images[0].color);
+      glDrawArrays(GL_TRIANGLE_STRIP,0,4);
+      if(pass.target!=3)std::swap(glare_images[pass.target],glare_scratch[pass.target-1]);
+      if(pass.mode==GlarePass::copy)last_model=scene_identity(); // GENOVER_TEX1 is a Material11 draw.
+    }
+    glEnable(GL_SCISSOR_TEST);glScissor(0,output.height-target.height,target.width,target.height);
   }
   GLuint bitmap(std::size_t id,std::shared_ptr<const Texture> supplied={}) {
     const auto found=bitmaps.find(id);
@@ -466,6 +550,7 @@ struct FrameRenderer::Impl {
     glDrawArrays(GL_TRIANGLES,mesh.first,mesh.count);
   }
   void effect(const SceneEffectDraw& draw,const SceneMatrix& projection,const FrameTarget& target,const SceneCamera& camera) {
+    if(draw.glare){glare(*draw.glare,target);return;}
     if(draw.vertices.empty() && !draw.ribbon) {if(draw.material_on_empty)last_model=draw.material_model;return;}
     std::optional<SceneEffectDraw> resolved;const auto* geometry=&draw;
     if(draw.ribbon) {
@@ -631,6 +716,8 @@ void FrameRenderer::reset_targets() {
   }
   if(s.shared_depth.fbo) {glBindFramebuffer(GL_FRAMEBUFFER,s.shared_depth.fbo);clear({2,0},true);}
   if(s.albedo.fbo) {glBindFramebuffer(GL_FRAMEBUFFER,s.albedo.fbo);clear({1,0xff000000});}
+  for(const auto& image:s.glare_images)if(image.fbo){glBindFramebuffer(GL_FRAMEBUFFER,image.fbo);clear({1,0xff000000});}
+  for(const auto& image:s.glare_scratch)if(image.fbo){glBindFramebuffer(GL_FRAMEBUFFER,image.fbo);clear({1,0xff000000});}
   glFinish();require(glGetError()==GL_NO_ERROR,"frame target reset failed");
 }
 std::vector<std::uint8_t> FrameRenderer::render(const DemoFrame& frame,bool diagnostic) {
@@ -662,7 +749,7 @@ void FrameRenderer::draw(const DemoFrame& frame,bool diagnostic) {
     try {
       if(const auto* q=std::get_if<FrameQuad>(&c.draw))s.quad(*q,c.target);
       else if(const auto* cl=std::get_if<FrameClear>(&c.draw))clear_target(*cl);
-      else {const auto& scene=std::get<SceneFrame>(c.draw);clear_target({scene.viewport_flags&3,scene.background});if(diagnostic) {if(!scene.instances.empty())draw_scene_geometry(scene,c.target.width,c.target.height);s.effects(scene,c.target);}else s.scene_materials(scene,c.target);}
+      else {const auto& scene=std::get<SceneFrame>(c.draw);s.capture_width=std::max(s.capture_width,c.target.width);s.capture_height=std::max(s.capture_height,c.target.height);clear_target({scene.viewport_flags&3,scene.background});if(diagnostic) {if(!scene.instances.empty())draw_scene_geometry(scene,c.target.width,c.target.height);s.effects(scene,c.target);}else s.scene_materials(scene,c.target);}
       require(glGetError()==GL_NO_ERROR,"frame draw produced an OpenGL error");
     }catch(const std::exception& e) {throw std::runtime_error("operator "+std::to_string(c.operator_id)+": "+e.what());}
   }

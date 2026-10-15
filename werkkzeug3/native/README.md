@@ -34,12 +34,12 @@ still names `debris.v2m`.
 
 **Debris playback is incomplete.** Its opening frame now prepares on the CPU: the
 main viewport contains 76 mesh instances, two lights and 26 ChainLine cables.
-Continuous CPU preparation in 16 ms steps reaches 9,808 ms (beat 32.0394), then
-stops at the unported Glare effect, operator 10464. With an explicit font,
-the native player renders the opening city at 1280x640: 501 consecutive frames
-through 8 seconds pass in both offline and audio-callback-paced playback, with
-byte-identical endpoint captures. Continuing playback reaches Glare at 9,807 ms
-on the audio-sample clock. DejaVu Sans captures show textured buildings,
+With an explicit font, the native player renders the opening city at 1280x640:
+751 consecutive frames through 12 seconds pass in both offline and
+audio-callback-paced playback, with byte-identical endpoint captures.
+Continuing playback stops at 13,087 ms while constructing a texture for material
+34594: its TransformMul recipe includes a zero-scale copy that the original
+skips, but the native evaluator currently rejects. DejaVu Sans captures show textured buildings,
 lighting, shadows and cables. The playback test uses dummy audio; physical
 speaker output and synchronization remain unverified. This is progress through
 the saved editor project, not a comparison against the released executable's
@@ -47,12 +47,12 @@ images. To play the supported opening from the repository root:
 
 ```sh
 build/native/wz3-player werkkzeug3/data/debris/debris_9241_c.k \
-  --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf --duration 8
+  --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf --duration 12
 ```
 
 DejaVu Sans substitutes for the project's Arial font; its appearance is not an
 original-output match. DXT textures require S3TC support from the GLES driver.
-Remaining MINMESH/scene operators and Water/Glare/Color Correction effects
+Remaining MINMESH/scene operators and Water/Color Correction effects
 also remain to be ported.
 The player synthesizes its V2 soundtrack into stereo PCM before playback, using
 the same SDL callback clock as Ogg music. The existing Theta renderer and released-clock profile
@@ -66,9 +66,27 @@ them between frames and reports missing S3TC support explicitly. Tests compare
 882 synthetic uploads and all five reachable Debris compressed textures against
 the archived `UpdateTexture` handler (using the same archived compressor).
 Separate GPU tests compare every sampled channel, including alpha and 1x1/2x2
-mips, with an independent block decoder. The 65-test Release suite, including
-21 graphics tests, passes on the Radeon RX 7900 XT; DXT CPU checks also pass
+mips, with an independent block decoder. The 67-test Release suite, including
+22 graphics tests, passes on the Radeon RX 7900 XT; DXT CPU checks also pass
 under Clang ASan/UBSan.
+
+Glare now executes as an ordered scene effect. It captures the current viewport,
+downsamples to 512x256 and/or 256x128, subtracts a color threshold, mixes gray
+and color, applies two optional separable nine-tap blurs, then combines the
+result with the original image. It preserves the archived alpha accumulator,
+amplification order, linear/clamped sampling, RGBA8 writes between stages and
+capture storage that grows without shrinking. Separate read/write textures
+avoid GPU feedback while preserving the original in-place capture sequence.
+
+`glare_passes` records the archived handler and compares 480 parameter/size
+combinations and all 16 reachable Debris recipes. It also checks animated
+parameters and static pass ordering with scene pass adjustments; these checks
+pass under Clang ASan/UBSan. `gpu_glare` compares all channels against an
+independent scalar pixel calculation, checks cropped viewports, ordered effects,
+resizing, repeated frames and loading resets. The measured per-channel maximum
+error in the standalone cases is 2/255 on the Radeon RX 7900 XT. This verifies
+the native pipeline's arithmetic and state handling, not a comparison with the
+original driver's partial-precision shaders or the released demo's images.
 
 The native MINMESH core uses the archived grid/cube/sphere, selection, material
 cluster, transform, bend, extrusion along normals, triangulation and centering
