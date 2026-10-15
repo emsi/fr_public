@@ -1,5 +1,6 @@
 // Distributed under the BSD license in werkkzeug3/LICENSE.txt.
 #include "wz3/frame.hpp"
+#include "minmesh_kernel.hpp"
 #include "wz3/texture.hpp"
 #include "wz3/print.hpp"
 #include "wz3/chainline.hpp"
@@ -274,6 +275,7 @@ struct FrameRenderer::Impl {
     std::size_t bytes{},reserved{};
     std::vector<std::pair<GLint,GLsizei>> batches;
     std::vector<std::size_t> instance_limits;
+    std::vector<std::uint32_t> colors;
   };
   struct MeshVertex {SceneEffectVertex vertex;Vec3 normal,tangent;};
   struct MeshDraw {GLuint buffer;GLint first;GLsizei count;SceneMatrix model;bool instanced{};GLuint instance_buffer{};GLsizei instance_count{};bool water_layout{};GLuint index_buffer{};};
@@ -299,6 +301,7 @@ struct FrameRenderer::Impl {
   std::size_t surface_bytes{},bitmap_bytes{};
   FrameRenderer::Stats stats;
   SceneDrawCache draw_cache;
+  MeshPoseCache pose_cache;
   Impl(const Project& p,const Graph& g,const TextureOptions& options,FrameRenderer::Context mode):project(p),graph(g),texture_options(rendered_texture_options(p,g,options)) {
     if(mode==FrameRenderer::Context::Headless)context=std::make_unique<gles::Context>(1,1);
     require(glGetString(GL_VERSION)!=nullptr,"FrameRenderer needs a current GLES3 context");
@@ -800,23 +803,29 @@ struct FrameRenderer::Impl {
   const MeshGeometry& mesh_geometry(const std::shared_ptr<const Mesh>& mesh,const std::vector<SceneMeshBatch>& batches) {
     const auto key=mesh->animation_source ? mesh->animation_source.get() : mesh.get();auto found=geometry.find(key);
     if(found!=geometry.end() && found->second.owner==mesh)return found->second;
-    MeshGeometry data;data.owner=mesh;std::vector<MeshVertex> triangles;const auto normals=mesh_normals(*mesh);
+    MeshGeometry data;data.owner=mesh;std::vector<MeshVertex> triangles;
+    // MINMESH already retains the correct posed per-vertex normals. Avoid
+    // materializing another copy for every face corner.
+    const auto normals=mesh->min_kernel ? MeshNormals{} : mesh_normals(*mesh);
     std::size_t count=0;for(const auto& batch:batches)for(auto f:batch.faces)count+=(mesh->faces[f].count-2)*3;
     const auto previous=found==geometry.end() ? 0 : found->second.bytes;
     const auto bytes=count*sizeof(MeshVertex);require(bytes<=512u*1024*1024-(geometry_bytes-previous),"scene GPU geometry budget exceeded");triangles.reserve(count);data.bytes=bytes;
-    std::vector<std::uint32_t> colors;colors.reserve(mesh->vertices.size());
-    for(const auto& v:mesh->vertices)colors.push_back(mesh_vertex_color(v.color));
+    if(found!=geometry.end()){data.colors=std::move(found->second.colors);data.instance_limits=found->second.instance_limits;}
+    else {data.colors.reserve(mesh->vertices.size());for(const auto& v:mesh->vertices)data.colors.push_back(mesh_vertex_color(v.color));}
     for(const auto& batch:batches) {
       const auto first=GLint(triangles.size());
       for(auto f:batch.faces) {
         const auto& face=mesh->faces[f];
         for(unsigned c=1;c+1<face.count;++c)for(unsigned corner:{0u,c,c+1}) {
           const auto& v=mesh->vertices[face.vertices[corner]];
-          triangles.push_back({{v.position,{v.uv[0],v.uv[1]},colors[face.vertices[corner]]},normals[f][corner],v.tangent});
+          Vec3 normal;
+          if(mesh->min_kernel){const auto& n=mesh->min_kernel->Vertices[face.vertices[corner]].Normal;normal={n.x,n.y,n.z};}
+          else normal=normals[f][corner];
+          triangles.push_back({{v.position,{v.uv[0],v.uv[1]},data.colors[face.vertices[corner]]},normal,v.tangent});
         }
       }
       data.batches.emplace_back(first,GLsizei(triangles.size()-first));
-      data.instance_limits.push_back(scene_instance_limit(*mesh,batch));
+      if(found==geometry.end())data.instance_limits.push_back(scene_instance_limit(*mesh,batch));
     }
     if(found==geometry.end()){glGenBuffers(1,&data.buffer);++stats.mesh_uploads;}
     else {data.buffer=found->second.buffer;++stats.mesh_updates;}
@@ -849,7 +858,11 @@ struct FrameRenderer::Impl {
     const auto key=mesh->animation_source ? mesh->animation_source.get() : mesh.get();
     auto mask=shadow_face_mask(*mesh,scene.materials);auto found=shadows.find(key);
     if(found!=shadows.end() && found->second.owner==mesh && found->second.mask==mask)return found->second;
-    ShadowGeometry data;data.owner=mesh;data.mask=std::move(mask);data.mesh=prepare_shadow_mesh(*mesh,data.mask);
+    ShadowGeometry data;data.owner=mesh;data.mask=std::move(mask);
+    const auto previous_vertices=found==shadows.end() ? 0 : found->second.mesh.vertices.size();
+    if(found!=shadows.end() && mesh->animation_source && mesh->min_kernel && found->second.mask==data.mask) {
+      data.mesh=std::move(found->second.mesh);update_shadow_mesh(data.mesh,*mesh);
+    }else data.mesh=prepare_shadow_mesh(*mesh,data.mask);
     const auto previous=found==shadows.end() ? 0 : found->second.bytes;
     data.bytes=data.mask.size()+data.mesh.vertices.size()*(sizeof(Vec3)+2*sizeof(std::array<float,4>))+data.mesh.planes.size()*sizeof(ShadowPlane)+data.mesh.edges.size()*sizeof(ShadowEdge)+(data.mesh.triangles.size()+data.mesh.triangle_planes.size())*sizeof(std::uint32_t);
     require(data.bytes<=512u*1024*1024-(geometry_bytes-previous),"scene shadow geometry budget exceeded");
@@ -859,7 +872,7 @@ struct FrameRenderer::Impl {
     else {data.buffer=found->second.buffer;++stats.shadow_updates;}
     glBindBuffer(GL_ARRAY_BUFFER,data.buffer);
     const auto bytes=vertices.size()*sizeof(vertices[0]);
-    if(found!=shadows.end() && vertices.size()==found->second.mesh.vertices.size()*2)glBufferSubData(GL_ARRAY_BUFFER,0,bytes,vertices.data());
+    if(found!=shadows.end() && vertices.size()==previous_vertices*2)glBufferSubData(GL_ARRAY_BUFFER,0,bytes,vertices.data());
     else glBufferData(GL_ARRAY_BUFFER,bytes,vertices.data(),mesh->animation_source ? GL_DYNAMIC_DRAW : GL_STATIC_DRAW);
     geometry_bytes=geometry_bytes-previous+data.bytes;
     if(found!=shadows.end()){found->second=std::move(data);return found->second;}
@@ -897,7 +910,7 @@ struct FrameRenderer::Impl {
       require(std::isfinite(instance.time),"nonfinite mesh animation time");
       if(!animated)animated=source;
       const auto key=std::make_pair(instance.mesh.get(),instance.time);auto found=poses.find(key);
-      if(found==poses.end())found=poses.emplace(key,pose_mesh(instance.mesh,instance.time)).first;
+      if(found==poses.end())found=poses.emplace(key,pose_cache.pose(instance.mesh,instance.time)).first;
       animated->instances[i].mesh=found->second;
     }
     const auto& scene=animated ? *animated : source;

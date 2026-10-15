@@ -19,7 +19,10 @@ std::vector<SceneMeshBatch> scene_mesh_batches(const Mesh& mesh) {
   }
   return result;
 }
-const std::vector<SceneMeshBatch>& SceneDrawCache::batches(const std::shared_ptr<const Mesh>& mesh) {
+const std::vector<SceneMeshBatch>& SceneDrawCache::batches(const std::shared_ptr<const Mesh>& posed) {
+  // Bone posing preserves face/material topology. Retain the immutable source,
+  // never the per-frame pose; animated culling uses an unbounded box anyway.
+  const auto& mesh=posed->animation_source ? posed->animation_source : posed;
   if(const auto found=entries.find(mesh.get());found!=entries.end())return found->second.batches;
   auto value=scene_mesh_batches(*mesh);std::size_t size=value.size()*sizeof(SceneMeshBatch);
   for(const auto& batch:value)size+=batch.faces.size()*sizeof(std::uint32_t);
@@ -118,7 +121,7 @@ SceneDrawList scene_draw_jobs(const SceneFrame& scene,unsigned width,unsigned he
   for(std::size_t i=scene.instances.size();i--;) {
     const auto& instance=scene.instances[i];if(!instance.mesh)throw std::runtime_error("missing scene geometry");
     auto found=result.meshes.find(instance.mesh.get());
-    if(found==result.meshes.end())found=result.meshes.emplace(instance.mesh.get(),cache && !instance.mesh->animation_source ? cache->batches(instance.mesh) : scene_mesh_batches(*instance.mesh)).first;
+    if(found==result.meshes.end())found=result.meshes.emplace(instance.mesh.get(),cache ? cache->batches(instance.mesh) : scene_mesh_batches(*instance.mesh)).first;
     std::optional<std::size_t> first_shadow;
     Bounds whole{};if(!found->second.empty())whole=found->second[0].bounds;
     for(std::size_t b=0;b<found->second.size();++b) {

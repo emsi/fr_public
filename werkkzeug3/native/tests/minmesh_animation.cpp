@@ -3,6 +3,7 @@
 #include "minmesh_reference.hpp"
 #include "wz3/texture.hpp"
 #include "wz3/scene_draw.hpp"
+#include "wz3/shadow.hpp"
 #include <iostream>
 namespace {
 using namespace wz3;
@@ -29,8 +30,19 @@ void topology_and_motion() {
   for(int i=0;i<core.Vertices.Count;++i){const auto& v=core.Vertices[i];check(v.BoneCount==1 && v.Matrix[0]==i/24 && v.Weights[0]==1,"Explode piece binding");}
   for(int i=0;i<core.Faces.Count;++i)for(unsigned c=0;c<core.Faces[i].Count;++c)check(core.Faces[i].Adjacent[c]>=0,"Explode piece is not closed");
   const auto original=cube();original->CalcNormals();
+  const std::vector<std::uint8_t> mask(core.Faces.Count,1);auto shadow=prepare_shadow_mesh(*pose_mesh(mesh,0),mask);
+  SceneDrawCache draw_cache;const auto* batches=&draw_cache.batches(mesh);MeshPoseCache pose_cache;std::weak_ptr<const Mesh> previous;
+
   for(float time:{-1.f,0.f,.49f,.5f,.75f,1.f,2.f}) {
-    const auto pose=pose_mesh(mesh,time);check(pose->animation_source==mesh,"posed mesh lost cache identity");
+    if(auto retained=previous.lock())check(retained.use_count()==2,"draw cache retained a transient pose");
+    const auto pose=pose_cache.pose(mesh,time);previous=pose;check(pose->animation_source==mesh,"posed mesh lost cache identity");
+    check(&draw_cache.batches(pose)==batches,"pose rebuilt immutable draw batches");
+    SceneFrame scene;scene.instances={{0,pose}};const auto fresh_jobs=scene_draw_jobs(scene,128,96),cached_jobs=scene_draw_jobs(scene,128,96,&draw_cache);
+    check(fresh_jobs.jobs.size()==cached_jobs.jobs.size(),"cached pose changed culling/job count");
+    for(std::size_t i=0;i<fresh_jobs.jobs.size();++i){const auto& a=fresh_jobs.jobs[i];const auto& b=cached_jobs.jobs[i];check(a.sort_key==b.sort_key && a.batch==b.batch && a.material_pass==b.material_pass && a.shadow_zfail==b.shadow_zfail,"cached pose changed draw order");}
+    update_shadow_mesh(shadow,*pose);const auto rebuilt=prepare_shadow_mesh(*pose,mask);
+    check(shadow.vertices==rebuilt.vertices && shadow.planes==rebuilt.planes && shadow.triangles==rebuilt.triangles && shadow.triangle_planes==rebuilt.triangle_planes && shadow.edges.size()==rebuilt.edges.size(),"shadow pose update differs from full preparation");
+    for(std::size_t i=0;i<shadow.edges.size();++i)check(shadow.edges[i].vertices==rebuilt.edges[i].vertices && shadow.edges[i].planes==rebuilt.edges[i].planes,"cached shadow changed welded edges");
     for(int piece=0;piece<6;++piece) {
       const auto n=vec(original->Faces[piece].Normal);const float t=std::max(0.f,time-.5f);
       Vec3 displacement{n[0]*3.5f*t,n[1]*3.5f*t-4*t*t,n[2]*3.5f*t};

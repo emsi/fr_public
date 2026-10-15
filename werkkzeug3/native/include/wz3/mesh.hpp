@@ -45,6 +45,13 @@ struct Bounds { Vec3 min{}, max{}; };
 std::shared_ptr<const Mesh> evaluate_mesh(const Project&, const Graph&, std::size_t id,const TextureOptions& = {});
 bool mesh_has_animation(const Mesh&);
 std::shared_ptr<const Mesh> pose_mesh(const std::shared_ptr<const Mesh>&,float time);
+// Retain validated immutable topology and shared skin weights across frames.
+class MeshPoseCache {
+  struct Impl;std::unique_ptr<Impl> impl;
+public:
+  MeshPoseCache();~MeshPoseCache();
+  std::shared_ptr<const Mesh> pose(const std::shared_ptr<const Mesh>&,float time);
+};
 Bounds mesh_bounds(const Mesh&);
 void validate_mesh(const Mesh&);
 std::size_t mesh_storage_bytes(const Mesh&);

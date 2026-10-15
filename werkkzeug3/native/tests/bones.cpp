@@ -7,8 +7,8 @@
 namespace {
 using namespace wz3;namespace mm=legacy::minimal;
 template<class F> void rejects(F action){bool caught=false;try{action();}catch(const std::runtime_error&){caught=true;}check(caught,"invalid bone input accepted");}
-void compare(const std::shared_ptr<const Mesh>& mesh,float time,bool shadows=false) {
-  const auto actual=pose_mesh(mesh,time),expected=bone_reference_pose(mesh,time);
+void compare(const std::shared_ptr<const Mesh>& mesh,float time,bool shadows=false,MeshPoseCache* cache=nullptr) {
+  const auto actual=cache ? cache->pose(mesh,time) : pose_mesh(mesh,time),expected=bone_reference_pose(mesh,time);
   check(actual->animation_source==mesh,"weighted pose lost static cache identity");
   for(unsigned i=0;i<actual->vertices.size();++i) {
     const auto& a=actual->min_kernel->Vertices[i];const auto& b=expected->min_kernel->Vertices[i];
@@ -67,11 +67,11 @@ void modes() {
 void poses() {
   unsigned cases=0;
   for(unsigned mode=0;mode<8;++mode) {
-    BoneFixture x;const auto id=x.train(mode);auto mesh=evaluate_mesh(x.p,x.g,id);
-    for(float time:{-1.f,0.f,.001f,.2f,.5f,.9f,1.f,1.7f}){compare(mesh,time,true);++cases;}
+    BoneFixture x;const auto id=x.train(mode);auto mesh=evaluate_mesh(x.p,x.g,id);MeshPoseCache cache;
+    for(float time:{-1.f,0.f,.001f,.2f,.5f,.9f,1.f,1.7f}){compare(mesh,time,true,&cache);++cases;}
     const auto first=pose_mesh(mesh,.2f),again=pose_mesh(pose_mesh(mesh,.9f),.2f);
     for(unsigned i=0;i<mesh->vertices.size();++i)check(first->vertices[i].position==again->vertices[i].position,"weighted poses accumulated");
-    std::fesetround(FE_DOWNWARD);compare(mesh,.2f);check(std::fegetround()==FE_DOWNWARD,"pose leaked rounding mode");std::fesetround(FE_TONEAREST);
+    std::fesetround(FE_DOWNWARD);compare(mesh,.2f,false,&cache);check(std::fegetround()==FE_DOWNWARD,"pose leaked rounding mode");std::fesetround(FE_TONEAREST);
   }
   // Probe sorted/pruned influence combinations and nonuniform matrices, with
   // deliberately different normals/tangents so position-only skinning fails.
@@ -81,6 +81,18 @@ void poses() {
   auto mesh=std::make_shared<Mesh>(mm::export_mesh(core));for(auto& v:core->Vertices.storage){v.Normal.Init(.3f,.7f,-.2f);v.Tangent.Init(-.9f,.1f,.6f);}
   compare(mesh,.5f);check(core->Vertices[0].Normal.x==.3f,"pose changed source normals");
   std::cout<<cases<<" spline timing poses and 129 weighted vertices match archived skinning; dynamic shadow planes agree\n";
+}
+void retained_poses() {
+  BoneFixture x;const auto id=x.train();const auto mesh=evaluate_mesh(x.p,x.g,id);MeshPoseCache cache;
+  std::vector<std::shared_ptr<const Mesh>> retained;
+  for(float time:{.1f,.2f,.3f,.4f,.5f})retained.push_back(cache.pose(mesh,time));
+  for(unsigned i=0;i<retained.size();++i) {
+    const auto expected=bone_reference_pose(mesh,(i+1)*.1f);
+    for(unsigned v=0;v<mesh->vertices.size();++v)check(retained[i]->vertices[v].position==expected->vertices[v].position,"pose pool mutated a retained frame");
+  }
+  auto pose=cache.pose(mesh,.7f);auto core=pose->min_kernel;const auto position=core->Vertices[0].Pos;pose.reset();
+  for(float time:{.8f,.9f,.2f})cache.pose(mesh,time);
+  check(core->Vertices[0].Pos.x==position.x && core->Vertices[0].Pos.y==position.y && core->Vertices[0].Pos.z==position.z,"pose pool mutated a retained MINMESH core");
 }
 void debris(const char* path) {
   const auto p=read_project(path);const auto g=connect(p);unsigned chains=0,trains=0;
@@ -95,4 +107,4 @@ void debris(const char* path) {
   std::cout<<chains<<" saved BoneChains and "<<trains<<" complete BoneTrain graphs match archived skinning\n";
 }
 }
-int main(int argc,char** argv){try{binding();modes();poses();if(argc>1)debris(argv[1]);}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(int argc,char** argv){try{binding();modes();poses();retained_poses();if(argc>1)debris(argv[1]);}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

@@ -112,6 +112,18 @@ Water against ordinary triangle meshes with independently baked reflection UVs,
 and checks direct UVs, packed colors, animation, preload discovery and reset.
 Water CPU/GPU tests and spatial spline tests pass under Clang ASan/UBSan.
 
+Animated meshes now retain their immutable draw batches, packed vertex colors
+and instance limits. MINMESH draws read the existing posed vertex normals;
+shadow updates retain the welded edges and triangles and refresh only positions
+and first-triangle planes. `MeshPoseCache` validates each immutable source once,
+groups identical sorted/pruned skin weights, and evaluates each blend once per
+pose. It bounds weight data and reusable pose storage to 128 MiB each, with at
+most three retained poses per source. A pose or its MINMESH core cannot be reused
+while any caller retains it. Changed positions, normals and tangents are still
+checked for finite values on every update. Cached weighted poses match the
+archived SSE instructions, and retained-pose/core and rebuilt-shadow comparisons
+pass alongside the full release suite and five focused Clang ASan/UBSan checks.
+
 The renderer retains up to 512 MiB of uploaded bitmap mip data. The old 256 MiB
 limit was reached at 333.071 seconds when the later city sequence requested
 material 5628. With the larger bounded cache, the uninterrupted run captures

@@ -108,6 +108,19 @@ ShadowMesh prepare_shadow_mesh(const Mesh& mesh,std::span<const std::uint8_t> ma
   }
   return out;
 }
+void update_shadow_mesh(ShadowMesh& out,const Mesh& mesh) {
+  require(mesh.animation_source && mesh.min_kernel,"shadow update requires a MINMESH pose");
+  if(out.planes.size()==1 && out.vertices.empty())return;
+  require(out.vertices.size()==mesh.vertices.size() && out.triangles.size()==out.triangle_planes.size()*3,"shadow pose topology mismatch");
+  for(std::size_t i=0;i<mesh.vertices.size();++i)out.vertices[i]=mesh.vertices[i].position;
+  std::uint32_t previous=0;
+  for(std::size_t i=0;i<out.triangle_planes.size();++i) {
+    const auto face=out.triangle_planes[i];if(face==previous)continue;previous=face;
+    // PrepareJob emits each polygon's triangle fan in order. UpdatePlanes
+    // uses its first triangle, without normalization, retaining welded edges.
+    out.planes.at(face)=plane(out.vertices.at(out.triangles[i*3]/2),out.vertices.at(out.triangles[i*3+1]/2),out.vertices.at(out.triangles[i*3+2]/2));
+  }
+}
 ShadowIndices shadow_indices(const ShadowMesh& mesh,const Vec3& light) {
   for(auto c:light)require(std::isfinite(c),"nonfinite shadow light position");
   std::vector<bool> front;front.reserve(mesh.planes.size());
