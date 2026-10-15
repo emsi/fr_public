@@ -36,8 +36,8 @@ still names `debris.v2m`.
 main viewport contains 76 mesh instances, two lights and 26 ChainLine cables.
 Continuous CPU preparation in 16 ms steps reaches 9,808 ms (beat 32.0394), then
 stops at the unported Glare effect, operator 10464. Full rendering now enters
-the Material 2.0 pipeline, then stops at unported Range texture operator 47104
-in the dependencies of material 41956 in the first viewport.
+the Material 2.0 pipeline, then reaches the 256 MiB intermediate texture-cache
+limit in the dependencies of material 41956 in the first viewport.
 Remaining MINMESH/scene operators and Water/Glare/Color Correction effects
 also remain to be ported.
 The player synthesizes its V2 soundtrack into stereo PCM before playback, using
@@ -201,6 +201,16 @@ resolutions; 324 synthetic combinations cover non-square images, modes, seeds,
 negative falloff and rounding. The compact intro executable's scalar Perlin
 loop differs in coordinate calculation and rounding and is a separate release
 compatibility profile, not selected for these saved editor documents.
+
+Range, ColorBalance, Distort and Sharpen now use the original channel arithmetic,
+lookup tables, displacement coordinates and unsharp-mask sequence. The old
+GlowRect opcode uses the same saved handler as GlowRect. `bitmap_extra_filters`
+compares 587 synthetic cases and all 57 reachable Debris parameter sets against
+extracted handlers and SIMD equivalents of their MMX primitives. The Distort and
+Sharpen references use the separately tested native sampler/blur primitives;
+the real parameter sets use controlled inputs, not complete Debris texture graphs.
+Distort retains its displacement input's dimensions, format and font metadata,
+including the original equal-pixel-count behavior for differently shaped inputs.
 
 The native `wz3-v2m` tool reads compact music modules, reconstructs their MIDI
 event stream/sample positions and optionally renders stereo float WAV without

@@ -110,6 +110,18 @@ Pixel mask_pixel(const Pixel& mask,const Pixel& a,const Pixel& b,unsigned mode) 
   return out;
 }
 
+Pixel range_pixel(const Pixel& source,const Pixel& low,const Pixel& high,unsigned mode) {
+  if(mode>=6)throw std::runtime_error("invalid Range mode");
+  auto value=source;if(mode&1)value=color_pixel(value,{},3);if(mode&2)value=color_pixel(value,{},4);
+  Pixel out;
+  for(unsigned c=0;c<4;++c) {
+    const auto difference=saturate(signed_lane(high[c])-signed_lane(low[c]));
+    const auto scaled=multiply(value[c],difference);
+    out[c]=std::max(0,signed_lane(saturate(signed_lane(scaled)+signed_lane(low[c]))));
+  }
+  return out;
+}
+
 void draw_dots(Texture& texture, std::uint32_t color0, std::uint32_t color1,
                std::uint32_t density, std::uint32_t seed) {
   if (texture.pixels.empty() || density > 4096) throw std::runtime_error("invalid Dots density/texture");

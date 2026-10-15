@@ -35,6 +35,7 @@ Pixel fade64(const Pixel& a, const Pixel& b, std::int32_t fade);
 Pixel merge_pixel(const Pixel& base, const Pixel& source, unsigned mode);
 Pixel color_pixel(const Pixel& base, const Pixel& color, unsigned mode);
 Pixel mask_pixel(const Pixel& mask,const Pixel& a,const Pixel& b,unsigned mode);
+Pixel range_pixel(const Pixel&,const Pixel& low,const Pixel& high,unsigned mode);
 void draw_dots(Texture&, std::uint32_t color0, std::uint32_t color1, std::uint32_t density, std::uint32_t seed);
 // Filter destinations/scratch are separately allocated, power-of-two textures.
 Pixel sample_bitmap(const Texture&, std::int32_t u, std::int32_t v, unsigned border);
@@ -48,6 +49,9 @@ void bump_bitmap(Texture&, const Texture* normals, std::span<const std::uint32_t
 Pixel add_scale64(const Pixel& base,const Pixel& color,std::int32_t fade);
 // Saved editor-project Bitmap_Perlin (!sINTRO), including fixed-point rows.
 void perlin_bitmap(Texture&,std::span<const std::uint32_t> parameters);
+void balance_bitmap(Texture&,std::span<const std::uint32_t> parameters);
+void distort_bitmap(const Texture& image,const Texture& displacement,Texture& destination,float amount,unsigned border);
+void sharpen_bitmap(Texture& blurred,const Texture& original,float amplitude);
 void draw_cached_text(Texture&, std::span<const std::uint8_t> blob, std::uint32_t color, unsigned flags,
                       float inner_spacing = 0, std::string_view family = {});
 void generate_font_atlas(Texture&, const FontLayout&, const std::filesystem::path& font_file);

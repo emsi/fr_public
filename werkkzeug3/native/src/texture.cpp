@@ -118,13 +118,26 @@ public:
       transform_bitmap(*source, *texture, number(op, 0), number(op, 1), number(op, 2),
                        number(op, 3), number(op, 4), op.parameters[5]);
       cache_[id] = std::move(texture);
-    } else if (op.command == 0x29 || op.command == 0x2b || op.command == 0x2e) {
+    } else if(op.command==0x2d) {
+      require(op,2);if(node.inputs.size()!=2)throw std::runtime_error("Distort requires two inputs");
+      const auto image=evaluate(node.inputs[0],depth+1),displacement=evaluate(node.inputs[1],depth+1);
+      auto texture=clone(*displacement);distort_bitmap(*image,*displacement,*texture,number(op,0),op.parameters[1]);cache_[id]=std::move(texture);
+    } else if(op.command==0x35 || op.command==0x3b) {
+      require(op,op.command==0x35 ? 3 : 9);auto texture=clone(*input());
+      if(op.command==0x35) {
+        const auto low=color64(op.parameters[1]),high=color64(op.parameters[2]);
+        for(auto& pixel:texture->pixels)pixel=range_pixel(pixel,low,high,op.parameters[0]);
+      }else balance_bitmap(*texture,op.parameters);
+      cache_[id]=std::move(texture);
+    } else if (op.command == 0x29 || op.command == 0x2b || op.command == 0x2e || op.command==0x38) {
       require(op, op.command == 0x2e ? 2 : 4);
       const auto source = input();
       auto texture = clone(*source);
-      if (op.command == 0x29) {
+      if (op.command == 0x29 || op.command==0x38) {
         auto scratch = allocate(source->width, source->height);
-        blur_bitmap(*texture, *scratch, op.parameters[0], number(op, 1), number(op, 2), number(op, 3));
+        const bool sharpen=op.command==0x38;
+        blur_bitmap(*texture, *scratch, op.parameters[0]|(sharpen ? 16 : 0), number(op, 1), number(op, 2), sharpen ? 1.f : number(op, 3));
+        if(sharpen)sharpen_bitmap(*texture,*source,number(op,3));
       } else if (op.command == 0x2b) {
         adjust_hscb(*texture, number(op, 0), number(op, 1), number(op, 2), number(op, 3));
       } else normal_bitmap(*source, *texture, number(op, 0), op.parameters[1]);
@@ -167,7 +180,7 @@ public:
     } else if (op.command == 0x36) {
       require(op, 10);
       cache_[id] = transform_mul(*input(), op);
-    } else if (op.command == 0x39) {
+    } else if (op.command == 0x39 || op.command==0x27) {
       require(op, 11);
       const auto base = input();
       auto texture = clone(*base);
