@@ -36,8 +36,8 @@ still names `debris.v2m`.
 main viewport contains 76 mesh instances, two lights and 26 ChainLine cables.
 Continuous CPU preparation in 16 ms steps reaches 9,808 ms (beat 32.0394), then
 stops at the unported Glare effect, operator 10464. Full rendering now enters
-the Material 2.0 pipeline, then stops while generating Bump texture operator
-41935 for material 41956 in the first viewport.
+the Material 2.0 pipeline, then stops at unported Perlin texture operator 43017
+in the dependencies of material 41956 in the first viewport.
 Remaining MINMESH/scene operators and Water/Glare/Color Correction effects
 also remain to be ported.
 The player synthesizes its V2 soundtrack into stereo PCM before playback, using
@@ -178,6 +178,18 @@ stencil reset between lights/frames. These establish shader/pipeline behavior;
 they do not establish rendered Debris fidelity with its saved textures.
 Undefined original combinations (specularity without a bump map, or environment
 specularity without the vertex shader's bumped UV output) fail explicitly.
+
+Procedural Light/Bump textures and all four Mask composition modes are also
+native. Light/Bump retain the original spot/point/directional light equations,
+specular falloff and BGRA normal-channel interpretation. Mask converts its mask
+to the archived gray value and reproduces the signed/unsigned packed multiply,
+blend, add and subtract operations; it preserves the mask input's metadata.
+`bitmap_bump` compares 72 synthetic lighting cases and all 47 reachable Debris
+Light/Bump parameter sets with the extracted original handler, using controlled
+source images. It checks 10,000 AddScale and 16,384 Mask cases against the MMX
+instruction sequence through SSE2, plus graph wiring and invalid inputs. These
+checks do not yet cover the complete saved texture graphs: upstream Perlin and
+other generators still need ports.
 
 The native `wz3-v2m` tool reads compact music modules, reconstructs their MIDI
 event stream/sample positions and optionally renders stereo float WAV without

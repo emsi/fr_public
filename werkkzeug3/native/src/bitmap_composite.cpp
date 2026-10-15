@@ -94,6 +94,22 @@ Pixel color_pixel(const Pixel& base, const Pixel& color, unsigned mode) {
   return result;
 }
 
+Pixel mask_pixel(const Pixel& mask,const Pixel& a,const Pixel& b,unsigned mode) {
+  if(mode>3)throw std::runtime_error("invalid Mask mode");
+  // Bitmap_Mask first converts the mask to gray, including alpha=0x7fff.
+  const auto value=color_pixel(mask,{},3);
+  if(mode==1)return merge_pixel(merge_pixel(value,a,2),b,0);
+  if(mode==2)return merge_pixel(b,merge_pixel(value,a,2),1);
+  const auto source=mode==3 ? merge_pixel(a,b,2) : a;Pixel out;
+  for(unsigned c=0;c<4;++c) {
+    const auto inverse=saturate(32767-signed_lane(value[c]));
+    const auto first=(signed_lane(value[c])*signed_lane(source[c]))>>16;
+    const auto second=(signed_lane(inverse)*signed_lane(b[c]))>>16;
+    out[c]=std::uint16_t(signed_lane(saturate(first+second))*2);
+  }
+  return out;
+}
+
 void draw_dots(Texture& texture, std::uint32_t color0, std::uint32_t color1,
                std::uint32_t density, std::uint32_t seed) {
   if (texture.pixels.empty() || density > 4096) throw std::runtime_error("invalid Dots density/texture");

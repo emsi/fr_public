@@ -128,6 +128,22 @@ public:
         adjust_hscb(*texture, number(op, 0), number(op, 1), number(op, 2), number(op, 3));
       } else normal_bitmap(*source, *texture, number(op, 0), op.parameters[1]);
       cache_[id] = std::move(texture);
+    } else if (op.command == 0x2a) {
+      require(op,1);
+      if(node.inputs.size()!=3)throw std::runtime_error("Mask requires three inputs");
+      auto texture=clone(*evaluate(node.inputs[0],depth+1));
+      const auto a=evaluate(node.inputs[1],depth+1),b=evaluate(node.inputs[2],depth+1);
+      if(texture->pixels.size()!=a->pixels.size() || texture->pixels.size()!=b->pixels.size())throw std::runtime_error("Mask inputs have different pixel counts");
+      for(std::size_t i=0;i<texture->pixels.size();++i)texture->pixels[i]=mask_pixel(texture->pixels[i],a->pixels[i],b->pixels[i],op.parameters[0]);
+      cache_[id]=std::move(texture);
+    } else if (op.command == 0x2f || op.command == 0x30) {
+      require(op,op.command==0x2f ? 11 : 14);
+      if(node.inputs.empty() || node.inputs.size()>(op.command==0x2f ? 1u : 2u))throw std::runtime_error("invalid Light/Bump texture inputs");
+      auto texture=clone(*evaluate(node.inputs[0],depth+1));
+      const auto normals=node.inputs.size()==2 ? evaluate(node.inputs[1],depth+1) : nullptr;
+      auto parameters=op.parameters;
+      if(op.command==0x2f)parameters.insert(parameters.end(),{parameters[7],0,0});
+      bump_bitmap(*texture,normals.get(),parameters);cache_[id]=std::move(texture);
     } else if (op.command == 0x31) {
       if (op.parameters.size() != 8 && op.parameters.size() != 9)
         throw std::runtime_error("unsupported Text parameter layout");
