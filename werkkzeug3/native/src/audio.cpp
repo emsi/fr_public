@@ -1,5 +1,6 @@
 // Distributed under the BSD license in werkkzeug3/LICENSE.txt.
 #include "wz3/audio.hpp"
+#include "wz3/v2_synth.hpp"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -38,6 +39,11 @@ PcmAudio read_vorbis(const std::filesystem::path& path) {
     }
   }
   require(pcm.frames()==std::uint64_t(count),"decoded music length differs from Vorbis metadata");return pcm;
+}
+PcmAudio read_v2m_audio(const std::filesystem::path& path,std::uint64_t frames) {
+  require(frames>0 && frames<=max_samples/2,"V2 music exceeds the 256 MiB PCM budget or has no samples");
+  V2Synthesis synth(read_v2m(path));PcmAudio pcm{44100,2,{}};
+  pcm.samples.resize(frames*2);synth.render(pcm.samples);return pcm;
 }
 AudioPlayback::AudioPlayback(const PcmAudio& audio,bool mute):pcm(audio),muted(mute) {
   require(pcm.rate>=8000 && pcm.rate<=192000 && pcm.channels>=1 && pcm.channels<=2 && pcm.samples.size()%pcm.channels==0,"invalid playback PCM format");

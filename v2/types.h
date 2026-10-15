@@ -11,13 +11,31 @@ typedef char              sChar;
 
 typedef signed   char     sS8;
 typedef signed   short    sS16;
+#ifdef _MSC_VER
 typedef signed   long     sS32;
 typedef signed   __int64  sS64;
+#else
+#include <stdint.h>
+typedef int32_t           sS32;
+typedef int64_t           sS64;
+#endif
 
 typedef unsigned char     sU8;
 typedef unsigned short    sU16;
+#ifdef _MSC_VER
 typedef unsigned long     sU32;
 typedef unsigned __int64  sU64;
+#else
+typedef uint32_t          sU32;
+typedef uint64_t          sU64;
+#if defined(__i386__)
+#define __stdcall __attribute__((stdcall))
+#define __cdecl __attribute__((cdecl))
+#else
+#define __stdcall
+#define __cdecl
+#endif
+#endif
 
 typedef float             sF32;
 typedef double            sF64;

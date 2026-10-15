@@ -35,16 +35,19 @@ still names `debris.v2m`.
 **Debris does not play yet.** CPU frame preparation reaches material operator
 8462 and rejects its unported `Material 2.0` implementation. The project also
 contains later MINMESH operators and Water/Glare/Color Correction effects.
-The player currently decodes Ogg only, so V2 music synthesis and synchronization
-must also be implemented. The existing Theta renderer and released-clock profile
+The player synthesizes its V2 soundtrack into stereo PCM before playback, using
+the same SDL callback clock as Ogg music. The existing Theta renderer and released-clock profile
 do not establish compatibility with Debris. `debris_projects` compares the real
 wrapped files with their legacy documents and tests malformed container handling.
 
-The native `wz3-v2m` tool reads compact music modules and reconstructs their MIDI
-event stream and sample positions without Windows or an audio device:
+The native `wz3-v2m` tool reads compact music modules, reconstructs their MIDI
+event stream/sample positions and optionally renders stereo float WAV without
+Windows, a GPU or an audio device:
 
 ```sh
 build/native/wz3-v2m werkkzeug3/data/debris/debris_ost.v2m
+build/native/wz3-v2m werkkzeug3/data/debris/debris_ost.v2m --render build/native/debris.wav
+# Add --duration 8 to render only the opening eight seconds.
 ```
 
 The soundtrack contains 116 patches, 13,245 note events and 37,306 total MIDI
@@ -55,10 +58,20 @@ fixtures pass the same comparison. Tests also cover tempo changes, repeated
 same-tick control changes, truncated sections and invalid event data. The
 reference uses the archived `v2mplayer.cpp` event loop with a recording synth;
 four MSVC assembly utility blocks are translated into portable integer/fill
-operations. This verifies scheduling, **not audio fidelity**. The reader preserves
-raw instrument/global/speech data; historical patch conversion, DSP synthesis
-and integration into `wz3-player` remain to be done. `synthesis: false` in the
-tool's JSON output makes that boundary explicit.
+operations. This verifies scheduling, **not audio fidelity**.
+
+Synthesis uses the archive's C++ V2 DSP with fixed-width Linux types, bounded
+patch validation and explicit noise seeds. The full 18,934,066-frame soundtrack
+(429.34 seconds at 44.1 kHz) has rendered under address/undefined-behavior
+sanitizers. Tests cover both Debris modules, buffer-size independence, repeatable
+seeds, malformed patches and 8/44.1/48/96 kHz synthesis. An SDL disk-output test
+compares every frame of a two-second V2 excerpt against the standalone renderer,
+using Theta's supported graph to exercise the player. This does not establish
+Debris visual compatibility. Original assembly-output fidelity is still unverified;
+the original seeds were timing-dependent, and this C++ implementation is not
+claimed to be bit-exact. Historical patch layouts and active Ronan speech fail
+explicitly pending conversion/implementation. JSON reports `synthesis: true`
+only when a WAV was rendered. Audio is synthesized by the CPU.
 
 ## Play Theta on Linux
 
@@ -93,6 +106,8 @@ using that path. The player defaults to the saved 800×600 resolution and finds
 `theta.ogg` beside the project. `--music PATH` overrides that lookup;
 `--width 1024 --height 768` changes the internal rendering resolution. Resizing
 the window scales the picture with black bars and preserves render-target history.
+`--music SONG.v2m` selects the native V2 synthesizer, rendering up to the project's
+endpoint or `--duration` limit at 44.1 kHz before playback begins.
 Escape or closing the window exits. Seeking, pause and looping are not implemented.
 
 Playback now starts with a cancellable loading screen. The loading pass executes
@@ -156,7 +171,7 @@ Preroll draws intermediate frames entirely on the GPU; only the final image is
 read back. The inverse-clock tests check both timing modes at 8, 44.1, 48 and
 192 kHz, recovered x86 vectors, endpoint boundaries and frame-time overrides.
 
-Music is decoded up front to interleaved float PCM with a 256 MiB limit (Theta
+Music is decoded or synthesized up front to interleaved float PCM with a 256 MiB limit (Theta
 uses about 87.4 MiB). The SDL callback copies samples without allocation or
 decoding. The renderer borrows SDL's GLES3 context and blits directly to the window,
 with no per-frame CPU readback unless a capture is requested. Simulation and

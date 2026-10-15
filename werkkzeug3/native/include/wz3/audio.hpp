@@ -10,6 +10,8 @@ struct PcmAudio {
 };
 // Decode before playback; no allocation or decoder work in the audio callback.
 PcmAudio read_vorbis(const std::filesystem::path&);
+// Synthesize exactly the requested playback interval, including release tails.
+PcmAudio read_v2m_audio(const std::filesystem::path&,std::uint64_t frames);
 
 // The callback is the clock authority. Interpolate within its latest buffer,
 // stopping at the end if the device stalls. This estimates delivery time, not

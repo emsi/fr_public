@@ -5,8 +5,8 @@ This fork has an ongoing **native Linux port of fr-038: Theta** on the
 for the project reader, graph inspector, procedural textures, font atlases and
 native GPU mesh previews.
 Theta plays through its complete timeline on Linux. Native support for
-**fr-041: Debris** is now in progress; its archived projects can be inspected,
-but playback still requires additional rendering and music support.
+**fr-041: Debris** is now in progress; its archived projects load and its V2
+soundtrack synthesizes natively, but playback still requires additional rendering support.
 The original archive follows below.
 
 This is it. Pretty much a history of Farbrausch tools 2001-2011. We've been

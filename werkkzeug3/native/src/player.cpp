@@ -74,7 +74,7 @@ struct Snapshot {double seconds{};std::filesystem::path path;bool saved=false;};
 }
 int main(int argc,char** argv) {
   if(argc<2 || std::string_view(argv[1])=="--help") {
-    std::cout<<"Usage: "<<argv[0]<<" PROJECT.k|theta.wz3r [--font-file FONT.ttf] [--music SONG.ogg]\n"
+    std::cout<<"Usage: "<<argv[0]<<" PROJECT.k|theta.wz3r [--font-file FONT.ttf] [--music SONG.ogg|SONG.v2m]\n"
       <<"  [--width PIXELS] [--height PIXELS] [--duration SECONDS] [--mute]\n"
       <<"  [--capture LAST.ppm] [--snapshot SECONDS FRAME.ppm] (repeatable)\n"
       <<"  [--no-preload | --preload-only | --offline]\n"
@@ -118,7 +118,16 @@ int main(int argc,char** argv) {
       require(!name.empty(),"project has no music path; supply --music");
       music=project_path.parent_path()/std::filesystem::path(name).filename();
     }
-    std::cout<<std::unitbuf<<"Decoding "<<music<<'\n';const auto pcm=wz3::read_vorbis(music);
+    auto extension=music.extension().string();
+    for(auto& c:extension)if(c>='A' && c<='Z')c=char(c-'A'+'a');
+    const bool v2=extension==".v2m";
+    std::cout<<std::unitbuf<<(v2 ? "Synthesizing " : "Decoding ")<<music<<'\n';
+    const auto pcm=[&] {
+      if(!v2)return wz3::read_vorbis(music);
+      auto frames=wz3::PlaybackTiming(project,44100).end_frames();
+      if(duration)frames=std::min(frames,std::uint64_t(std::ceil(duration*44100)));
+      return wz3::read_v2m_audio(music,frames);
+    }();
     wz3::PlaybackTiming timing(project,pcm.rate);auto end=timing.end_frames();
     if(duration)end=std::min(end,std::uint64_t(std::ceil(duration*pcm.rate)));
     std::cout<<"Music: "<<pcm.rate<<" Hz, "<<pcm.channels<<" channels, "<<double(pcm.frames())/pcm.rate<<" seconds\n";

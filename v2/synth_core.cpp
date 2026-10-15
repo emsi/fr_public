@@ -4,6 +4,7 @@
 #include <assert.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stddef.h>
 
 // TODO:
 // - VU meters?
@@ -235,12 +236,13 @@ static inline sU32 ftou32(sF32 v)
 }
 
 // linear interpolation between a and b using t.
-static inline sF32 lerp(sF32 a, sF32 b, sF32 t)
+static inline sF32 v2_lerp(sF32 a, sF32 b, sF32 t)
 {
   return a + t * (b-a);
 }
 
 // DEBUG
+#ifdef _WIN32
 #include <stdarg.h>
 #include <stdio.h>
 extern "C" void __stdcall OutputDebugStringA(const char *what);
@@ -253,6 +255,7 @@ static void dprintf(const char *fmt, ...)
   va_end(arg);
   OutputDebugStringA(buf);
 }
+#endif
 
 // --------------------------------------------------------------------------
 // Building blocks
@@ -2044,7 +2047,7 @@ private:
     // linear interpolation using low-order bits of offs32_32.
     sF32 *delaybuf = db[ch];
     sF32 x = utof23((sU32)(offs32_32 & 0xffffffffu));
-    sF32 delayed = lerp(delaybuf[(index - 0) & dbufmask], delaybuf[(index - 1) & dbufmask], x);
+    sF32 delayed = v2_lerp(delaybuf[(index - 0) & dbufmask], delaybuf[(index - 1) & dbufmask], x);
     
     // mix and output
     delaybuf[dbptr] = in + delayed*fbval;
@@ -2678,7 +2681,7 @@ struct V2Synth
     // Ahem, so this is somewhat dubious, but we don't use
     // virtual functions or anything so it should be fine. Ahem.
     // Look away please :)
-    memset(this, 0, sizeof(this));
+    memset(this, 0, sizeof(*this));
 
     // set sampling rate
     this->samplerate = samplerate;
@@ -3047,7 +3050,7 @@ private:
   const V2Sound *getpatch(sInt pgm) const
   {
     assert(pgm >= 0 && pgm < 128);
-    return (const V2Sound *)&patchmap->raw_data[patchmap->offsets[pgm]];
+    return (const V2Sound *)((const sU8 *)patchmap + patchmap->offsets[pgm]);
   }
 
   sF32 getmodsource(const V2Voice *voice, sInt chan, sInt source) const
@@ -3107,7 +3110,7 @@ private:
     // modulation matrix
     for (sInt i=0; i < patch->modnum; i++)
     {
-      const V2Mod *mod = &patch->modmatrix[i];
+      const V2Mod *mod = (const V2Mod *)((const sU8 *)patch + offsetof(V2Sound, modmatrix)) + i;
       if (mod->dest >= COUNTOF(patch->voice))
         continue;
 
@@ -3138,7 +3141,7 @@ private:
     // modulation matrix
     for (sInt i=0; i < patch->modnum; i++)
     {
-      const V2Mod *mod = &patch->modmatrix[i];
+      const V2Mod *mod = (const V2Mod *)((const sU8 *)patch + offsetof(V2Sound, modmatrix)) + i;
       sInt dest = mod->dest - COUNTOF(patch->voice);
       if (dest < 0 || dest >= COUNTOF(patch->chan))
         continue;
