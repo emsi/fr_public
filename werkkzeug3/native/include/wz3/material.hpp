@@ -8,6 +8,14 @@
 namespace wz3 {
 enum class MaterialUsage {base,prelight,ambient,shadow,light,postlight,environment,other};
 enum class MaterialProgram {static_mesh=1,shadow=2,sprites=3,thick_lines=4,instances=7};
+enum class Material20Stage {depth,texture,ambient,light,environment};
+struct Material20Shader {
+  Material20Stage stage{};
+  // sMaterial20Para's first 42 words. Code generation uses initialization
+  // values; Exec updates constants without rebuilding shaders or samplers.
+  std::array<std::uint32_t,42> parameters{},compiled_parameters{};
+  std::array<std::optional<std::size_t>,7> textures;
+};
 struct MaterialShader {
   // sMaterial11's portable 48-word parameter layout: flags 0..2, sampler
   // flags 4..7, combiners 8..20, alpha 23, UV scales 24..27, colors 28..31,
@@ -15,6 +23,7 @@ struct MaterialShader {
   std::array<std::uint32_t,48> words{};
   std::array<std::optional<std::size_t>,4> textures;
   std::size_t source_operator{};
+  std::optional<Material20Shader> material20;
 };
 struct MaterialPass {
   MaterialShader shader;
@@ -26,6 +35,9 @@ struct MaterialPass {
 struct Material {
   std::vector<MaterialPass> passes;
   bool material11_insert{};
+  // Material20Insert: copy albedo after prelight, restore shadow states, clear
+  // stencil/reset scissor after each light. This is separate from Material11.
+  bool material20_insert{};
 };
 // Owns the shared mutable shader objects used by Material/Add/Load/Store/Nop.
 // A snapshot copies their current values so a later frame cannot change it.

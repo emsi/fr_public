@@ -24,7 +24,7 @@ struct SharedPass {
   MaterialUsage usage=MaterialUsage::other;MaterialProgram program=MaterialProgram::static_mesh;
   std::int32_t render_pass{};float size=1,aspect=1;
 };
-struct SharedMaterial {std::vector<SharedPass> passes;bool insert{};};
+struct SharedMaterial {std::vector<SharedPass> passes;bool insert{},insert20{};};
 MaterialShader defaults(std::size_t id) {
   MaterialShader shader;shader.source_operator=id;shader.words[0]=0x300;shader.words[32]=std::bit_cast<std::uint32_t>(8.0f);
   for(unsigned i=0;i<4;++i) {shader.words[4+i]=2;shader.words[28+i]=0xffffffff;}
@@ -92,6 +92,7 @@ SharedMaterial compile(std::size_t id,std::span<const std::uint32_t> p,const std
 void update(SharedMaterial& material,std::span<const std::uint32_t> p) {
   validate(p);const auto flags=p[48];
   for(auto& pass:material.passes) {
+    require(!pass.shader->material20,"Material 1.1 cannot update Material 2.0 shader parameters");
     auto& w=pass.shader->words;
     switch(pass.usage) {
     case MaterialUsage::light:
@@ -105,6 +106,45 @@ void update(SharedMaterial& material,std::span<const std::uint32_t> p) {
       if(flags&0x30000) {pass.size=real(p,60);pass.aspect=real(p,62);}break;
     default:break; // The original keeps base/shadow parameters from initialization.
     }
+  }
+}
+void validate20(std::span<const std::uint32_t> p) {
+  require(p.size()==38 || p.size()==42,"unsupported Material 2.0 parameter layout");
+  real(p,3);real(p,4);for(unsigned i=12;i<16;++i)real(p,i);
+  for(unsigned i=20;i<p.size();++i)if(i!=23)real(p,i);
+}
+std::array<std::uint32_t,42> parameters20(std::span<const std::uint32_t> p) {
+  validate20(p);std::array<std::uint32_t,42> out{};
+  // WerkDoc::Read initializes the current editor defaults, then copies the
+  // saved words. Debris predates the four color-correction parameters.
+  out[39]=out[40]=std::bit_cast<std::uint32_t>(1.f);
+  std::copy(p.begin(),p.end(),out.begin());return out;
+}
+SharedMaterial compile20(std::size_t id,std::span<const std::uint32_t> p,const std::array<std::optional<std::size_t>,7>& textures) {
+  validate20(p);SharedMaterial out;out.insert20=true;
+  const auto add=[&](Material20Stage stage,MaterialUsage usage) {
+    MaterialShader shader;shader.source_operator=id;auto& m=shader.material20.emplace();
+    m.stage=stage;m.parameters=parameters20(p);
+    m.compiled_parameters=m.parameters;m.textures=textures;
+    out.passes.push_back({std::make_shared<MaterialShader>(std::move(shader)),usage,MaterialProgram::static_mesh,0,1,1});
+  };
+  // Init_Material_Material20, REALMAT=1 in the archived genmaterial.cpp.
+  add(Material20Stage::depth,MaterialUsage::base);
+  add(Material20Stage::texture,MaterialUsage::prelight);
+  add(Material20Stage::ambient,MaterialUsage::ambient);
+  if(p[0]&0x10) {
+    auto shadow=defaults(id);shadow.words[0]=0x70220;shadow.words[9]=0x10;
+    out.passes.push_back({std::make_shared<MaterialShader>(std::move(shadow)),MaterialUsage::shadow,MaterialProgram::shadow,0,1,1});
+  }
+  add(Material20Stage::light,MaterialUsage::light);
+  if(textures[6])add(Material20Stage::environment,MaterialUsage::postlight);
+  return out;
+}
+void update20(SharedMaterial& material,std::span<const std::uint32_t> p) {
+  validate20(p);
+  for(auto& pass:material.passes)if(pass.usage!=MaterialUsage::shadow) {
+    require(pass.shader->material20.has_value(),"Material 2.0 pass has a different shader layout");
+    pass.shader->material20->parameters=parameters20(p);
   }
 }
 }
@@ -154,6 +194,17 @@ struct MaterialRuntime::Impl {
         // Material_Add copies the pass records but does not inherit Insert.
         result->insert=node.inputs.empty() && own.insert;
       }
+    } else if(op.command==0xd3) {
+      validate20(scope.parameters);require(node.inputs.size()<=3 && node.links.size()<=7,"invalid Material 2.0 texture layout");
+      std::array<std::optional<std::size_t>,7> textures{};const unsigned paramap[7]={8,9,10,11,16,17,18};
+      for(unsigned slot=0;slot<7;++slot) {
+        if(slot<node.links.size() && node.links[slot] && category(*node.links[slot])=="BITMAP")textures[slot]=node.links[slot];
+        const auto input=(scope.parameters[paramap[slot]]>>24)&3;
+        // Original initialization keeps the linked bitmap if an override is
+        // absent or has another class. It does not inherit material passes.
+        if(input && input<=node.inputs.size() && category(node.inputs[input-1])=="BITMAP")textures[slot]=node.inputs[input-1];
+      }
+      result=std::make_shared<SharedMaterial>(compile20(id,scope.parameters,textures));
     } else throw std::runtime_error("material operator "+std::to_string(id)+" ("+std::string(operator_info(op.command).name)+") is not ported");
     previous[id]=scope.parameters;cache[id]=result;return result;
   }
@@ -170,6 +221,7 @@ struct MaterialRuntime::Impl {
       for(auto child:node.inputs)execute(child,env,visits,depth+1);
       if(!(op.convention&0x10000000))for(auto link:node.links)if(link)execute(*link,env,visits,depth+1);
       if(op.command==0xd0)update(*cache[id],scope.parameters);
+      else if(op.command==0xd3)update20(*cache[id],scope.parameters);
       else require(op.command==2 || op.command==3 || op.command==0xd1,"unsupported material execution");
     }
     previous[id]=scope.parameters;
@@ -182,20 +234,31 @@ void MaterialRuntime::execute(std::size_t id,AnimationEnvironment& env) {
   auto initial=frame_environment(0);impl->prepare(id,initial);std::size_t visits=0;impl->execute(id,env,visits);
 }
 Material MaterialRuntime::snapshot(std::size_t id) {
-  auto initial=frame_environment(0);const auto source=impl->prepare(id,initial);Material out;out.material11_insert=source->insert;
+  auto initial=frame_environment(0);const auto source=impl->prepare(id,initial);Material out;out.material11_insert=source->insert;out.material20_insert=source->insert20;
   for(const auto& pass:source->passes)out.passes.push_back({*pass.shader,pass.usage,pass.program,pass.render_pass,pass.size,pass.aspect});
   return out;
 }
 void MaterialRuntime::reset() {impl=std::make_unique<Impl>(impl->project,impl->graph);}
 void write_material(std::ostream& out,const Material& material) {
-  out<<std::setprecision(9)<<"{\"material11_insert\":"<<(material.material11_insert ? "true" : "false")<<",\"passes\":[";
+  out<<std::setprecision(9)<<"{\"material11_insert\":"<<(material.material11_insert ? "true" : "false")
+    <<",\"material20_insert\":"<<(material.material20_insert ? "true" : "false")<<",\"passes\":[";
   for(std::size_t i=0;i<material.passes.size();++i) {
     const auto& p=material.passes[i];out<<(i ? "," : "")<<"{\"source_operator\":"<<p.shader.source_operator<<",\"usage\":"<<int(p.usage)
       <<",\"program\":"<<int(p.program)<<",\"render_pass\":"<<p.render_pass<<",\"size\":"<<p.size<<",\"aspect\":"<<p.aspect<<",\"words\":[";
     for(unsigned j=0;j<48;++j)out<<(j ? "," : "")<<p.shader.words[j];
     out<<"],\"textures\":[";
     for(unsigned j=0;j<4;++j)out<<(j ? "," : "")<<(p.shader.textures[j] ? std::to_string(*p.shader.textures[j]) : "null");
-    out<<"]}";
+    out<<']';
+    if(p.shader.material20) {
+      const auto& m=*p.shader.material20;out<<",\"material20\":{\"stage\":"<<int(m.stage)<<",\"parameters\":[";
+      for(unsigned j=0;j<42;++j)out<<(j ? "," : "")<<m.parameters[j];
+      out<<"],\"compiled_parameters\":[";
+      for(unsigned j=0;j<42;++j)out<<(j ? "," : "")<<m.compiled_parameters[j];
+      out<<"],\"textures\":[";
+      for(unsigned j=0;j<7;++j)out<<(j ? "," : "")<<(m.textures[j] ? std::to_string(*m.textures[j]) : "null");
+      out<<"]}";
+    }
+    out<<'}';
   }
   out<<"]}";require(bool(out),"cannot write material snapshot");
 }

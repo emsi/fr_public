@@ -319,6 +319,7 @@ struct FrameRenderer::Impl {
     }
   }
   FrameQuad resolve_material(const MaterialShader& shader,const SceneEffectDraw* effect=nullptr) {
+    require(!shader.material20,"Material 2.0 GPU shaders are not ported");
     FrameQuad q;q.shader=shader;
     for(unsigned slot=0;slot<4;++slot)if(q.shader.textures[slot]) {
       auto id=*q.shader.textures[slot];
@@ -404,6 +405,7 @@ struct FrameRenderer::Impl {
   }
   void scene_materials(const SceneFrame& scene,const FrameTarget& target) {
     const auto draws=scene_draw_jobs(scene,target.width,target.height);const auto projection=scene_raster_projection(scene.camera,target.width,target.height);
+    require(std::none_of(draws.material20_inserts.begin(),draws.material20_inserts.end(),[](bool v){return v;}),"Material 2.0 albedo capture and GPU passes are not ported");
     const auto restore_scissor=[&]{glScissor(0,surfaces.at(target.surface).height-target.height,target.width,target.height);};
     const auto insert=[&](unsigned usage) {
       restore_scissor();FrameQuad q;auto& w=q.shader.words;w[0]=0x30002|(usage==0 ? 0x3000 : 0x8000);w[9]=0x10;w[28]=0x00ffffff;w[23]=8;quad(q,target);

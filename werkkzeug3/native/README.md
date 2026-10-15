@@ -32,13 +32,37 @@ current graph connection finds 20,989 operators reachable from its entry points.
 The `_c` project names the included `debris/debris_ost.v2m`; the other project
 still names `debris.v2m`.
 
-**Debris does not play yet.** CPU frame preparation reaches material operator
-8462 and rejects its unported `Material 2.0` implementation. The project also
-contains later MINMESH operators and Water/Glare/Color Correction effects.
+**Debris does not play yet.** CPU frame preparation now passes material
+initialization and stops at the viewport's unported spline-camera input.
+Material 2.0 GPU shaders/albedo capture, later MINMESH operators and
+Water/Glare/Color Correction effects also remain to be ported.
 The player synthesizes its V2 soundtrack into stereo PCM before playback, using
 the same SDL callback clock as Ogg music. The existing Theta renderer and released-clock profile
 do not establish compatibility with Debris. `debris_projects` compares the real
 wrapped files with their legacy documents and tests malformed container handling.
+
+All 124 reachable Material 2.0 operators initialize their 601 render passes and
+update animated parameters. The saved 38-word layout receives the four newer
+color-correction defaults, matching the original editor's load behavior. A
+recording reference executes the archived `Init/Exec_Material_Material20` bodies
+to check texture links/input overrides, depth/albedo/ambient/shadow/light/reflection
+passes and animation updates. Its only control-flow adjustment moves an unused
+shadow-material downcast inside its existing guard for UBSan. Compiled flags
+and sampler bindings remain fixed while runtime constants change. Add Material
+shares shader state without inheriting insert hooks. The native inspector can
+export these structures, but rendering them still fails explicitly pending the
+GPU port:
+
+```sh
+build/native/wz3-material werkkzeug3/data/debris/debris_9241_c.k --audit
+build/native/wz3-material werkkzeug3/data/debris/debris_9241_c.k 8462 0 build/native/material20.json
+```
+
+The complete material audit covers 226 reachable Material 1.1/2.0 operators,
+749 passes and 1,130 execution checks. These are CPU state checks, not rendered
+image comparisons. Material 2.0 needs its own albedo capture after prelight,
+ambient multiplication, per-light bump/specular shaders and reflection pass;
+it is not translated into the older Material 1.1 combiner.
 
 The native `wz3-v2m` tool reads compact music modules, reconstructs their MIDI
 event stream/sample positions and optionally renders stereo float WAV without

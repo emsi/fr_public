@@ -32,6 +32,7 @@ std::string source(const MaterialShader& s,unsigned index) {
 }
 }
 std::string material_fragment_shader(const MaterialShader& s) {
+  require(!s.material20,"Material 2.0 GPU shaders are not ported");
   require(!(s.words[2]&7),"lighting requires the scene mesh shader");
   require(!(s.words[1]&0x731),"environment/projective material shader is not ported");
   std::string code="#version 300 es\nprecision highp float;\nin vec2 material_uv[4];\nin vec4 material_vertex_color;\nuniform vec4 material_colors[4];\nout vec4 color;\n";
@@ -69,6 +70,7 @@ std::string material_fragment_shader(const MaterialShader& s) {
   return code+"color=vec4(clamp(current,0.0,1.0),alpha_value);\n}\n";
 }
 std::array<float,9> material_uv_matrix(const MaterialShader& s,unsigned slot) {
+  require(!s.material20,"Material 2.0 UV binding is not ported");
   require(slot<4,"invalid material texture slot");const auto flags=s.words[4+slot];
   require(!(flags&0x4030),"secondary/projective UV input is not ported");
   const auto real=[&](unsigned i) {const auto v=as_float(s.words[i]);require(std::isfinite(v),"nonfinite material UV transform");return v;};

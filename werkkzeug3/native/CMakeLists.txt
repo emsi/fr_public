@@ -150,6 +150,14 @@ if(BUILD_TESTING)
   target_link_libraries(wz3-v2-synth-tests PRIVATE wz3_v2_synth)
   target_compile_options(wz3-v2-synth-tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME v2_synthesis COMMAND wz3-v2-synth-tests "${CMAKE_CURRENT_SOURCE_DIR}/../..")
+  add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/material20_oracle.inc"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/material20_oracle.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../genmaterial.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/material20_oracle.inc"
+    DEPENDS tools/material20_oracle.py tools/particles_oracle.py ../genmaterial.cpp VERBATIM)
+  add_executable(wz3-material20-tests tests/material20.cpp tests/material20_reference.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/material20_oracle.inc")
+  target_include_directories(wz3-material20-tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_link_libraries(wz3-material20-tests PRIVATE wz3_project)
+  add_test(NAME material20_runtime COMMAND wz3-material20-tests "${CMAKE_CURRENT_SOURCE_DIR}/../data/debris/debris_9241_c.k")
   add_executable(wz3-timing-tests tests/playback_timing.cpp)
   target_link_libraries(wz3-timing-tests PRIVATE wz3_project)
   target_compile_options(wz3-timing-tests PRIVATE -Wall -Wextra -Wpedantic -Werror)

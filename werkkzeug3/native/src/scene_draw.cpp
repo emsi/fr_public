@@ -110,6 +110,7 @@ SceneDrawList scene_draw_jobs(const SceneFrame& scene,unsigned width,unsigned he
         const auto base=(std::int64_t(pass.render_pass)+batch.pass)&255;
         const auto index=std::clamp(base+instance.pass_adjust,std::int64_t(0),std::int64_t(255));
         if(material.material11_insert)result.inserts[index]=true;
+        if(material.material20_insert)result.material20_inserts[index]=true;
         const auto append=[&](unsigned slot,std::optional<std::size_t> light,bool zfail=false){
           const auto key=(std::uint32_t(index)<<24)|(slot<<20)|(usage<<16)|(batch.material ? material_ids.at({*batch.material,p}) : 0);
           if(result.jobs.size()>=1000000)throw std::runtime_error("scene paint job limit");
