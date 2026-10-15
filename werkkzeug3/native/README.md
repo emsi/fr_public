@@ -37,10 +37,17 @@ main viewport contains 76 mesh instances, two lights and 26 ChainLine cables.
 With an explicit font, the native player renders the opening city at 1280x640:
 1,251 consecutive frames through 20 seconds pass in both offline and
 audio-callback-paced playback, with byte-identical endpoint captures.
-Continuous GPU rendering now also passes 60 seconds in offline mode, with
-captures at 54, 55 and 60 seconds showing the animated fragments. It stops at
-63,680 ms on a Particles operator with an unported GenSpline input;
-callback-paced playback beyond 20 seconds has not been checked.
+Continuous GPU rendering and callback-paced playback now also pass 60 seconds
+(3,751 frames), with byte-identical captures at 54, 55 and 60 seconds showing
+the animated fragments. The longer callback-paced run took 79.8 wall seconds
+after 121.4 seconds of preparation and fell up to 20.0 seconds behind the audio
+clock. It allocated no additional cached meshes, textures, targets or GPU
+buffers during playback. This verifies image consistency; synchronized
+real-time Debris playback still needs performance work.
+The continuous renderer stops at 63,680 ms on optimized particle mesh
+instancing. GenSpline particle paths now evaluate, but the optimized path must
+still build and draw the original instance buffers instead of traversing a
+child scene for every particle.
 DejaVu Sans captures show textured buildings,
 lighting, shadows and cables. The playback test uses dummy audio; physical
 speaker output and synchronization remain unverified. This is progress through
@@ -68,8 +75,8 @@ them between frames and reports missing S3TC support explicitly. Tests compare
 882 synthetic uploads and all five reachable Debris compressed textures against
 the archived `UpdateTexture` handler (using the same archived compressor).
 Separate GPU tests compare every sampled channel, including alpha and 1x1/2x2
-mips, with an independent block decoder. The 70-test Release suite, including
-23 graphics tests, passes on the Radeon RX 7900 XT; DXT CPU checks also pass
+mips, with an independent block decoder. Release regression checks pass on
+the Radeon RX 7900 XT; DXT CPU checks also pass
 under Clang ASan/UBSan.
 
 Glare now executes as an ordered scene effect. It captures the current viewport,
@@ -950,7 +957,7 @@ motion and depth independent of instance order; they also pass with llvmpipe.
 
 ## Mesh particle instancing
 
-All **nine reachable Scene Particles operators** (`0xc5`) now execute. These
+All **nine reachable Theta Scene Particles operators** (`0xc5`) now execute. These
 repeat child meshes/scenes along lines or named splines; the separate
 PartEmitter/PartSystem effects simulate particles over elapsed milliseconds
 (see below). The native operator supports seeded cube, normalized-surface
@@ -959,6 +966,17 @@ gravity, pulse displacement, spline orientation and random/angular velocities.
 Children receive the original particle index in `KV_SELECT` and wrapped phase in
 `KV_FRACTION`; both variables are restored before sibling scene execution.
 Instances share cached mesh geometry across frames.
+
+The optional second input now accepts a spatial GenSpline. Its matrix replaces
+the preceding named-curve transform and rotates the particle's random, gravity
+and pulse offset before adding it to the spline position. It skips line motion,
+ignores spline zoom and evaluates with phase zero; angular velocity is applied
+afterward. This path matches the extracted handler across 2,816 synthetic cases,
+including simultaneous named/spatial curves and changing initialization values.
+A scene integration check uses a real derivative-facing spatial spline with
+non-unit zoom. Four saved Debris particle operators, two with GenSpline inputs,
+also match at five times. These checks pass under Clang ASan/UBSan. The remaining
+35 saved particle operators use optimized mesh instancing, which is not ported.
 
 Theta saves the older 16-word parameter layout. `WerkDoc::Read` copies this prefix
 over editor defaults; the later motion parameters all default to zero. The native

@@ -1,6 +1,7 @@
 // Distributed under the BSD license in werkkzeug3/LICENSE.txt.
 #include "frame_fixture.hpp"
 #include "wz3/particles.hpp"
+#include "wz3/spline3d.hpp"
 #include "mesh_kernel.hpp"
 #include <cfenv>
 #include <fstream>
@@ -20,12 +21,18 @@ struct EngMesh {
   void UpdateInstanceCount(std::ptrdiff_t) {}
 };
 struct GenScene {EngMesh* DrawMesh{};struct Children {int Count{};GenScene* operator[](int) {return nullptr;}} Childs;};
-struct GenSpline {void Eval(float,int,sMatrix&,float&) {throw std::runtime_error("unexpected GenSpline in source oracle");}};
+struct GenSpline {
+  wz3::ParticleSpatialPath path;
+  void Eval(float time,int phase,sMatrix& m,float& zoom) {
+    check(phase==0,"particle spline phase must be zero");const auto v=path(time);zoom=7;
+    m.i.Init(v[0],v[1],v[2],v[3]);m.j.Init(v[4],v[5],v[6],v[7]);m.k.Init(v[8],v[9],v[10],v[11]);m.l.Init(v[12],v[13],v[14],v[15]);
+  }
+};
 struct KSpline {
   const wz3::SplineLibrary& splines;std::size_t id;
   void Eval(float time,sVector& v) {const auto a=splines.evaluate(id,time);v.Init(a[0],a[1],a[2],a[3]);}
 };
-struct KOp {void* Cache;int GetInputCount() {return 1;}KOp* GetInput(int) {return nullptr;}};
+struct KOp {void* Cache;KOp* spatial{};int GetInputCount() {return spatial ? 2 : 1;}KOp* GetInput(int i) {return i==1 ? spatial : nullptr;}};
 struct KEnvironment {
   void* instance{};bool initialized{};sVector Var[32];std::vector<wz3::SceneParticle> output;
   struct Stack {
@@ -56,10 +63,11 @@ struct Fixture {
   ScenePartMem memory{};GenScene scene;KOp op{&scene};KEnvironment env;
   Fixture() {env.instance=&memory;}
   ~Fixture() {delete[] memory.Pos;}
-  std::vector<wz3::SceneParticle> run(std::span<const std::uint32_t> parameters,KSpline* spline=nullptr) {
+  std::vector<wz3::SceneParticle> run(std::span<const std::uint32_t> parameters,KSpline* spline=nullptr,GenSpline* spatial=nullptr) {
     std::array<std::uint32_t,30> p{};std::copy(parameters.begin(),parameters.end(),p.begin());
     const auto real=[&](unsigned i){return wz3::as_float(p[i]);};const auto vec=[&](unsigned i){sVector v;v.Init(real(i),real(i+1),real(i+2));return v;};
-    env.output.clear();Exec_Scene_Particles(&op,&env,int(p[0]),int(p[1]),int(p[2]),vec(3),vec(6),vec(9),real(12),vec(13),vec(16),vec(19),real(22),real(23),vec(24),vec(27),spline);
+    KOp input{spatial};op.spatial=spatial ? &input : nullptr;
+    env.output.clear();Exec_Scene_Particles(&op,&env,int(p[0]),int(p[1]),int(p[2]),vec(3),vec(6),vec(9),real(12),vec(13),vec(16),vec(19),real(22),real(23),vec(24),vec(27),spline);op.spatial=nullptr;
     return env.output;
   }
 };
@@ -108,6 +116,30 @@ void analytic() {
   near(particles[0].fraction,-1.25f,"nonlooping negative animation adds one only once");
   const auto rounding=std::fegetround();std::fesetround(FE_DOWNWARD);native.evaluate(0,values);check(std::fegetround()==FE_DOWNWARD,"particle evaluation must restore caller rounding");std::fesetround(rounding);
   values[1]=0;check(native.evaluate(0,values).empty(),"zero particle count");
+}
+void spatial_paths() {
+  const auto p=splined();const wz3::SplineLibrary curves(p);wz3::SceneParticles native(curves);source::KSpline named{curves,0};
+  const wz3::ParticleSpatialPath path=[](float t){return wz3::scene_srt(std::array<std::uint32_t,9>{f(1.2f),f(.7f),f(1.1f),f(t*.17f),f(.13f),f(t*.1f),f(t*3),f(2-t),f(-t)});};
+  source::GenSpline original_path{path};unsigned count=0;
+  for(unsigned mode=0;mode<256;++mode) {
+    source::Fixture original;std::array<std::uint32_t,30> values{mode,13,mode};
+    for(unsigned i=3;i<30;++i)values[i]=f(i*.02f);values[23]=f(.1f);
+    for(float time:{-.25f,0.f,.125f,.75f,1.25f,2.5f}) {
+      values[12]=f(time);equal(native.evaluate(mode,values,0,path),original.run(values,&named,&original_path));++count;
+    }
+    for(unsigned index:{16u,19u,23u,27u,6u}) {values[index]=f(.7f);equal(native.evaluate(mode,values,0,path),original.run(values,&named,&original_path));++count;}
+  }
+  FrameFixture fixture;const auto view=fixture.viewport(),mesh=fixture.g.nodes[view].inputs[0],curve=fixture.add(0x18);
+  std::vector<std::uint32_t> blob(16);blob[0]=2;blob[1]=3;blob[3]=3;blob[6]=f(10);blob[7]=f(1);
+  blob.insert(blob.end(),{0,0,0,0,0,0,0,0,f(7),0,f(1),f(10),0,0,0,0,0,f(7)});
+  fixture.p.operators[curve].blob_offset=fixture.p.bytes.size();fixture.p.operators[curve].blob_size=blob.size()*4;
+  for(auto w:blob)for(unsigned c=0;c<4;++c)fixture.p.bytes.push_back(std::uint8_t(w>>(8*c)));
+  std::vector<std::uint32_t> values(30);values[0]=0x20;values[1]=4;values[12]=f(.125f);values[13]=f(999);
+  const auto particles=fixture.add(0xc5,values,{mesh,curve});fixture.g.nodes[view].inputs={particles};
+  wz3::ScenePlayer player(fixture.p,fixture.g);const auto scene=player.viewport(view,wz3::frame_environment(0),1);
+  check(scene.instances.size()==4,"GenSpline particles must execute only their scene input");
+  for(unsigned i=0;i<4;++i) {near(scene.instances[i].world[12],10*(.125f+.25f*i),"spatial particle position must exclude line/zoom");near(scene.instances[i].world[8],1,"spatial particle orientation");near(scene.instances[i].world[5],1,"spatial particle zoom must be ignored");}
+  std::cout<<count<<" spatial particle cases match archived handler; real spline input, orientation and zoom integration pass\n";
 }
 void scene_variables() {
   FrameFixture x;const auto view=x.viewport(),cube=x.g.nodes[view].inputs[0];
@@ -250,12 +282,35 @@ void theta(const char* path) {
   }
   check(count==9,"Theta reachable scene particle count");std::cout<<"All 9 Theta Particles operators match extracted source at five times\n";
 }
+void debris(const char* path) {
+  const auto p=wz3::read_project(path);const auto g=wz3::connect(p);const wz3::SplineLibrary curves(p);wz3::SpatialSplines spatial(p,g);wz3::SceneParticles native(curves);
+  unsigned checked=0,with_path=0,optimized=0;
+  for(std::size_t id=0;id<p.operators.size();++id)if(g.nodes[id].reachable && p.operators[id].command==0xc5) {
+    const auto& op=p.operators[id];if(op.parameters[0]&0x100){++optimized;continue;}
+    std::optional<std::size_t> curve;if(!op.splines.empty() && !op.splines[0].empty())curve=curves.find(op.splines[0]);
+    source::Fixture original;source::KSpline named{curves,curve.value_or(0)};
+    auto env=wz3::frame_environment(0);wz3::ParticleSpatialPath path;
+    if(g.nodes[id].inputs.size()==2) {
+      const auto input=g.nodes[id].inputs[1];spatial.precalculate(input,env);
+      path=[&,input](float t){return spatial.evaluate(input,t,0,env).world;};++with_path;
+    }
+    source::GenSpline original_path{path};
+    for(float time:{0.f,.125f,.5f,.875f,1.25f}) {
+      env=wz3::frame_environment(std::int32_t(time*65536));const wz3::AnimationScope animation(wz3::compile_animation(op,curves),curves,op.parameters,env);
+      equal(native.evaluate(id,animation.parameters,curve,path),original.run(animation.parameters,curve ? &named : nullptr,path ? &original_path : nullptr));
+    }
+    ++checked;
+  }
+  check(checked && with_path,"no saved Debris spatial particle recipes checked");
+  std::cout<<checked<<" saved Debris particle operators match archived handler at five times ("<<with_path<<" with GenSpline); "<<optimized<<" optimized mesh-instancing operators remain unsupported\n";
+}
 }
 int main(int argc,char** argv) {
   try {
     if(argc==3 && std::string_view(argv[1])=="--release-oracle")released_oracle(argv[2]);
+    else if(argc==3 && std::string_view(argv[1])=="--debris")debris(argv[2]);
     else if(argc==4 && std::string_view(argv[1])=="--release-motion-oracle")released_motion_oracle(argv[2],argv[3]);
-    else {oracle();analytic();released();released_motion();scene_variables();if(argc>1)theta(argv[1]);}
+    else {oracle();analytic();spatial_paths();released();released_motion();scene_variables();if(argc>1)theta(argv[1]);}
   }
   catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}
 }

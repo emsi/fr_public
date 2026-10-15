@@ -18,6 +18,10 @@ struct Nearest {
 SceneMatrix matrix(const legacy::sMatrix& m) {
   return {m.i.x,m.i.y,m.i.z,m.i.w,m.j.x,m.j.y,m.j.z,m.j.w,m.k.x,m.k.y,m.k.z,m.k.w,m.l.x,m.l.y,m.l.z,m.l.w};
 }
+legacy::sMatrix matrix(const SceneMatrix& v) {
+  legacy::sMatrix m;m.i.Init(v[0],v[1],v[2],v[3]);m.j.Init(v[4],v[5],v[6],v[7]);
+  m.k.Init(v[8],v[9],v[10],v[11]);m.l.Init(v[12],v[13],v[14],v[15]);return m;
+}
 }
 struct SceneParticles::Impl {
   const SplineLibrary& splines;std::shared_ptr<ParticleRandom> random;bool released_handler;
@@ -57,13 +61,13 @@ struct SceneParticles::Impl {
 };
 SceneParticles::SceneParticles(const SplineLibrary& s,std::shared_ptr<ParticleRandom> rng,bool released):impl(std::make_unique<Impl>(s,std::move(rng),released)) {}
 SceneParticles::~SceneParticles()=default;
-std::vector<SceneParticle> SceneParticles::evaluate(std::size_t id,std::span<const std::uint32_t> parameters,std::optional<std::size_t> spline) {
+std::vector<SceneParticle> SceneParticles::evaluate(std::size_t id,std::span<const std::uint32_t> parameters,std::optional<std::size_t> spline,const ParticleSpatialPath& spatial_path) {
   const Nearest rounding;
   // WerkDoc::Read copies the saved prefix onto the editor defaults. The added
   // parameters 16..29 all default to zero; Theta saves the older 16-word layout.
   require(parameters.size()>=16 && parameters.size()<=30,"unsupported scene Particles parameter layout");
   const bool released=impl->released_handler;
-  if(released)require(parameters.size()==16 && !(parameters[0]&~0x3fu),"unsupported released Particles layout/flags");
+  if(released)require(parameters.size()==16 && !(parameters[0]&~0x3fu) && !spatial_path,"unsupported released Particles layout/flags");
   std::array<std::uint32_t,30> p{};std::copy(parameters.begin(),parameters.end(),p.begin());
   const auto mode=p[0];require(!(mode&~0xffu),"optimized particle mesh instances are not ported");require(p[1]<=16384,"scene particle count limit");
   for(unsigned i=3;i<30;++i)require(std::isfinite(as_float(p[i])) && std::abs(as_float(p[i]))<=1e6f,"invalid scene particle numeric parameter");
@@ -94,7 +98,11 @@ std::vector<SceneParticle> SceneParticles::evaluate(std::size_t id,std::span<con
     }
     // In final 1.01, spline and line placement are exclusive. The later
     // archive handler's else belongs to a separate GenSpline input branch.
-    if(!released || !(mode&1) || !spline)
+    if(spatial_path) {
+      // GenSpline replaces the preceding named-curve matrix. Its orientation
+      // also rotates the random/gravity/pulse offset; line motion is skipped.
+      m=matrix(spatial_path(fraction));position.Rotate3(m);m.l.Add3(position);
+    }else if(!released || !(mode&1) || !spline)
       for(unsigned c=0;c<3;++c)m.l[c]+=position[c]+as_float(p[13+c])*fraction;
     if((mode&0x10) && !released) {
       legacy::sMatrix rotation,combined;std::array<float,3> angles{};

@@ -283,10 +283,12 @@ struct ScenePlayer::Impl {
       require(node.inputs.empty(),"PartEmitter mesh input is not ported");
       effects.emit(instance(id,env),p,world,clock);break;
     case 0xc5: {
-      require(node.inputs.size()==1,"Particles with a GenSpline input is not ported");
+      require(node.inputs.size()==1 || (node.inputs.size()==2 && !project.runtime_graph),"unsupported Particles inputs");
       require(op.splines.size()<=1,"unsupported Particles spline layout");std::optional<std::size_t> spline;
       if(!op.splines.empty() && !op.splines[0].empty()) {spline=splines.find(op.splines[0]);require(spline.has_value(),"unresolved particle spline");}
-      const auto instances=particles.evaluate(instance(id,env),p,spline);const auto selection=env.variables[3],fraction=env.variables[11];
+      ParticleSpatialPath path;
+      if(node.inputs.size()==2)path=[&](float time){return spatial.evaluate(node.inputs[1],time,0,env,timeline).world;};
+      const auto instances=particles.evaluate(instance(id,env),p,spline,path);const auto selection=env.variables[3],fraction=env.variables[11];
       try {for(const auto& particle:instances) {
         // The released handler predates KV_SELECT/KV_FRACTION publication.
         if(!project.runtime_graph) {env.variables[3].fill(float(particle.index));env.variables[11].fill(particle.fraction);}

@@ -1,9 +1,11 @@
 // Distributed under the BSD license in werkkzeug3/LICENSE.txt.
 #pragma once
 #include "wz3/scene.hpp"
+#include <functional>
 
 namespace wz3 {
 class ParticleRandom;
+using ParticleSpatialPath=std::function<SceneMatrix(float)>;
 struct SceneParticle {
   unsigned index{};
   float fraction{};
@@ -19,6 +21,6 @@ public:
   explicit SceneParticles(const SplineLibrary&,std::shared_ptr<ParticleRandom> random={},bool released_handler=false);
   ~SceneParticles();
   std::vector<SceneParticle> evaluate(std::size_t operator_id,
-      std::span<const std::uint32_t> parameters,std::optional<std::size_t> spline={});
+      std::span<const std::uint32_t> parameters,std::optional<std::size_t> spline={},const ParticleSpatialPath& spatial_path={});
 };
 } // namespace wz3

@@ -386,6 +386,7 @@ if(BUILD_TESTING)
   target_compile_options(wz3-particle-tests PRIVATE -frounding-math -ffp-contract=off)
   target_link_libraries(wz3-particle-tests PRIVATE wz3_project)
   add_test(NAME scene_particles COMMAND wz3-particle-tests "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta/theta_final.k")
+  add_test(NAME debris_particles COMMAND wz3-particle-tests --debris "${CMAKE_CURRENT_SOURCE_DIR}/../data/debris/debris_9241_c.k")
   find_file(WZ3_TEST_FONT_FILE NAMES DejaVuSans.ttf PATHS /usr/share/fonts/truetype/dejavu
     DOC "Font used for native atlas tests (override with an explicit TTF path)")
   if(WZ3_TEST_FONT_FILE)
