@@ -24,6 +24,12 @@ add_library(wz3_project src/project.cpp src/release_project.cpp src/graph.cpp sr
 set_source_files_properties(src/mesh_kernel.cpp src/mesh_noise.cpp src/animation.cpp src/timeline.cpp src/material_shader.cpp src/scene.cpp src/frame.cpp src/particles.cpp src/effect_particles.cpp src/walk.cpp src/print.cpp src/scene_draw.cpp src/lighting.cpp src/shadow.cpp src/fog.cpp PROPERTIES
   COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
 target_link_libraries(wz3_project PRIVATE JPEG::JPEG Freetype::Freetype)
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/dxt_kernel.inc"
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/dxt_kernel.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../base/_rygdxt.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/dxt_kernel.inc"
+  DEPENDS tools/dxt_kernel.py ../base/_rygdxt.cpp VERBATIM)
+target_sources(wz3_project PRIVATE src/texture_dxt.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/dxt_kernel.inc")
+set_source_files_properties(src/texture_dxt.cpp PROPERTIES COMPILE_OPTIONS "-fno-strict-aliasing;-fwrapv;-frounding-math;-ffp-contract=off;-Wno-pedantic;-Wno-unused-parameter")
 set_source_files_properties(src/font.cpp PROPERTIES COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
 target_sources(wz3_project PRIVATE src/material20.cpp)
 set_source_files_properties(src/material20.cpp PROPERTIES COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
@@ -276,6 +282,14 @@ if(BUILD_TESTING)
   target_compile_options(wz3-paragraph-tests PRIVATE -frounding-math -ffp-contract=off)
   target_link_libraries(wz3-paragraph-tests PRIVATE wz3_project)
   add_test(NAME paragraph_layout COMMAND wz3-paragraph-tests)
+  add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/dxt_upload_oracle.inc"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/dxt_upload_oracle.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../_start.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/dxt_upload_oracle.inc"
+    DEPENDS tools/dxt_upload_oracle.py tools/particles_oracle.py ../_start.cpp VERBATIM)
+  add_executable(wz3-dxt-tests tests/dxt.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/dxt_upload_oracle.inc")
+  target_include_directories(wz3-dxt-tests PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_link_libraries(wz3-dxt-tests PRIVATE wz3_project)
+  add_test(NAME texture_dxt COMMAND wz3-dxt-tests)
   add_executable(wz3-fog-tests tests/fog.cpp)
   target_link_libraries(wz3-fog-tests PRIVATE wz3_project)
   add_test(NAME fog_transform COMMAND wz3-fog-tests)
@@ -346,6 +360,7 @@ if(BUILD_TESTING)
     DOC "Font used for native atlas tests (override with an explicit TTF path)")
   if(WZ3_TEST_FONT_FILE)
     add_test(NAME debris_text COMMAND wz3-paragraph-tests "${CMAKE_CURRENT_SOURCE_DIR}/../data/debris/debris_9241_c.k" "${WZ3_TEST_FONT_FILE}")
+    add_test(NAME debris_dxt COMMAND wz3-dxt-tests "${CMAKE_CURRENT_SOURCE_DIR}/../data/debris/debris_9241_c.k" "${WZ3_TEST_FONT_FILE}")
     add_test(NAME theta_print COMMAND wz3-print-tests
       "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta/theta_final.k" "${WZ3_TEST_FONT_FILE}")
     add_executable(wz3-font-tests tests/font.cpp)
@@ -363,6 +378,9 @@ if(BUILD_TESTING)
       add_test(NAME native_v2_player COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/v2_player.py"
         "$<TARGET_FILE:wz3-player>" "$<TARGET_FILE:wz3-v2m>" "${CMAKE_CURRENT_SOURCE_DIR}/../.." "${WZ3_TEST_FONT_FILE}")
       set_tests_properties(native_v2_player PROPERTIES LABELS graphics TIMEOUT 60)
+      add_test(NAME native_debris_opening COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/debris_player.py"
+        "$<TARGET_FILE:wz3-player>" "${CMAKE_CURRENT_SOURCE_DIR}/../data/debris/debris_9241_c.k" "${WZ3_TEST_FONT_FILE}")
+      set_tests_properties(native_debris_opening PROPERTIES LABELS graphics TIMEOUT 240)
     endif()
     add_executable(wz3-presentation-tests tests/presentation.cpp src/frame_render.cpp src/render.cpp)
     target_include_directories(wz3-presentation-tests PRIVATE src)
@@ -385,6 +403,10 @@ if(BUILD_TESTING)
     target_link_libraries(wz3-material20-render-tests PRIVATE wz3_project PkgConfig::EGL PkgConfig::GLES)
     add_test(NAME gpu_material20 COMMAND wz3-material20-render-tests "${CMAKE_CURRENT_SOURCE_DIR}/../data/debris/debris_9241_c.k")
     set_tests_properties(gpu_material20 PROPERTIES LABELS graphics)
+    add_executable(wz3-dxt-render-tests tests/render_dxt.cpp src/frame_render.cpp src/render.cpp)
+    target_link_libraries(wz3-dxt-render-tests PRIVATE wz3_project PkgConfig::EGL PkgConfig::GLES)
+    add_test(NAME gpu_texture_dxt COMMAND wz3-dxt-render-tests)
+    set_tests_properties(gpu_texture_dxt PROPERTIES LABELS graphics)
     add_executable(wz3-mesh-material-tests tests/render_mesh_material.cpp src/frame_render.cpp src/render.cpp)
     target_link_libraries(wz3-mesh-material-tests PRIVATE wz3_project PkgConfig::EGL PkgConfig::GLES)
     add_test(NAME gpu_mesh_materials COMMAND wz3-mesh-material-tests "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta/theta_final.k")

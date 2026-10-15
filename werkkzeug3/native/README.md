@@ -36,17 +36,39 @@ still names `debris.v2m`.
 main viewport contains 76 mesh instances, two lights and 26 ChainLine cables.
 Continuous CPU preparation in 16 ms steps reaches 9,808 ms (beat 32.0394), then
 stops at the unported Glare effect, operator 10464. With an explicit font,
-the native player renders the opening city at 1280x640 (95 consecutive frames
-through 1.5 seconds), then encounters the unported DXT5 upload format in material
-22509 at 1,583 ms. A DejaVu Sans test capture shows textured buildings, lighting,
-shadows and cables. This is progress through the saved editor project, not a
-comparison against the released executable's images.
+the native player renders the opening city at 1280x640: 501 consecutive frames
+through 8 seconds pass in both offline and audio-callback-paced playback, with
+byte-identical endpoint captures. Continuing playback reaches Glare at 9,807 ms
+on the audio-sample clock. DejaVu Sans captures show textured buildings,
+lighting, shadows and cables. The playback test uses dummy audio; physical
+speaker output and synchronization remain unverified. This is progress through
+the saved editor project, not a comparison against the released executable's
+images. To play the supported opening from the repository root:
+
+```sh
+build/native/wz3-player werkkzeug3/data/debris/debris_9241_c.k \
+  --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf --duration 8
+```
+
+DejaVu Sans substitutes for the project's Arial font; its appearance is not an
+original-output match. DXT textures require S3TC support from the GLES driver.
 Remaining MINMESH/scene operators and Water/Glare/Color Correction effects
 also remain to be ported.
 The player synthesizes its V2 soundtrack into stereo PCM before playback, using
 the same SDL callback clock as Ogg music. The existing Theta renderer and released-clock profile
 do not establish compatibility with Debris. `debris_projects` compares the real
 wrapped files with their legacy documents and tests malformed container handling.
+
+DXT1/DXT5 textures use the archived Ryg compressor after the original 15-bit
+mip reduction and byte packing. Quality flags, channel order and tiny-mip block
+wrapping are preserved. The GPU receives compressed blocks directly, retains
+them between frames and reports missing S3TC support explicitly. Tests compare
+882 synthetic uploads and all five reachable Debris compressed textures against
+the archived `UpdateTexture` handler (using the same archived compressor).
+Separate GPU tests compare every sampled channel, including alpha and 1x1/2x2
+mips, with an independent block decoder. The 65-test Release suite, including
+21 graphics tests, passes on the Radeon RX 7900 XT; DXT CPU checks also pass
+under Clang ASan/UBSan.
 
 The native MINMESH core uses the archived grid/cube/sphere, selection, material
 cluster, transform, bend, extrusion along normals, triangulation and centering
@@ -539,7 +561,9 @@ its appearance and metrics are **not** claimed to match GDI. Supplying an Arial
 file still needs comparison against original captures. Cached intro text is
 unaffected by this option. Native atlas generation currently supports printable
 ASCII, unstretched scalable fonts and complete packing; missing glyphs, overflow,
-uncached paragraphs fail explicitly. Cached v3 atlases now load their 256 saved
+or unsupported atlas modes fail explicitly. Uncached paragraph textures use the
+separate layout/rasterization path described in the Debris section. Cached v3
+atlases now load their 256 saved
 letter records and 3-bit coverage directly, without a host font. Signed bearings,
 inner spacing and UVs outside the texture are preserved; v2 remains supported
 for paragraph masks only. Cached data takes precedence over `--font-file`.
@@ -1560,7 +1584,7 @@ texture-alpha mode. New GPU target storage starts black with depth one because
 the original initial contents are unspecified; later draws retain color history.
 For released graphs, depth/stencil is shared across targets and reset at frame
 start as described below. Editor previews retain separate attachments. Color and
-signed-normal uploads use the verified conversion rules above; other legacy
+signed-normal and DXT1/DXT5 uploads use the verified conversion rules above; other legacy
 upload formats remain unsupported. Saved-material mesh
 uploads are retained across frames; the diagnostic checker still rebuilds them
 for each viewport draw.
