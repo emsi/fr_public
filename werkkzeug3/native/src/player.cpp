@@ -29,8 +29,9 @@ struct Sdl {
   ~Sdl(){SDL_Quit();}
 };
 struct Window {
+  std::string demo_name;
   SDL_Window* window{};SDL_GLContext context{};
-  Window(unsigned width,unsigned height) {
+  Window(unsigned width,unsigned height,const std::string& name):demo_name(name) {
     try {
       SDL_SetHint(SDL_HINT_VIDEO_X11_FORCE_EGL,"1");
       sdl_check(SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK,SDL_GL_CONTEXT_PROFILE_ES)==0,"GLES profile");
@@ -40,7 +41,7 @@ struct Window {
       SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE,8);SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE,8);
       SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE,0);SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE,0);
       SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER,1);SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS,0);
-      window=SDL_CreateWindow("fr-038: Theta - loading",SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED,width,height,
+      window=SDL_CreateWindow((demo_name+" - loading").c_str(),SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED,width,height,
         SDL_WINDOW_OPENGL|SDL_WINDOW_RESIZABLE|SDL_WINDOW_ALLOW_HIGHDPI);
       sdl_check(window,"create window");context=SDL_GL_CreateContext(window);sdl_check(context,"create GLES3 context");
       if(SDL_GL_SetSwapInterval(1)!=0)std::cerr<<"Vsync unavailable; pacing presentation to 60 Hz\n";
@@ -58,9 +59,11 @@ struct Window {
     int width=0,height=0;SDL_GL_GetDrawableSize(window,&width,&height);
     if(width>0 && height>0){renderer.present(width,height);SDL_GL_SwapWindow(window);}
   }
+  void title(const std::string& status) {
+    SDL_SetWindowTitle(window,(demo_name+" - "+status).c_str());
+  }
   void loading(double progress) {
-    const auto title="fr-038: Theta - preparing "+std::to_string(int(progress*100))+"% (Escape to cancel)";
-    SDL_SetWindowTitle(window,title.c_str());
+    title("preparing "+std::to_string(int(progress*100))+"% (Escape to cancel)");
     int width=0,height=0;SDL_GL_GetDrawableSize(window,&width,&height);if(width<=0 || height<=0)return;
     glBindFramebuffer(GL_FRAMEBUFFER,0);glDisable(GL_SCISSOR_TEST);glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
     glClearColor(.025f,.03f,.04f,1);glClear(GL_COLOR_BUFFER_BIT);
@@ -137,7 +140,8 @@ int main(int argc,char** argv) {
     std::cout<<"Music: "<<pcm.rate<<" Hz, "<<pcm.channels<<" channels, "<<double(pcm.frames())/pcm.rate<<" seconds\n";
     Sdl sdl(!offline && !preload_only);std::unique_ptr<wz3::SdlAudio> audio;
     if(!preload_only && !offline)audio=std::make_unique<wz3::SdlAudio>(pcm,mute);
-    Window window(width,height);options=wz3::rendered_texture_options(project,graph,options);
+    Window window(width,height,project.demo_name.empty() ? project_path.filename().string() : project.demo_name);
+    options=wz3::rendered_texture_options(project,graph,options);
     options.cache=std::make_shared<wz3::TextureCache>(project,graph,options);
     auto assets=std::make_shared<wz3::SceneAssets>(project,graph,options);
     wz3::FrameRenderer renderer(project,graph,options,wz3::FrameRenderer::Context::Current);
@@ -196,7 +200,7 @@ int main(int argc,char** argv) {
         std::cout<<record.str();
       }
     };
-    draw(0);window.present(renderer);SDL_SetWindowTitle(window.window,"fr-038: Theta - Escape to exit");
+    draw(0);window.present(renderer);window.title("Escape to exit");
     // No sound advances during loading. Subsequent fixed 16 ms steps
     // retain simulation/target history, including while catching up after a stall.
     if(audio) {require(audio->position()==0 && audio->callback_count()==0,"audio advanced during loading");audio->start();}
