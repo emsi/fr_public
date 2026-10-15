@@ -326,4 +326,7 @@ if(BUILD_TESTING)
   add_test(NAME theta_projects COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/projects.py" "$<TARGET_FILE:wz3-inspect>"
     "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta")
+  add_test(NAME debris_projects COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/debris_projects.py" "$<TARGET_FILE:wz3-inspect>"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../data/debris")
 endif()

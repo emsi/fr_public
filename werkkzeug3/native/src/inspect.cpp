@@ -25,6 +25,7 @@ int main(int argc, char** argv) {
       for (const auto& channel : spline.channels) spline_keys += channel.size();
     const auto bpm = wz3::as_float(project.settings[4]);
     std::cout << "{\n  \"version\": " << project.version
+      << ",\n  \"nova_container\": " << (project.nova_container ? "true" : "false")
       << ",\n  \"runtime_graph\": " << (project.runtime_graph ? "true" : "false")
       << ",\n  \"release_timing\": " << (project.release_timing ? "true" : "false")
       << ",\n  \"runtime_animation_programs\": " << runtime_programs

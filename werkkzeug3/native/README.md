@@ -15,6 +15,31 @@ The editor project has different content and a beat-609 endpoint. Audible
 synchronization on a physical sound device and whole-demo original-output
 fidelity remain unverified; see the release comparison below.
 
+## Debris port in progress
+
+The native reader accepts both archived Debris projects directly:
+
+```sh
+build/native/wz3-inspect werkkzeug3/data/debris/debris_9241_c.k > build/native/debris.json
+```
+
+Each contains a version-14 legacy document inside a version-1 `nova` container,
+followed by an empty `WerkDoc2`. The reader validates both sections and preserves
+file-relative operator/blob offsets. Populated Nova event or scene lists fail
+explicitly; they are a different execution model and are not needed by these
+Debris projects. Both projects contain 49,701 operators and 161 events; the
+current graph connection finds 20,989 operators reachable from its entry points.
+The `_c` project names the included `debris/debris_ost.v2m`; the other project
+still names `debris.v2m`.
+
+**Debris does not play yet.** CPU frame preparation reaches material operator
+8462 and rejects its unported `Material 2.0` implementation. The project also
+contains later MINMESH operators and Water/Glare/Color Correction effects.
+The player currently decodes Ogg only, so V2 music synthesis and synchronization
+must also be implemented. The existing Theta renderer and released-clock profile
+do not establish compatibility with Debris. `debris_projects` compares the real
+wrapped files with their legacy documents and tests malformed container handling.
+
 ## Play Theta on Linux
 
 In addition to the base dependencies below, install SDL2, Vorbis, EGL and GLES

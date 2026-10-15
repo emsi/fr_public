@@ -19,6 +19,10 @@ public:
   explicit Reader(std::span<const std::uint8_t> bytes) : bytes_(bytes) {}
   std::size_t offset() const { return pos_; }
   std::size_t remaining() const { return bytes_.size() - pos_; }
+  void limit(std::size_t end) {
+    if (end < pos_ || end > bytes_.size()) fail("invalid document boundary");
+    bytes_ = bytes_.first(end);
+  }
   [[noreturn]] void fail(std::string_view reason) const {
     throw std::runtime_error("at byte " + std::to_string(pos_) + ": " + std::string(reason));
   }
@@ -95,14 +99,39 @@ Project parse_project(std::vector<std::uint8_t> bytes) {
   Project project;
   project.bytes = std::move(bytes);
   Reader reader(project.bytes);
+  // WerkkzeugApp::Write prefixes the legacy WerkDoc with "nova", version 1,
+  // and appends a WerkDoc2. Debris still uses the legacy timeline; its Nova
+  // event/scene lists are empty. Do not silently discard populated Nova data.
+  constexpr std::array<std::uint8_t,4> nova_magic{'n','o','v','a'};
+  project.nova_container = project.bytes.size() >= nova_magic.size() &&
+    std::equal(nova_magic.begin(),nova_magic.end(),project.bytes.begin());
+  if (project.nova_container) {
+    reader.skip(4);
+    reader.expect(1, "unsupported Nova container version");
+  }
   reader.expect(0x3c3c3c3c, "incorrect project magic");
   reader.expect(0x01000100, "not a Werkkzeug3 document");
   project.version = reader.word();
   if (project.version != 13 && project.version != 14)
     reader.fail("supported project versions are 13 and 14");
   const auto body_words = reader.word();
-  if (reader.remaining() < 4 || std::size_t(body_words) * 4 != reader.remaining() - 4)
+  if (reader.remaining() < 4 || std::size_t(body_words) > (reader.remaining() - 4) / 4 ||
+      (!project.nova_container && std::size_t(body_words) * 4 != reader.remaining() - 4))
     reader.fail("declared project size does not match file");
+  if (project.nova_container) {
+    const auto document_end = reader.offset() + std::size_t(body_words) * 4 + 4;
+    Reader nova(project.bytes);
+    nova.skip(document_end);
+    nova.expect(1, "unsupported Nova document version");
+    nova.expect(0, "Nova timeline events are not ported");
+    nova.expect(0, "Nova scenes are not ported");
+    nova.skip(16); // reserved, ignored by WerkDoc2::Read
+    if (nova.word() > 8) nova.fail("invalid Nova link count");
+    if (nova.remaining()) nova.fail("unexpected trailing Nova data");
+    // Keep offsets relative to the original file so cached texture/font blobs
+    // continue to address project.bytes, including the eight-byte prefix.
+    reader.limit(document_end);
+  }
   const auto event_count = reader.count(64, 100000);
   const auto page_count = reader.count(44, 4096);
   const auto operator_count = reader.count(56, 100000);
