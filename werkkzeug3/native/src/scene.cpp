@@ -162,8 +162,8 @@ struct ScenePlayer::Impl {
   }
   void prepare_effect(std::size_t id,std::span<const std::uint32_t> p) {
     valid(id);const auto cmd=project.operators[id].command;if(effect_order.contains(id))return;
-    if(cmd==0x74) {
-      require(p.size()==11 && graph.nodes[id].inputs.empty() && graph.nodes[id].links.empty(),"unsupported Glare layout");
+    if(cmd==0x74 || cmd==0x75) {
+      require(p.size()==11 && graph.nodes[id].inputs.empty() && graph.nodes[id].links.empty(),"unsupported Glare/Color Correction layout");
       effect_order.emplace(id,EffectOrder{std::bit_cast<std::int32_t>(p[0]),0});return;
     }
     if(cmd!=0x64 && cmd!=0x61 && cmd!=0x6b)return;
@@ -193,9 +193,10 @@ struct ScenePlayer::Impl {
     valid(id);require(depth<512,"effect alias depth limit");Visit visit(visiting,id);
     const auto& op=project.operators[id];const auto& node=graph.nodes[id];const AnimationScope scope(program(id),splines,op.parameters,env);
     if(op.command>=1 && op.command<=3) {effect(alias(id),env,world,frame,current_camera,key,depth+1);return;}
-    if(op.command==0x74) {
-      require(scope.parameters.size()==11,"unsupported Glare layout");SceneEffectDraw draw;draw.operator_id=id;draw.sort_key=key;draw.glare.emplace();
-      std::copy(scope.parameters.begin(),scope.parameters.end(),draw.glare->parameters.begin());frame.effects.push_back(std::move(draw));return;
+    if(op.command==0x74 || op.command==0x75) {
+      require(scope.parameters.size()==11,"unsupported Glare/Color Correction layout");SceneEffectDraw draw;draw.operator_id=id;draw.sort_key=key;
+      auto& parameters=op.command==0x74 ? draw.glare.emplace().parameters : draw.color_correction.emplace().parameters;
+      std::copy(scope.parameters.begin(),scope.parameters.end(),parameters.begin());frame.effects.push_back(std::move(draw));return;
     }
     require(op.command==0x64 || op.command==0x61 || op.command==0x6b,"effect alias execution is not ported");
     std::optional<SceneRibbon> ribbon;
@@ -251,7 +252,7 @@ struct ScenePlayer::Impl {
       frame.instances.push_back({id,geometry(target),world,env.variables[0][0],pass});return;
     }
     if(operator_info(project.operators[target].command).category=="EFFECT") {
-      if((project.operators[target].command!=0x64 && project.operators[target].command!=0x61 && project.operators[target].command!=0x6b && project.operators[target].command!=0x74))throw std::runtime_error("scene effect "+std::to_string(target)+" ("+std::string(operator_info(project.operators[target].command).name)+") is not ported");
+      if((project.operators[target].command!=0x64 && project.operators[target].command!=0x61 && project.operators[target].command!=0x6b && project.operators[target].command!=0x74 && project.operators[target].command!=0x75))throw std::runtime_error("scene effect "+std::to_string(target)+" ("+std::string(operator_info(project.operators[target].command).name)+") is not ported");
       require(jobs.size()<65536,"effect job limit");
       const auto key=effect_order.at(target);const auto render_pass=std::clamp(std::int64_t(key.pass)+pass,std::int64_t(0),std::int64_t(255));
       jobs.push_back({id,world,env.variables,(std::uint32_t(render_pass)<<24)|(key.usage<<16)});return;

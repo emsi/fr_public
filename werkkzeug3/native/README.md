@@ -37,16 +37,19 @@ main viewport contains 76 mesh instances, two lights and 26 ChainLine cables.
 With an explicit font, the native player renders the opening city at 1280x640:
 1,251 consecutive frames through 20 seconds pass in both offline and
 audio-callback-paced playback, with byte-identical endpoint captures.
-Continuous GPU rendering and callback-paced playback now also pass 60 seconds
-(3,751 frames), with byte-identical captures at 54, 55 and 60 seconds showing
-the animated fragments. The longer callback-paced run took 79.8 wall seconds
-after 121.4 seconds of preparation and fell up to 20.0 seconds behind the audio
-clock. It allocated no additional cached meshes, textures, targets or GPU
-buffers during playback. This verifies image consistency; synchronized
-real-time Debris playback still needs performance work.
-Optimized particle mesh instancing now evaluates and renders. The next
-continuous-run blocker is Color Correction at the same 63,680 ms transition.
-The 60-second capture remains byte-identical after the instancing changes.
+Continuous GPU rendering and callback-paced playback now pass 110 seconds
+(6,876 frames), with byte-identical captures at 64, 80 and 110 seconds showing
+particle clouds and the later city/train scenes. The callback-paced run took
+118.9 wall seconds after 164.7 seconds of preparation and fell up to 21.6 seconds
+behind the audio clock. It allocated no additional cached meshes, textures,
+targets, mesh/shadow/instance buffers or shaders during playback. This verifies
+image consistency; synchronized real-time Debris playback still needs
+performance work. Optimized particle mesh instancing and Color Correction are
+now supported. The next continuous-run failure is at
+110,207 ms: material 10399 requires bitmap Render operator 10366. That operator
+bakes an IPP scene at time zero into a 512x512 texture, then returns the pixels
+to the procedural bitmap graph. It needs a rendering callback in texture
+precalculation. The 60-second capture remains byte-identical to the earlier port.
 DejaVu Sans captures show textured buildings,
 lighting, shadows and cables. The playback test uses dummy audio; physical
 speaker output and synchronization remain unverified. This is progress through
@@ -55,12 +58,12 @@ images. To play the supported opening from the repository root:
 
 ```sh
 build/native/wz3-player werkkzeug3/data/debris/debris_9241_c.k \
-  --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf --duration 60
+  --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf --duration 110
 ```
 
 DejaVu Sans substitutes for the project's Arial font; its appearance is not an
 original-output match. DXT textures require S3TC support from the GLES driver.
-Remaining MINMESH/scene operators and Water/Color Correction effects
+Remaining MINMESH/scene operators, rendered bitmaps and the Water effect
 also remain to be ported.
 The player synthesizes its V2 soundtrack into stereo PCM before playback, using
 the same SDL callback clock as Ogg music. The existing Theta renderer and released-clock profile
@@ -89,6 +92,23 @@ including nonuniform/mirrored transforms, lighting, fog, generated coordinates
 and an offscreen prototype. Separate checks cover zero counts, retained shadow
 behavior, shared arrays, frame snapshots, buffer reuse and the original vertex/
 index caps. These checks pass under Clang ASan/UBSan.
+
+Color Correction executes the archived pixel shader operations: arithmetic-mean
+grayscale selects between two color/gray mixtures, the saved gamma color is
+subtracted with saturation, then brightness color and amplification are applied.
+Debug mode displays the threshold ramp; alpha stays unchanged. The capture is
+taken at the start of a render pass, after the preceding material insert, and
+is shared with Glare's explicit capture. Multiple corrections in one pass read
+the same captured image unless Glare overwrites it. Captured storage grows
+without shrinking and avoids sampling the active output attachment.
+
+The original handler checks 320 constant sets and all 12 reachable Debris recipes
+at five animation times. GPU tests check 64 synthetic cases and all 12 saved
+recipes against independent scalar pixel arithmetic, with a maximum allowed
+error of 2/255 and exact alpha. Additional checks cover same/different-pass
+ordering, Glare interleaving, viewport cropping, resizing, repeated frames and
+loading reset. Color Correction and Glare regression checks pass under Clang
+ASan/UBSan; the complete Release suite passes all 74 tests.
 
 DXT1/DXT5 textures use the archived Ryg compressor after the original 15-bit
 mip reduction and byte packing. Quality flags, channel order and tiny-mip block

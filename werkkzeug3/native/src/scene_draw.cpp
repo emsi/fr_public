@@ -103,7 +103,10 @@ SceneDrawList scene_draw_jobs(const SceneFrame& scene,unsigned width,unsigned he
     if(next>65535)throw std::runtime_error("scene material sort limit");
     material_ids[{id,p}]=next++;
   }
-  for(std::size_t i=0;i<scene.effects.size();++i)result.jobs.push_back({scene.effects[i].sort_key,0,0,0,i,{}});
+  for(std::size_t i=0;i<scene.effects.size();++i) {
+    result.jobs.push_back({scene.effects[i].sort_key,0,0,0,i,{}});
+    if(scene.effects[i].color_correction)result.capture_before_pass[scene.effects[i].sort_key>>24]=true;
+  }
   const auto mode=(scene.viewport_flags>>4)&3;if(mode==3)throw std::runtime_error("invalid scene paint mode");
   for(std::size_t i=scene.instances.size();i--;) {
     const auto& instance=scene.instances[i];if(!instance.mesh)throw std::runtime_error("missing scene geometry");

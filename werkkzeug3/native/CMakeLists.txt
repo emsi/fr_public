@@ -24,8 +24,8 @@ add_library(wz3_project src/project.cpp src/release_project.cpp src/graph.cpp sr
 set_source_files_properties(src/mesh_kernel.cpp src/mesh_noise.cpp src/animation.cpp src/timeline.cpp src/material_shader.cpp src/scene.cpp src/frame.cpp src/particles.cpp src/effect_particles.cpp src/walk.cpp src/print.cpp src/scene_draw.cpp src/lighting.cpp src/shadow.cpp src/fog.cpp PROPERTIES
   COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
 target_link_libraries(wz3_project PRIVATE JPEG::JPEG Freetype::Freetype)
-target_sources(wz3_project PRIVATE src/glare.cpp)
-set_source_files_properties(src/glare.cpp PROPERTIES COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
+target_sources(wz3_project PRIVATE src/glare.cpp src/color_correction.cpp)
+set_source_files_properties(src/glare.cpp src/color_correction.cpp PROPERTIES COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
 add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/dxt_kernel.inc"
   COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/dxt_kernel.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/../base/_rygdxt.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/dxt_kernel.inc"
@@ -303,6 +303,16 @@ if(BUILD_TESTING)
   target_include_directories(wz3-dxt-tests PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
   target_link_libraries(wz3-dxt-tests PRIVATE wz3_project)
   add_test(NAME texture_dxt COMMAND wz3-dxt-tests)
+  add_custom_command(
+    OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/color_correction_oracle.inc"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/color_correction_oracle.py"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../geneffectipp.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/color_correction_oracle.inc"
+    DEPENDS tools/color_correction_oracle.py tools/particles_oracle.py ../geneffectipp.cpp VERBATIM)
+  add_executable(wz3-color-correction-tests tests/color_correction.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/color_correction_oracle.inc")
+  target_include_directories(wz3-color-correction-tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_compile_options(wz3-color-correction-tests PRIVATE -frounding-math -ffp-contract=off)
+  target_link_libraries(wz3-color-correction-tests PRIVATE wz3_project)
+  add_test(NAME color_correction COMMAND wz3-color-correction-tests "${CMAKE_CURRENT_SOURCE_DIR}/../data/debris/debris_9241_c.k")
   add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/glare_oracle.inc"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/glare_oracle.py"
       "${CMAKE_CURRENT_SOURCE_DIR}/../geneffectipp.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/glare_oracle.inc"
@@ -439,6 +449,10 @@ if(BUILD_TESTING)
     target_link_libraries(wz3-dxt-render-tests PRIVATE wz3_project PkgConfig::EGL PkgConfig::GLES)
     add_test(NAME gpu_texture_dxt COMMAND wz3-dxt-render-tests)
     set_tests_properties(gpu_texture_dxt PROPERTIES LABELS graphics)
+    add_executable(wz3-color-correction-render-tests tests/render_color_correction.cpp src/frame_render.cpp src/render.cpp)
+    target_link_libraries(wz3-color-correction-render-tests PRIVATE wz3_project PkgConfig::EGL PkgConfig::GLES)
+    add_test(NAME gpu_color_correction COMMAND wz3-color-correction-render-tests "${CMAKE_CURRENT_SOURCE_DIR}/../data/debris/debris_9241_c.k")
+    set_tests_properties(gpu_color_correction PROPERTIES LABELS graphics)
     add_executable(wz3-glare-render-tests tests/render_glare.cpp src/frame_render.cpp src/render.cpp)
     target_link_libraries(wz3-glare-render-tests PRIVATE wz3_project PkgConfig::EGL PkgConfig::GLES)
     add_test(NAME gpu_glare COMMAND wz3-glare-render-tests)

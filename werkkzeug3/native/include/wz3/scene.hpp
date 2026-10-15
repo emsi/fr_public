@@ -6,6 +6,7 @@
 #include "wz3/material.hpp"
 #include "wz3/texture.hpp"
 #include "wz3/glare.hpp"
+#include "wz3/color_correction.hpp"
 
 namespace wz3 {
 // Column-major matrices. combine(parent,local) applies local first.
@@ -69,6 +70,7 @@ struct SceneEffectDraw {
   // Retain font pixels with the metrics that generated the glyph geometry.
   std::map<std::size_t,std::shared_ptr<const Texture>> textures;
   std::optional<GlareEffect> glare;
+  std::optional<ColorCorrectionEffect> color_correction;
 };
 struct SceneFrame {
   std::size_t viewport_id{},visited_operators{};

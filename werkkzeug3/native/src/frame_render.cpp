@@ -193,6 +193,26 @@ constexpr const char* glare_fragment=R"(#version 300 es
     }
   }
 )";
+constexpr const char* color_correction_fragment=R"(#version 300 es
+  precision highp float;
+  uniform sampler2D input_image;
+  uniform vec2 input_scale;
+  uniform vec4 constants[7];
+  in vec2 uv;
+  out vec4 color;
+  void main(){
+    vec2 p=uv*input_scale;
+    vec4 accu=texture(input_image,vec2(p.x,1.0-p.y));
+    float gray=dot(accu.rgb,vec3(0.333333333));
+    vec3 dark=accu.rgb*constants[0].rgb+gray*constants[5].rgb;
+    float blend=clamp(gray*constants[4].y+constants[4].x,0.0,1.0);
+    vec3 light=accu.rgb*constants[1].rgb+gray*constants[6].rgb;
+    vec3 mixed=light*(1.0-blend)+dark*blend;
+    mixed+=constants[4].z*blend;
+    // The saved "gamma" parameter is a saturated subtraction, not a power.
+    color=vec4(clamp(mixed-constants[3].rgb,0.0,1.0)*constants[2].rgb,accu.a);
+  }
+)";
 void clear(FrameClear c,bool stencil=false) {
   glDepthMask(GL_TRUE);glClearDepthf(1);glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
   glClearColor(((c.color>>16)&255)/255.0f,((c.color>>8)&255)/255.0f,(c.color&255)/255.0f,(c.color>>24)/255.0f);
@@ -346,13 +366,42 @@ struct FrameRenderer::Impl {
     glGenFramebuffers(1,&s.fbo);glBindFramebuffer(GL_FRAMEBUFFER,s.fbo);glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,s.color,0);
     require(glCheckFramebufferStatus(GL_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE,"incomplete Glare surface");++stats.surface_allocations;
   }
-  void glare(const GlareEffect& effect,const FrameTarget& target) {
-    const auto passes=glare_passes(effect.parameters,target.width,target.height,capture_width,capture_height);
+  void capture_current(const FrameTarget& target,bool clear_capture=false) {
     const auto& output=surfaces.at(target.surface);
+    // Shared RenderTargetManager target zero: Glare overwrites the same image
+    // that Color Correction reads after the engine's pass-boundary capture.
     glare_surface(glare_images[0],capture_width,capture_height);
-    glDisable(GL_SCISSOR_TEST);glBindFramebuffer(GL_FRAMEBUFFER,glare_images[0].fbo);clear({1,0xff000000});
+    glDisable(GL_SCISSOR_TEST);glBindFramebuffer(GL_DRAW_FRAMEBUFFER,glare_images[0].fbo);
+    if(clear_capture)clear({1,0xff000000});
     glBindFramebuffer(GL_READ_FRAMEBUFFER,output.fbo);
     glBlitFramebuffer(0,output.height-target.height,target.width,output.height,0,capture_height-target.height,target.width,capture_height,GL_COLOR_BUFFER_BIT,GL_NEAREST);
+    glBindFramebuffer(GL_FRAMEBUFFER,output.fbo);glEnable(GL_SCISSOR_TEST);
+  }
+  void color_correction(const ColorCorrectionEffect& effect,const FrameTarget& target) {
+    const auto constants=color_correction_constants(effect.parameters);const auto& output=surfaces.at(target.surface);
+    require(glare_images[0].color && capture_width>=target.width && capture_height>=target.height,"Color Correction requires a captured render pass");
+    GLuint program;
+    if(const auto found=programs.find("color_correction");found!=programs.end())program=found->second;
+    else {
+      const auto vertex=gles::shader(GL_VERTEX_SHADER,glare_vertex),fragment=gles::shader(GL_FRAGMENT_SHADER,color_correction_fragment);
+      program=glCreateProgram();glAttachShader(program,vertex);glAttachShader(program,fragment);glLinkProgram(program);glDeleteShader(vertex);glDeleteShader(fragment);
+      GLint ok=0;glGetProgramiv(program,GL_LINK_STATUS,&ok);if(!ok){glDeleteProgram(program);throw std::runtime_error("Color Correction shader link failed");}
+      programs.emplace("color_correction",program);++stats.program_compilations;
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER,output.fbo);glViewport(0,output.height-target.height,target.width,target.height);
+    glUseProgram(program);glBindVertexArray(vao);glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_DEPTH_TEST);glDepthMask(GL_FALSE);glDisable(GL_STENCIL_TEST);glDisable(GL_BLEND);glDisable(GL_CULL_FACE);glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
+    glUniform1i(glGetUniformLocation(program,"input_image"),0);glUniform2f(glGetUniformLocation(program,"input_scale"),float(target.width)/capture_width,float(target.height)/capture_height);
+    glUniform4fv(glGetUniformLocation(program,"constants"),7,constants[0].data());
+    glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,glare_images[0].color);glBindSampler(0,samplers[0]);
+    glSamplerParameteri(samplers[0],GL_TEXTURE_MIN_FILTER,GL_LINEAR);glSamplerParameteri(samplers[0],GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+    glSamplerParameteri(samplers[0],GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);glSamplerParameteri(samplers[0],GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+    glDrawArrays(GL_TRIANGLE_STRIP,0,4);
+    glEnable(GL_SCISSOR_TEST);glScissor(0,output.height-target.height,target.width,target.height);
+  }
+  void glare(const GlareEffect& effect,const FrameTarget& target) {
+    const auto passes=glare_passes(effect.parameters,target.width,target.height,capture_width,capture_height);
+    const auto& output=surfaces.at(target.surface);capture_current(target,true);glDisable(GL_SCISSOR_TEST);
     GLuint program;
     if(const auto found=programs.find("glare");found!=programs.end())program=found->second;
     else {
@@ -640,6 +689,7 @@ struct FrameRenderer::Impl {
   }
   void effect(const SceneEffectDraw& draw,const SceneMatrix& projection,const FrameTarget& target,const SceneCamera& camera) {
     if(draw.glare){glare(*draw.glare,target);return;}
+    if(draw.color_correction){color_correction(*draw.color_correction,target);return;}
     if(draw.vertices.empty() && !draw.ribbon) {if(draw.material_on_empty)last_model=draw.material_model;return;}
     std::optional<SceneEffectDraw> resolved;const auto* geometry=&draw;
     if(draw.ribbon) {
@@ -656,7 +706,9 @@ struct FrameRenderer::Impl {
   }
   void effects(const SceneFrame& scene,const FrameTarget& target) {
     const auto projection=scene_raster_projection(scene.camera,target.width,target.height);
-    for(const auto& draw:scene.effects)effect(draw,projection,target,scene.camera);
+    std::array<bool,256> capture{};for(const auto& draw:scene.effects)if(draw.color_correction)capture[draw.sort_key>>24]=true;
+    unsigned previous=256;
+    for(const auto& draw:scene.effects){const auto pass=draw.sort_key>>24;if(pass!=previous && capture[pass])capture_current(target);previous=pass;effect(draw,projection,target,scene.camera);}
   }
   const MeshGeometry& mesh_geometry(const std::shared_ptr<const Mesh>& mesh,const std::vector<SceneMeshBatch>& batches) {
     const auto key=mesh->animation_source ? mesh->animation_source.get() : mesh.get();auto found=geometry.find(key);
@@ -830,6 +882,7 @@ struct FrameRenderer::Impl {
         const auto group=std::tuple(job.sort_key>>24,(job.sort_key>>16)&15,job.light);
         if(current!=group) {
           if(current)after(std::get<0>(*current),std::get<1>(*current));
+          if((!current || std::get<0>(*current)!=std::get<0>(group)) && draws.capture_before_pass[std::get<0>(group)])capture_current(target);
           current=group;scissor(job.light);
         }
         paint(job);

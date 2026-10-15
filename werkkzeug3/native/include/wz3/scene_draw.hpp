@@ -31,6 +31,7 @@ struct SceneDrawList {
   std::vector<ScenePaintLight> lights;
   std::array<bool,256> inserts{};
   std::array<bool,256> material20_inserts{};
+  std::array<bool,256> capture_before_pass{};
 };
 // Engine_::BuildPaintJobs/SortPaintJobs, including shared mesh shadow jobs.
 SceneDrawList scene_draw_jobs(const SceneFrame&,unsigned width=1024,unsigned height=768);

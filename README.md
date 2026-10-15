@@ -6,8 +6,8 @@ for the project reader, graph inspector, procedural textures, font atlases and
 native GPU mesh previews.
 Theta plays through its complete timeline on Linux. Native support for
 **fr-041: Debris** is now in progress: its archived project renders through
-60 seconds on Linux and its V2 soundtrack synthesizes natively. Playback stops
-at unported Color Correction near 63.7 seconds. Rendering also
+110 seconds on Linux and its V2 soundtrack synthesizes natively. Playback stops
+at an unported Render texture operator near 110.2 seconds. Rendering also
 needs performance work to keep pace with audio; the full demo is not yet supported.
 The original archive follows below.
 
