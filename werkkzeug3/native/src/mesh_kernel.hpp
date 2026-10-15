@@ -77,6 +77,9 @@ struct sMatrix {
   void InitEulerPI2(const float*);
   void InitEulerPI2(const sVector& v) {const float a[]={v.x,v.y,v.z};InitEulerPI2(a);}
   void InitSRT(const float*);
+  void InitDir(const sVector&);
+  void InitRot(const sVector&,float);
+  void Mul3(const sMatrix&,const sMatrix&);
   void MulA(const sMatrix&,const sMatrix&);
   void MulA(const sMatrix& b) {MulA(*this,b);}
   void TransR();

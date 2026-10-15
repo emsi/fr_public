@@ -6,6 +6,7 @@
 #include "wz3/effect_particles.hpp"
 #include "wz3/walk.hpp"
 #include "wz3/print.hpp"
+#include "wz3/spline3d.hpp"
 #include "particle_random.hpp"
 #include "mesh_kernel.hpp"
 #include <bit>
@@ -94,7 +95,7 @@ std::shared_ptr<const Texture> SceneAssets::font(std::size_t id) {
 }
 
 struct ScenePlayer::Impl {
-  const Project& project;const Graph& graph;SplineLibrary splines;MaterialRuntime materials;
+  const Project& project;const Graph& graph;SplineLibrary splines;MaterialRuntime materials;SpatialSplines spatial;
   std::shared_ptr<ParticleRandom> random=std::make_shared<ParticleRandom>();
   SceneParticles particles;EffectParticles effects;FrameClock clock;SceneWalk walker;
   struct EffectJob {std::size_t id;SceneMatrix world;std::array<AnimationVector,32> variables;std::uint32_t key;};
@@ -107,7 +108,7 @@ struct ScenePlayer::Impl {
   std::vector<bool> prepared;
   std::vector<std::optional<AnimationProgram>> programs;
   std::vector<bool> visiting;
-  Impl(const Project& p,const Graph& g,const TextureOptions& options,std::shared_ptr<SceneAssets> shared):project(p),graph(g),splines(p),materials(p,g),particles(splines,random,p.runtime_graph),effects(random),walker(splines),assets(shared ? std::move(shared) : std::make_shared<SceneAssets>(p,g,options)),prepared(p.operators.size()),programs(p.operators.size()),visiting(programs.size()) {
+  Impl(const Project& p,const Graph& g,const TextureOptions& options,std::shared_ptr<SceneAssets> shared):project(p),graph(g),splines(p),materials(p,g),spatial(p,g),particles(splines,random,p.runtime_graph),effects(random),walker(splines),assets(shared ? std::move(shared) : std::make_shared<SceneAssets>(p,g,options)),prepared(p.operators.size()),programs(p.operators.size()),visiting(programs.size()) {
     require(graph.nodes.size()==project.operators.size(),"scene graph size mismatch");
     require(assets->matches(p,g,options),"scene assets belong to a different project, graph or font");
   }
@@ -152,6 +153,7 @@ struct ScenePlayer::Impl {
   void prepare(std::size_t id,AnimationEnvironment& env,unsigned depth=0) {
     valid(id);if(prepared[id])return;require(depth<512,"scene preparation depth limit");
     if(operator_info(project.operators[concrete(id)].command).category=="MATERIAL") {materials.precalculate(id,env);prepared[id]=true;return;}
+    if(operator_info(project.operators[concrete(id)].command).category=="SPLINE") {spatial.precalculate(id,env);prepared[id]=true;return;}
     Visit visit(visiting,id);
     const auto& op=project.operators[id];const AnimationScope scope(program(id),splines,op.parameters,env);
     {
@@ -300,7 +302,7 @@ struct ScenePlayer::Impl {
     const AnimationScope animation(program(id),splines,op.parameters,env);const auto& p=animation.parameters;
     if(op.command>=1 && op.command<=3)return viewport(alias(id),env,aspect,world,timeline,depth+1);
     require(op.command==0xf0 && (p.size()==18 || p.size()==24),"expected a supported Viewport operator");
-    require(node.inputs.size()==1,"viewport spline input is not ported");
+    require(node.inputs.size()==1 || node.inputs.size()==2,"invalid viewport input count");
     require(!(p[1]&~0x1033u),"viewport camera/stereo flags are not ported");
     if(p.size()==24)require(real(p,20)==0 && real(p,21)==0 && real(p,22)==1 && real(p,23)==1,"viewport cropping is not ported");
     SceneFrame frame;frame.viewport_id=id;frame.viewport_flags=p[1];frame.background=p[2];
@@ -309,6 +311,10 @@ struct ScenePlayer::Impl {
     camera.world=scene_srt(srt);camera.far_clip=real(p,9);camera.near_clip=real(p,10);
     camera.center_x=real(p,11);camera.center_y=real(p,12);camera.zoom_x=real(p,13);camera.zoom_y=real(p,14)*((p[1]&0x1000) ? 1 : aspect);
     camera.fog_color=p[15];camera.fog_end=real(p,16);camera.fog_start=real(p,17);
+    if(node.inputs.size()==2) {
+      const auto pose=spatial.evaluate(node.inputs[1],env.variables[0][0],0,env,timeline);
+      camera.world=pose.world;camera.zoom_x*=pose.zoom;camera.zoom_y*=pose.zoom;
+    }
     require(camera.near_clip>0 && camera.far_clip>camera.near_clip && camera.zoom_x>0 && camera.zoom_y>0,"invalid saved scene camera");
     jobs.clear();execute(node.inputs[0],env,world,frame,timeline);
     // Engine prepends effect jobs, then performs a stable sort by pass/usage.

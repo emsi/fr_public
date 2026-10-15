@@ -33,13 +33,33 @@ The `_c` project names the included `debris/debris_ost.v2m`; the other project
 still names `debris.v2m`.
 
 **Debris does not play yet.** CPU frame preparation now passes material
-initialization and stops at the viewport's unported spline-camera input.
+initialization and spline-camera evaluation, then stops at MINMESH `MatLink`
+operator 925.
 Material 2.0 GPU shaders/albedo capture, later MINMESH operators and
 Water/Glare/Color Correction effects also remain to be ported.
 The player synthesizes its V2 soundtrack into stereo PCM before playback, using
 the same SDL callback clock as Ogg music. The existing Theta renderer and released-clock profile
 do not establish compatibility with Debris. `debris_projects` compares the real
 wrapped files with their legacy documents and tests malformed container handling.
+
+Spatial camera paths use the archived Hermite, derivative, quaternion and
+orientation kernels, with bounded blob readers and cached native spline objects.
+The port covers Spline, PipeSpline, SplineScale and ShakeEvent, including the
+alternate Euler order, arc-length normalization, amplitude splines, overlapping
+events and sine/Perlin shake. It preserves the original double amplitude/ramp
+in sine shake and the Y-amplitude multiplier on translation Z. Version 1/2
+curves reset tension/continuity/uniform timing; saved unused blob capacity is
+ignored. Viewports replace their camera transform and multiply their zoom by
+the spline result at the current event time.
+
+Tests evaluate all 237 reachable spatial spline operators (133 curves, 71 shake
+operators, 31 pipes and two scales) at 101 times each. Recorded execution of
+the archived shake evaluator checks every shake mode with and without overlapping
+events. Synthetic checks cover endpoints, straight pipes, viewport integration,
+zoom/aspect multiplication, rounding restoration, malformed blobs and graph
+cycles. These validate camera data and math; full-demo rendered camera fidelity
+still awaits the remaining geometry/material/effect ports. MetaSpline is not
+implemented and is not present in the reachable Debris graph.
 
 All 124 reachable Material 2.0 operators initialize their 601 render passes and
 update animated parameters. The saved 38-word layout receives the four newer

@@ -33,6 +33,13 @@ if(WZ3_SANITIZE)
 endif()
 
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/spline_kernel.inc"
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/spline_kernel.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../genblobspline.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/../_types.cpp"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/spline_kernel.inc"
+  DEPENDS tools/spline_kernel.py tools/particles_oracle.py ../genblobspline.cpp ../_types.cpp VERBATIM)
+target_sources(wz3_project PRIVATE src/spline_kernel.cpp src/spline3d.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/spline_kernel.inc")
+set_source_files_properties(src/spline_kernel.cpp src/spline3d.cpp PROPERTIES COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
 add_custom_command(
   OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/catalog.inc"
   COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/catalog.py"
@@ -135,6 +142,15 @@ if(WZ3_BUILD_PLAYER)
 endif()
 
 if(BUILD_TESTING)
+  add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/spline_oracle.inc"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/spline_oracle.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../genblobspline.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/spline_oracle.inc"
+    DEPENDS tools/spline_oracle.py tools/particles_oracle.py ../genblobspline.cpp VERBATIM)
+  add_executable(wz3-spline3d-tests tests/spline3d.cpp tests/spline_reference.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/spline_oracle.inc")
+  target_include_directories(wz3-spline3d-tests PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_compile_options(wz3-spline3d-tests PRIVATE -frounding-math -ffp-contract=off)
+  target_link_libraries(wz3-spline3d-tests PRIVATE wz3_project)
+  add_test(NAME spatial_splines COMMAND wz3-spline3d-tests "${CMAKE_CURRENT_SOURCE_DIR}/../data/debris/debris_9241_c.k")
   add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/v2_schedule_oracle.cpp"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/v2_schedule_oracle.py"
       "${CMAKE_CURRENT_SOURCE_DIR}/../../v2" "${CMAKE_CURRENT_BINARY_DIR}/generated/v2_schedule_oracle.cpp"
