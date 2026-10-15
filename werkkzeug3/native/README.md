@@ -35,11 +35,11 @@ still names `debris.v2m`.
 **Debris playback is incomplete.** Its opening frame now prepares on the CPU: the
 main viewport contains 76 mesh instances, two lights and 26 ChainLine cables.
 With an explicit font, the native player renders the opening city at 1280x640:
-751 consecutive frames through 12 seconds pass in both offline and
+1,251 consecutive frames through 20 seconds pass in both offline and
 audio-callback-paced playback, with byte-identical endpoint captures.
-Continuing playback stops at 13,087 ms while constructing a texture for material
-34594: its TransformMul recipe includes a zero-scale copy that the original
-skips, but the native evaluator currently rejects. DejaVu Sans captures show textured buildings,
+The CPU-only timeline reaches 53,888 ms (beat 176.034) before the unported
+MINMESH Explode at operator 8156. This does not establish GPU playback that far.
+DejaVu Sans captures show textured buildings,
 lighting, shadows and cables. The playback test uses dummy audio; physical
 speaker output and synchronization remain unverified. This is progress through
 the saved editor project, not a comparison against the released executable's
@@ -47,7 +47,7 @@ images. To play the supported opening from the repository root:
 
 ```sh
 build/native/wz3-player werkkzeug3/data/debris/debris_9241_c.k \
-  --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf --duration 12
+  --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf --duration 20
 ```
 
 DejaVu Sans substitutes for the project's Arial font; its appearance is not an
@@ -66,7 +66,7 @@ them between frames and reports missing S3TC support explicitly. Tests compare
 882 synthetic uploads and all five reachable Debris compressed textures against
 the archived `UpdateTexture` handler (using the same archived compressor).
 Separate GPU tests compare every sampled channel, including alpha and 1x1/2x2
-mips, with an independent block decoder. The 67-test Release suite, including
+mips, with an independent block decoder. The 68-test Release suite, including
 22 graphics tests, passes on the Radeon RX 7900 XT; DXT CPU checks also pass
 under Clang ASan/UBSan.
 
@@ -87,6 +87,16 @@ resizing, repeated frames and loading resets. The measured per-channel maximum
 error in the standalone cases is 2/255 on the Radeon RX 7900 XT. This verifies
 the native pipeline's arithmetic and state handling, not a comparison with the
 original driver's partial-precision shaders or the released demo's images.
+
+Linear TransformMul now skips individual copies whose interpolated scale is
+zero, matching `Bitmap_Rotate` returning null and `Bitmap_Merge` retaining its
+first input. Fading still advances and later copies, including mirrored ones,
+still run. This fixes material 34594's saved texture graph at 13,087 ms without
+allowing a standalone zero-scale Transform. The extracted `Bitmap_RotateMul`
+handler checks 1,032 synthetic cases (434 skipped copies) and all 54 reachable
+Debris parameter sets, using the native transform/color/merge primitives as its
+backend. The complete failing recipe and all three material texture graphs also
+evaluate. These checks pass under Clang ASan/UBSan.
 
 The native MINMESH core uses the archived grid/cube/sphere, selection, material
 cluster, transform, bend, extrusion along normals, triangulation and centering

@@ -301,6 +301,14 @@ if(BUILD_TESTING)
   target_compile_options(wz3-glare-tests PRIVATE -frounding-math -ffp-contract=off)
   target_link_libraries(wz3-glare-tests PRIVATE wz3_project)
   add_test(NAME glare_passes COMMAND wz3-glare-tests "${CMAKE_CURRENT_SOURCE_DIR}/../data/debris/debris_9241_c.k")
+  add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/transform_mul_oracle.inc"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/transform_mul_oracle.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../genbitmap.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/transform_mul_oracle.inc"
+    DEPENDS tools/transform_mul_oracle.py tools/particles_oracle.py ../genbitmap.cpp VERBATIM)
+  add_executable(wz3-transform-mul-tests tests/transform_mul.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/transform_mul_oracle.inc")
+  target_include_directories(wz3-transform-mul-tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_link_libraries(wz3-transform-mul-tests PRIVATE wz3_project)
+  add_test(NAME transform_mul COMMAND wz3-transform-mul-tests "${CMAKE_CURRENT_SOURCE_DIR}/../data/debris/debris_9241_c.k")
   add_executable(wz3-fog-tests tests/fog.cpp)
   target_link_libraries(wz3-fog-tests PRIVATE wz3_project)
   add_test(NAME fog_transform COMMAND wz3-fog-tests)

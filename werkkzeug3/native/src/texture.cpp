@@ -329,7 +329,12 @@ private:
         angle *= 2; tx = (tx - 0.5f) * 2 + 0.5f; ty = (ty - 0.5f) * 2 + 0.5f;
         sx *= sx; sy *= sy;
       } else {
-        transform_bitmap(*base, *scratch, angle * i, (sx - 1) * i + 1, (sy - 1) * i + 1,
+        const float scale_x=(sx-1)*i+1,scale_y=(sy-1)*i+1;
+        // Bitmap_Rotate returns null for a collapsed copy. The linear
+        // RotateMul branch releases that extra reference and Merge keeps bb;
+        // later copies (including mirrored ones) still run.
+        if(scale_x==0 || scale_y==0)continue;
+        transform_bitmap(*base, *scratch, angle * i, scale_x, scale_y,
                          (tx - 0.5) * i + 0.5, (ty - 0.5) * i + 0.5, border);
         for (std::size_t p = 0; p < result->pixels.size(); ++p)
           result->pixels[p] = merge_pixel(result->pixels[p], scratch->pixels[p], mode & 15);
