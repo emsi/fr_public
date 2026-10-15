@@ -32,13 +32,15 @@ current graph connection finds 20,989 operators reachable from its entry points.
 The `_c` project names the included `debris/debris_ost.v2m`; the other project
 still names `debris.v2m`.
 
-**Debris does not play yet.** Its opening frame now prepares on the CPU: the
+**Debris playback is incomplete.** Its opening frame now prepares on the CPU: the
 main viewport contains 76 mesh instances, two lights and 26 ChainLine cables.
 Continuous CPU preparation in 16 ms steps reaches 9,808 ms (beat 32.0394), then
-stops at the unported Glare effect, operator 10464. Full rendering now enters
-the Material 2.0 pipeline, then stops at uncached text in the dependencies of
-material 38640 in the first viewport. Without `--font-file` it requests the saved
-Arial family; with an explicit font it reaches the unported paragraph path.
+stops at the unported Glare effect, operator 10464. With an explicit font,
+the native player renders the opening city at 1280x640 (95 consecutive frames
+through 1.5 seconds), then encounters the unported DXT5 upload format in material
+22509 at 1,583 ms. A DejaVu Sans test capture shows textured buildings, lighting,
+shadows and cables. This is progress through the saved editor project, not a
+comparison against the released executable's images.
 Remaining MINMESH/scene operators and Water/Glare/Color Correction effects
 also remain to be ported.
 The player synthesizes its V2 soundtrack into stereo PCM before playback, using
@@ -226,9 +228,9 @@ stagger, random color distribution and both mortar-edge modes. All 36 reachable
 Debris Bricks images match the original handler at their saved 512x512 size;
 433 additional cases exercise seed wrapping, colors, repetition and mortar.
 Bulge preserves the spherical coordinate warp and wrapped bilinear sampling.
-Its saved parameter set is checked with a controlled input: the complete saved
-graph still depends on unported uncached text paragraphs, even with an explicit
-font file. Both kernels restore the caller's floating-point environment.
+Its saved parameter set is checked with a controlled input; its complete graph
+uses the native paragraph rasterizer described below. Both kernels restore the
+caller's floating-point environment.
 Cell implements the archived editor's 16x16 tiled nearest-point search, seeded
 point pruning, aspect ratio, stable ordering, distance/gap modes and colors.
 All eight reachable Debris Cell images match that kernel pixel for pixel at
@@ -237,7 +239,19 @@ combinations. The compact intro's different search loop is not selected for
 saved editor documents. Images smaller than a complete tile are rejected because
 the editor kernel would access outside their buffers.
 The opening scene's material dependencies now evaluate 99 of 107 distinct
-texture recipes; the other eight depend on uncached text.
+texture recipes without a font file; the other eight depend on uncached text.
+
+Uncached Text paragraphs now preserve Bitmap_Text's supersampled origins,
+horizontal/vertical centering, empty/trailing lines, signed line spacing and
+4x4 coverage reduction before the original Fade64 compositing. All 34 reachable
+Debris paragraphs render with an explicit `--font-file`; 420 layout/mask cases
+match the extracted archived handler with a controlled font backend.
+FreeType supplies CP1252 glyph rasterization and metrics. For nonzero width,
+the font's OS/2 average character width determines horizontal scaling, following
+the [CreateFont width meaning](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-createfonta).
+That mapping and FreeType's rasterization are not claimed pixel-equivalent to
+GDI. DejaVu Sans is an explicit test substitute for the saved Arial family;
+cached text masks still take precedence and require no external font.
 
 The native `wz3-v2m` tool reads compact music modules, reconstructs their MIDI
 event stream/sample positions and optionally renders stereo float WAV without

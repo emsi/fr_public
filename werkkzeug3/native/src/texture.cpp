@@ -188,7 +188,9 @@ public:
         FontLayout layout{number(op, 0), number(op, 1), number(op, 2), number(op, 3), number(op, 7),
                           std::bit_cast<std::int32_t>(op.parameters[6]), (op.parameters[5] & 0x70) >> 4,
                           op.parameters[4], op.strings[0], op.strings[1].empty() ? "Arial" : op.strings[1]};
-        generate_font_atlas(*texture, layout, options_.font_file);
+        layout.flags=op.parameters[5];layout.line_skip=op.parameters.size()==9 ? number(op,8) : 1.f;
+        if(layout.page)generate_font_atlas(*texture, layout, options_.font_file);
+        else draw_text_paragraph(*texture,layout,options_.font_file);
       }
       cache_[id] = std::move(texture);
     } else if (op.command == 0x3a) {

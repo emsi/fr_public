@@ -24,6 +24,7 @@ add_library(wz3_project src/project.cpp src/release_project.cpp src/graph.cpp sr
 set_source_files_properties(src/mesh_kernel.cpp src/mesh_noise.cpp src/animation.cpp src/timeline.cpp src/material_shader.cpp src/scene.cpp src/frame.cpp src/particles.cpp src/effect_particles.cpp src/walk.cpp src/print.cpp src/scene_draw.cpp src/lighting.cpp src/shadow.cpp src/fog.cpp PROPERTIES
   COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
 target_link_libraries(wz3_project PRIVATE JPEG::JPEG Freetype::Freetype)
+set_source_files_properties(src/font.cpp PROPERTIES COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
 target_sources(wz3_project PRIVATE src/material20.cpp)
 set_source_files_properties(src/material20.cpp PROPERTIES COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
 target_sources(wz3_project PRIVATE src/bitmap_bump.cpp)
@@ -266,6 +267,15 @@ if(BUILD_TESTING)
   target_link_libraries(wz3-cached-font-tests PRIVATE wz3_project)
   target_compile_options(wz3-cached-font-tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME cached_font_atlas COMMAND wz3-cached-font-tests)
+  add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/paragraph_oracle.inc"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/paragraph_oracle.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../genbitmap.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/paragraph_oracle.inc"
+    DEPENDS tools/paragraph_oracle.py tools/particles_oracle.py ../genbitmap.cpp VERBATIM)
+  add_executable(wz3-paragraph-tests tests/paragraph.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/paragraph_oracle.inc")
+  target_include_directories(wz3-paragraph-tests PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_compile_options(wz3-paragraph-tests PRIVATE -frounding-math -ffp-contract=off)
+  target_link_libraries(wz3-paragraph-tests PRIVATE wz3_project)
+  add_test(NAME paragraph_layout COMMAND wz3-paragraph-tests)
   add_executable(wz3-fog-tests tests/fog.cpp)
   target_link_libraries(wz3-fog-tests PRIVATE wz3_project)
   add_test(NAME fog_transform COMMAND wz3-fog-tests)
@@ -335,6 +345,7 @@ if(BUILD_TESTING)
   find_file(WZ3_TEST_FONT_FILE NAMES DejaVuSans.ttf PATHS /usr/share/fonts/truetype/dejavu
     DOC "Font used for native atlas tests (override with an explicit TTF path)")
   if(WZ3_TEST_FONT_FILE)
+    add_test(NAME debris_text COMMAND wz3-paragraph-tests "${CMAKE_CURRENT_SOURCE_DIR}/../data/debris/debris_9241_c.k" "${WZ3_TEST_FONT_FILE}")
     add_test(NAME theta_print COMMAND wz3-print-tests
       "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta/theta_final.k" "${WZ3_TEST_FONT_FILE}")
     add_executable(wz3-font-tests tests/font.cpp)

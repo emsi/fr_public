@@ -23,6 +23,8 @@ struct FontLayout {
   unsigned page{};
   std::uint32_t color{};
   std::string characters, requested_family;
+  unsigned flags{};
+  float line_skip{1};
 };
 struct Texture {
   unsigned width{}, height{};
@@ -59,6 +61,7 @@ void bulge_bitmap(const Texture& source,Texture& destination,float warp);
 void draw_cached_text(Texture&, std::span<const std::uint8_t> blob, std::uint32_t color, unsigned flags,
                       float inner_spacing = 0, std::string_view family = {});
 void generate_font_atlas(Texture&, const FontLayout&, const std::filesystem::path& font_file);
+void draw_text_paragraph(Texture&, const FontLayout&, const std::filesystem::path& font_file);
 void write_font_metrics(const std::filesystem::path&, const Texture&);
 // Recipe-local allocations (including scratch), not GPU storage or font tables.
 struct TextureEvaluationStats {std::size_t operators{},allocations{},peak_pixel_bytes{};};
