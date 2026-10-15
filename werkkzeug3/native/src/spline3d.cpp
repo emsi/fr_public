@@ -153,6 +153,10 @@ struct SpatialSplines::Impl {
 SpatialSplines::SpatialSplines(const Project& p,const Graph& g):impl(std::make_unique<Impl>(p,g)) {}
 SpatialSplines::~SpatialSplines()=default;
 void SpatialSplines::precalculate(std::size_t id,AnimationEnvironment& env) {const Nearest rounding;impl->prepare(id,env);}
+std::shared_ptr<legacy::BlobSpline> SpatialSplines::static_curve(std::size_t id,AnimationEnvironment& env) {
+  const Nearest rounding;const auto node=impl->prepare(id,env);
+  require(bool(node->data),"bone spline needs a static plain, pipe or scaled curve");return node->data;
+}
 SplinePose SpatialSplines::evaluate(std::size_t id,float time,float phase,const AnimationEnvironment& env,const EventTimeline* timeline) {
   const Nearest rounding;require(std::isfinite(time) && std::isfinite(phase),"invalid spatial spline evaluation time");
   auto initial=frame_environment(0);const auto node=impl->prepare(id,initial);sMatrix mat;float zoom=1;

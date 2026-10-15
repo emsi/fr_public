@@ -2,6 +2,7 @@
 #include "frame_fixture.hpp"
 #include "wz3/scene_draw.hpp"
 #include "minmesh_kernel.hpp"
+#include "bone_fixture.hpp"
 #include <iostream>
 namespace {
 wz3::Material material(bool casts) {
@@ -139,6 +140,44 @@ void instance_shadows() {
   check(std::none_of(jobs.begin(),jobs.end(),[](const auto& j){return j.instance==0 && ((j.sort_key>>16)&15)==3;}),"instance flag must not enlarge shadow culling bounds");
   std::cout<<"Instance materials retain one prototype shadow, including empty groups and ordinary shadow culling\n";
 }
+void weighted() {
+  for(bool m20:{false,true}) {
+    BoneFixture fixture;auto s=scene(fixture);const auto train=fixture.train();
+    const auto bound=fixture.add(0x116,{0,0},{train},{0});
+    s.instances[0].mesh=wz3::evaluate_mesh(fixture.p,fixture.g,bound);
+    s.instances[0].world=wz3::scene_srt(std::array<std::uint32_t,9>{f(.6f),f(.5f),f(.2f),0,0,0,0,0,f(3)});
+    if(m20){s.materials[0]=material20(true);s.materials[1]=material20(false);s.ambient=0xff202020;}
+    wz3::FrameRenderer renderer(fixture.p,fixture.g),reference(fixture.p,fixture.g);
+    std::vector<std::uint8_t> previous;unsigned changed=0,checks=0;wz3::FrameRenderer::Stats warm;
+    for(float time:{0.f,.2f,.5f,.8f,1.f,.2f,0.f})for(bool second:{false,true}) {
+      auto scene=s;scene.instances[0].time=time;
+      if(second){auto other=scene.instances[0];other.time=time+.3f;other.world[12]=1.5f;scene.instances.push_back(other);}
+      const auto actual=render(renderer,scene);
+      for(auto& instance:scene.instances)if(wz3::mesh_has_animation(*instance.mesh)) {
+        const auto native=wz3::pose_mesh(instance.mesh,instance.time),archived=bone_reference_pose(instance.mesh,instance.time);
+        for(unsigned i=0;i<native->vertices.size();++i)check(native->vertices[i].position==archived->vertices[i].position,"GPU fixture source positions differ");
+        // Keep the original animated object's unbounded culling box and
+        // z-fail shadows. An empty animation with unskinned clusters leaves
+        // the independently baked SSE vertices untouched by the renderer.
+        auto baked=std::make_shared<wz3::Mesh>(*archived);
+        auto core=std::make_shared<wz3::legacy::minimal::GenMinMesh>(*archived->min_kernel);
+        core->CreateAnimation(0);for(auto& cluster:core->Clusters.storage)cluster.AnimType=0;
+        for(auto& vertex:core->Vertices.storage)vertex.BoneCount=0;
+        baked->animation_source.reset();baked->min_kernel=core;instance.mesh=baked;
+      }
+      const auto expected=render(reference,scene);
+      for(std::size_t i=0;i<actual.size();++i)if(std::abs(int(actual[i])-expected[i])>2) {
+        throw std::runtime_error("weighted GPU geometry/shadow differs from original skinning: material="+std::to_string(m20)+" time="+std::to_string(time)+" second="+std::to_string(second)+" byte="+std::to_string(i)+" actual="+std::to_string(actual[i])+" expected="+std::to_string(expected[i]));
+      }
+      if(!previous.empty())changed+=actual!=previous;previous=actual;
+      if(!checks)warm=renderer.stats();else check(renderer.stats().mesh_uploads==warm.mesh_uploads && renderer.stats().shadow_uploads==warm.shadow_uploads,"weighted animation allocated additional buffers");
+      ++checks;
+    }
+    check(changed>5 && renderer.stats().mesh_updates>10 && renderer.stats().shadow_updates>10,"weighted GPU case did not animate geometry/shadows");
+    renderer.reset_targets();check(render(renderer,s)==render(renderer,s),"weighted reset changed image");
+    std::cout<<checks<<" weighted mesh/shadow frames match archived skinning for Material "<<(m20 ? "2.0" : "1.1")<<'\n';
+  }
+}
 void theta(const char* path) {
   const auto p=wz3::read_project(path);const auto g=wz3::connect(p);wz3::FramePlayer player(p,g);wz3::FrameRenderer renderer(p,g);
   for(float beat:{56.f,72.f,96.f,120.f,144.f,184.f,216.f,448.5f,480.f,511.5f}) {
@@ -150,4 +189,4 @@ void theta(const char* path) {
   }
 }
 }
-int main(int argc,char** argv){try{controlled();coplanar_cap();animated();instance_shadows();if(argc>1)theta(argv[1]);}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(int argc,char** argv){try{controlled();coplanar_cap();animated();instance_shadows();weighted();if(argc>1)theta(argv[1]);}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

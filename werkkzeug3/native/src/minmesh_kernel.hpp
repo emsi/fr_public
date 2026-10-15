@@ -69,7 +69,10 @@ struct GenMinCluster {
 struct GenSpline {
   virtual ~GenSpline()=default;
   virtual void Eval(float time,float phase,sMatrix&,float& zoom)=0;
+  virtual std::size_t bytes()const{return sizeof(GenSpline)+4*sizeof(sVector)+sizeof(float);}
 };
+struct BoneWeights {float Weight[4]{};sU16 Matrix[4]{};};
+BoneWeights bone_weights(const GenMinVert&);
 struct GenMinMatrix {
   sMatrix BasePose,Temp,NoAnimation;
   int Parent=-1;
@@ -126,6 +129,9 @@ GenMinMesh* MinMesh_Bend2(GenMinMesh*,sF323,sF323,float,float);
 GenMinMesh* MinMesh_Triangulate(GenMinMesh*);
 GenMinMesh* MinMesh_Center(GenMinMesh*,int);
 GenMinMesh* explode(GenMinMesh&,const Texture*,std::span<const std::uint32_t>);
+GenMinMesh* bone_chain(GenMinMesh&,std::span<const std::uint32_t>);
+GenMinMesh* bone_train(GenMinMesh&,std::shared_ptr<GenSpline>,float delta,unsigned mode,float offset);
+std::shared_ptr<GenSpline> bone_spline(const Project&,const Graph&,std::size_t);
 Mesh export_mesh(std::shared_ptr<GenMinMesh>);
 std::shared_ptr<const Mesh> evaluate_kernel(const Project&,const Graph&,std::size_t,const TextureOptions& = {});
 } // namespace wz3::legacy::minimal

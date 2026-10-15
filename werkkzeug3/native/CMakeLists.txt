@@ -71,6 +71,13 @@ add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/explode_kernel.
   DEPENDS tools/explode_kernel.py tools/particles_oracle.py ../genminmesh.cpp VERBATIM)
 target_sources(wz3_project PRIVATE src/minmesh_animation.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/explode_kernel.inc")
 set_source_files_properties(src/minmesh_animation.cpp PROPERTIES COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/bone_kernel.inc"
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/bone_kernel.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../genminmesh.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/../engine.cpp"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/bone_kernel.inc"
+  DEPENDS tools/bone_kernel.py tools/particles_oracle.py ../genminmesh.cpp ../engine.cpp VERBATIM)
+target_sources(wz3_project PRIVATE src/bones.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/bone_kernel.inc")
+set_source_files_properties(src/bones.cpp PROPERTIES COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
 add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/spline_kernel.inc"
   COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/spline_kernel.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/../genblobspline.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/../_types.cpp"
@@ -200,6 +207,31 @@ if(BUILD_TESTING)
   target_compile_options(wz3-minmesh-animation-tests PRIVATE -frounding-math -ffp-contract=off)
   target_link_libraries(wz3-minmesh-animation-tests PRIVATE wz3_project)
   add_test(NAME minmesh_animation COMMAND wz3-minmesh-animation-tests "${CMAKE_CURRENT_SOURCE_DIR}/../data/debris/debris_9241_c.k")
+  add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/bone_oracle.inc" "${CMAKE_CURRENT_BINARY_DIR}/generated/bone_oracle.S"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/bone_oracle.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../engine.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/bone_oracle.inc"
+      "${CMAKE_CURRENT_BINARY_DIR}/generated/bone_oracle.S"
+    DEPENDS tools/bone_oracle.py tools/particles_oracle.py ../engine.cpp VERBATIM)
+  add_library(wz3_bone_reference STATIC tests/bone_reference.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/bone_oracle.inc")
+  target_include_directories(wz3_bone_reference PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_compile_options(wz3_bone_reference PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:-frounding-math;-ffp-contract=off>")
+  target_link_libraries(wz3_bone_reference PUBLIC wz3_project)
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+    enable_language(ASM)
+    target_sources(wz3_bone_reference PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated/bone_oracle.S")
+    target_compile_definitions(wz3_bone_reference PUBLIC WZ3_BONE_SSE_ORACLE=1)
+  endif()
+  add_executable(wz3-bone-tests tests/bones.cpp tests/minmesh_reference.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/minmesh_oracle.inc")
+  target_include_directories(wz3-bone-tests PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_compile_options(wz3-bone-tests PRIVATE -frounding-math -ffp-contract=off)
+  set_source_files_properties(tests/bones.cpp PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra;-Wpedantic;-Werror")
+  target_link_libraries(wz3-bone-tests PRIVATE wz3_bone_reference)
+  add_test(NAME minmesh_bones COMMAND wz3-bone-tests)
+  add_test(NAME debris_bones COMMAND wz3-bone-tests "${CMAKE_CURRENT_SOURCE_DIR}/../data/debris/debris_9241_c.k")
+  set_tests_properties(debris_bones PROPERTIES TIMEOUT 240)
+  if(WZ3_SANITIZE)
+    set_tests_properties(debris_bones PROPERTIES TIMEOUT 900)
+  endif()
   add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/spline_oracle.inc"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/spline_oracle.py"
       "${CMAKE_CURRENT_SOURCE_DIR}/../genblobspline.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/spline_oracle.inc"
@@ -444,7 +476,7 @@ if(BUILD_TESTING)
     set_tests_properties(gpu_scene_fog PROPERTIES LABELS graphics)
     add_executable(wz3-shadow-render-tests tests/render_shadow.cpp src/frame_render.cpp src/render.cpp)
     target_include_directories(wz3-shadow-render-tests PRIVATE src)
-    target_link_libraries(wz3-shadow-render-tests PRIVATE wz3_project PkgConfig::EGL PkgConfig::GLES)
+    target_link_libraries(wz3-shadow-render-tests PRIVATE wz3_project wz3_bone_reference PkgConfig::EGL PkgConfig::GLES)
     add_test(NAME gpu_shadow_volumes COMMAND wz3-shadow-render-tests "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta/theta_final.k")
     set_tests_properties(gpu_shadow_volumes PROPERTIES LABELS graphics)
     add_executable(wz3-light-render-tests tests/render_lighting.cpp src/frame_render.cpp src/render.cpp)

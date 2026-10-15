@@ -108,6 +108,13 @@ public:
       case 0x104:
         parameters(op,2);require(node.inputs.empty(),"MINMESH Sphere has inputs");
         mesh.reset(MinMesh_Sphere(integer(op,0,256,3),integer(op,1,256,1)));break;
+      case 0x128:
+        parameters(op,8);mesh=std::make_shared<GenMinMesh>(*input());bone_chain(*mesh,op.parameters);break;
+      case 0x129: {
+        parameters(op,3);require(node.inputs.size()==2,"BoneTrain needs a mesh and spline");
+        mesh=std::make_shared<GenMinMesh>(*get(node.inputs[0],depth+1));
+        bone_train(*mesh,bone_spline(project,graph,node.inputs[1]),real(op,0),integer(op,1,7),real(op,2));break;
+      }
       case 0x134: {
         parameters(op,21);require(node.inputs.size()==1 || node.inputs.size()==2,"MINMESH Explode needs a mesh and optional bitmap");
         for(unsigned i=0;i<21;++i)if(i!=15)real(op,i);

@@ -2,6 +2,7 @@
 #pragma once
 #include "wz3/scene.hpp"
 namespace wz3 {
+namespace legacy {struct BlobSpline;}
 struct SplinePose {SceneMatrix world=scene_identity();float zoom=1;};
 // Cached spatial splines (GenSpline), distinct from animation channel curves.
 class SpatialSplines {
@@ -13,6 +14,9 @@ public:
   SpatialSplines(const SpatialSplines&)=delete;
   SpatialSplines& operator=(const SpatialSplines&)=delete;
   void precalculate(std::size_t,AnimationEnvironment&);
+  // Retain a prepared plain/pipe/scaled curve independently of this library.
+  // Event-driven shakers require a paint environment and cannot be frozen.
+  std::shared_ptr<legacy::BlobSpline> static_curve(std::size_t,AnimationEnvironment&);
   SplinePose evaluate(std::size_t,float time,float phase,const AnimationEnvironment&,const EventTimeline* = nullptr);
 };
 }

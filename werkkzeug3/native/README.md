@@ -47,9 +47,9 @@ render surfaces, bitmap uploads, mesh/shadow/instance buffers, shaders or lighti
 tables, and did not rebake any textures during playback. Synchronized real-time
 Debris playback still needs performance work.
 Optimized particle mesh instancing, Color Correction and Bitmap Render are now
-supported. The next continuous-run failure is at 117,551 ms: MINMESH BoneTrain
-operator 8279 requires BoneChain (8263), spatial-spline bone motion and weighted
-skinning. The existing Explode implementation only handles rigid fragments.
+supported. BoneChain/BoneTrain and weighted skinning now extend continuous
+offline rendering beyond 120 seconds. The next failure is at 124,911 ms:
+MINMESH Pipe operator 4164 is not ported.
 DejaVu Sans captures show textured buildings,
 lighting, shadows and cables. The playback test uses dummy audio; physical
 speaker output and synchronization remain unverified. This is progress through
@@ -196,8 +196,27 @@ routines. It also supports Add and conversion from the older indexed mesh
 format. MINMESH retains up to eight corners per polygon, both UV sets and
 two-vertex stitch records; normals/tangents and shadow adjacency come from its
 own kernels. Material links retain operator identities and pass numbers.
-Animated mesh initialization, weighted bones, Pipe, Font3D, Multiply and Perlin
+Animated mesh initialization, Pipe, Font3D, Multiply and Perlin
 displacement still fail explicitly.
+
+MINMESH BoneChain runs the archived cubic binding algorithm, including negative
+weights, 1/1024 quantization, endpoint clamping and its original use of vertex X
+in the Y-distance term. BoneTrain retains spline ownership and the original
+shift, scale, spread and reserved timing modes. Plain, pipe and scaled spatial
+curves are supported; event-driven ShakeEvent bone curves fail explicitly.
+The upload's magnitude sort, signed weight pruning below 1/64 and renormalization
+are preserved. Posing uses the original SSE arithmetic order for positions,
+normals and tangents, while keeping bind-pose topology and updating shadow planes.
+
+`minmesh_bones` checks 64 spline poses, all eight timing mode values, 129 varied
+weight combinations, backward time, rounding-mode restoration and ownership.
+`debris_bones` checks all 17 saved BoneChains and all 17 complete BoneTrain graphs
+at five times. On x86-64, vertex results match the archived SSE instructions
+exactly; the test translates only their pointer registers and calling convention.
+The archived scalar skinning routine provides a second comparison. GPU checks
+compare 28 frames with independently baked SSE geometry under Material 1.1 and
+2.0, including simultaneous poses and buffer reuse. The reference retains animated
+culling and z-fail shadow rules. CPU and GPU checks pass under Clang ASan/UBSan.
 
 MINMESH Explode runs the archived handler and kinetic splines directly. Each
 live polygon becomes a closed fragment, with preserved attributes, extrusion

@@ -48,8 +48,12 @@ void GenMinMesh::validate() const {
   }
 }
 std::size_t GenMinMesh::bytes()const {
-  return Vertices.storage.capacity()*sizeof(GenMinVert)+Faces.storage.capacity()*sizeof(GenMinFace)+Clusters.storage.capacity()*sizeof(GenMinCluster)+
-    (Animation ? sizeof(GenMinMeshAnim)+Animation->Matrices.storage.capacity()*(sizeof(GenMinMatrix)+sizeof(GenSpline)+4*sizeof(sVector)+sizeof(float)) : 0);
+  auto size=Vertices.storage.capacity()*sizeof(GenMinVert)+Faces.storage.capacity()*sizeof(GenMinFace)+Clusters.storage.capacity()*sizeof(GenMinCluster);
+  if(Animation) {
+    size+=sizeof(GenMinMeshAnim)+Animation->Matrices.storage.capacity()*sizeof(GenMinMatrix);
+    for(int i=0;i<Animation->Matrices.Count;++i)if(const auto& spline=Animation->Matrices[i].Spline)size+=spline->bytes();
+  }
+  return size;
 }
 Mesh export_mesh(std::shared_ptr<GenMinMesh> core) {
   core->validate();core->CalcNormals();core->validate();core->CalcAdjacency();
@@ -63,7 +67,7 @@ Mesh export_mesh(std::shared_ptr<GenMinMesh> core) {
   for(int i=0;i<core->Faces.Count;++i) {
     const auto& f=core->Faces[i];if(!f.Cluster || f.Count<3)continue;
     const auto& cl=core->Clusters[f.Cluster];
-    require(cl.AnimType==0 || (cl.AnimType==2 && core->Animation && core->CompletelyRigid),"unsupported MINMESH animation type");
+    require(cl.AnimType==0 || (cl.AnimType==2 && core->Animation),"unsupported MINMESH animation type");
     MeshFace face;face.mask=f.Select;face.material=cl.Mtrl ? cl.Mtrl->binding : std::nullopt;
     face.pass=cl.RenderPass;face.casts_shadow=!(f.Flags&1);face.cluster=f.Cluster;
     if(f.Count<=4) {
