@@ -37,18 +37,17 @@ main viewport contains 76 mesh instances, two lights and 26 ChainLine cables.
 With an explicit font, the native player renders the opening city at 1280x640:
 1,251 consecutive frames through 20 seconds pass in both offline and
 audio-callback-paced playback, with byte-identical endpoint captures.
-Continuous GPU rendering and callback-paced playback now pass 117 seconds
-(7,314 frames), with byte-identical captures at 112 and 117 seconds showing the
-elevated-road sequence and baked building textures. The 110-second capture also
-remains byte-identical to the previous milestone. The callback-paced check took
-122.26 wall seconds after 170.17 seconds of preparation and fell up to 22.13
+Continuous GPU rendering and callback-paced playback now pass 124 seconds
+(7,751 frames), with byte-identical captures at 118, 120 and 124 seconds showing
+the spline-deformed geometry and baked building textures. The callback-paced check took
+127.86 wall seconds after 176.24 seconds of preparation and fell up to 22.18
 seconds behind the audio clock. It created no additional cached meshes, fonts,
 render surfaces, bitmap uploads, mesh/shadow/instance buffers, shaders or lighting
 tables, and did not rebake any textures during playback. Synchronized real-time
 Debris playback still needs performance work.
 Optimized particle mesh instancing, Color Correction and Bitmap Render are now
 supported. BoneChain/BoneTrain and weighted skinning now extend continuous
-offline rendering beyond 120 seconds. The next failure is at 124,911 ms:
+playback through 124 seconds. The next failure is at 124,911 ms:
 MINMESH Pipe operator 4164 is not ported.
 DejaVu Sans captures show textured buildings,
 lighting, shadows and cables. The playback test uses dummy audio; physical
@@ -58,7 +57,7 @@ images. To play the supported opening from the repository root:
 
 ```sh
 build/native/wz3-player werkkzeug3/data/debris/debris_9241_c.k \
-  --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf --duration 117
+  --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf --duration 124
 ```
 
 DejaVu Sans substitutes for the project's Arial font; its appearance is not an
