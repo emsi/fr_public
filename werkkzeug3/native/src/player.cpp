@@ -83,6 +83,7 @@ int main(int argc,char** argv) {
       <<"  [--capture LAST.ppm] [--snapshot SECONDS FRAME.ppm] (repeatable)\n"
       <<"  [--no-preload | --preload-only | --offline]\n"
       <<"  [--preload-full] (render every preparation frame for comparison)\n"
+      <<"Mute preserves music loading and the audio clock; missing music uses silence only with --mute.\n"
       <<"Offline mode renders the same sample timeline without an audio device or real-time pacing.\n"
       <<"Escape or close the window to exit. Music defaults to the saved song's basename beside the project.\n";
     return argc<2 ? 2 : 0;
@@ -122,14 +123,20 @@ int main(int argc,char** argv) {
     require(width>=64 && height>=64 && width<=4096 && height<=4096,"render dimensions must be 64..4096");
     if(music.empty()) {
       auto name=project.song_name;std::replace(name.begin(),name.end(),'\\','/');
-      require(!name.empty(),"project has no music path; supply --music");
-      music=project_path.parent_path()/std::filesystem::path(name).filename();
+      require(!name.empty() || mute,"project has no music path; supply --music");
+      if(!name.empty())music=project_path.parent_path()/std::filesystem::path(name).filename();
     }
     auto extension=music.extension().string();
     for(auto& c:extension)if(c>='A' && c<='Z')c=char(c-'A'+'a');
     const bool v2=extension==".v2m";
-    std::cout<<std::unitbuf<<(v2 ? "Synthesizing " : "Decoding ")<<music<<'\n';
+    const bool silent_fallback=mute && (music.empty() || !std::filesystem::exists(music));
+    std::cout<<std::unitbuf;
+    if(silent_fallback)std::cout<<"Music: silent 44100 Hz stereo clock (--mute; no music file)\n";
+    else std::cout<<(v2 ? "Synthesizing " : "Decoding ")<<music<<'\n';
     const auto pcm=[&] {
+      // Empty PCM already drives the callback clock through its silent EOF path.
+      // Existing files still use their decoder/synthesizer, even when muted.
+      if(silent_fallback)return wz3::PcmAudio{44100,2,{}};
       if(!v2)return wz3::read_vorbis(music);
       auto frames=wz3::PlaybackTiming(project,44100).end_frames();
       if(duration)frames=std::min(frames,std::uint64_t(std::ceil(duration*44100)));
@@ -137,7 +144,7 @@ int main(int argc,char** argv) {
     }();
     wz3::PlaybackTiming timing(project,pcm.rate);auto end=timing.end_frames();
     if(duration)end=std::min(end,std::uint64_t(std::ceil(duration*pcm.rate)));
-    std::cout<<"Music: "<<pcm.rate<<" Hz, "<<pcm.channels<<" channels, "<<double(pcm.frames())/pcm.rate<<" seconds\n";
+    if(!silent_fallback)std::cout<<"Music: "<<pcm.rate<<" Hz, "<<pcm.channels<<" channels, "<<double(pcm.frames())/pcm.rate<<" seconds\n";
     Sdl sdl(!offline && !preload_only);std::unique_ptr<wz3::SdlAudio> audio;
     if(!preload_only && !offline)audio=std::make_unique<wz3::SdlAudio>(pcm,mute);
     Window window(width,height,project.demo_name.empty() ? project_path.filename().string() : project.demo_name);

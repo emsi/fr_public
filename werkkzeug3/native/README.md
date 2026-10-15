@@ -682,7 +682,11 @@ the per-frame dynamic data needed by particles and shadows.
 saves the last rendered frame; repeat `--snapshot SECONDS FRAME.ppm` to capture
 selected positions without restarting the simulation. Snapshot disk I/O can
 delay presentation. `--mute` outputs silence through the same audio device and
-clock; it does not bypass the need for a working audio backend.
+clock. Existing music is still decoded or synthesized, preserving its sample rate.
+Only with `--mute`, an absent music file (or empty saved music path) uses a silent
+44.1 kHz stereo callback clock instead. Missing music without `--mute`, and
+existing files that cannot be decoded or read, still fail. Muting does not bypass
+the need for a working audio backend.
 
 Each saved snapshot emits a `Snapshot: {...}` JSON record on standard output,
 including its argument index, requested time, actual PCM sample/rate, frame index,

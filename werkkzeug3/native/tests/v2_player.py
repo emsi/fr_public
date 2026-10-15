@@ -49,3 +49,13 @@ with tempfile.TemporaryDirectory(prefix="wz3-v2-player-") as directory:
     assert actual[offset:offset+len(expected)] == expected, "SDL samples differ from V2 synthesis"
     assert not any(actual[offset+len(expected):]), "non-silent samples beyond rendered interval"
     print("All 88,200 synthesized stereo frames match the player's SDL output exactly")
+    muted = subprocess.run([player, project, "--music", song, "--font-file", font,
+                            "--width", "160", "--height", "120", "--duration", "2", "--no-preload", "--mute"],
+                           env=dict(env, SDL_DISKAUDIOFILE=str(path / "muted.f32")),
+                           capture_output=True, text=True, timeout=30)
+    assert muted.returncode == 0, muted.stdout + muted.stderr
+    assert "Synthesizing " in muted.stdout and "Music: 44100 Hz, 2 channels, 2 seconds" in muted.stdout
+    assert "Playback complete: 126 rendered frames" in muted.stdout and "2000 ms" in muted.stdout
+    silence = array.array("f", (path / "muted.f32").read_bytes())
+    assert len(silence) >= len(expected) and not any(silence), "mute did not silence the synthesized V2 music"
+    print("Mute still synthesizes an available V2 song and preserves its callback clock")

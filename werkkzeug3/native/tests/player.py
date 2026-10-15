@@ -41,6 +41,47 @@ with tempfile.TemporaryDirectory(prefix="wz3-player-") as directory:
     rms = math.sqrt(sum(x*x for x in pcm) / len(pcm))
     assert rms > .01, "SDL audio output is silent"
     print(f"Window/presentation/capture passed; SDL wrote {len(pcm)//2} stereo frames, RMS {rms:.6f}")
+    # Muting an available song must still decode it. An absent song may use
+    # silence, but the same SDL callback clock must advance every frame.
+    without_song = path / "without-song.k"
+    without_song.write_bytes(Path(project).read_bytes())
+    for name, source, extra, fallback in (
+        ("muted-present", project, [], False),
+        ("muted-missing-default", without_song, [], True),
+        ("muted-missing-v2", project, ["--music", str(path / "missing.v2m")], True),
+    ):
+        audio_path = path / (name + ".f32")
+        capture = path / (name + ".ppm")
+        muted = subprocess.run([player, source, "--font-file", font, "--width", "160",
+                                "--height", "120", "--duration", "2", "--mute",
+                                "--capture", str(capture), *extra],
+                               env=dict(env, SDL_DISKAUDIOFILE=str(audio_path)),
+                               capture_output=True, text=True, timeout=30)
+        assert muted.returncode == 0, muted.stdout + muted.stderr
+        summary = re.search(r"Playback complete: (\d+) rendered frames, \d+ presentations, (\d+) audio callbacks, (\d+) ms", muted.stdout)
+        assert summary and (int(summary[1]), int(summary[3])) == (126, 2000) and int(summary[2]) > 0, muted.stdout
+        assert "audio: disk;" in muted.stdout and ("silent 44100 Hz stereo clock" in muted.stdout) == fallback
+        if not fallback:
+            assert "Decoding " in muted.stdout
+            assert re.search(r"Music: 44100 Hz, 2 channels, [\d.]+ seconds", muted.stdout)[0] in result.stdout
+        silent = array.array("f", audio_path.read_bytes())
+        assert len(silent) >= 2 * 44100 * 2 and not any(silent), "muted callback output is not silent"
+        assert capture.read_bytes() == image, "muting or absent music changed the timeline/output"
+    for source, extra, error in (
+        (without_song, [], "cannot open Ogg Vorbis music"),
+        (project, ["--music", str(path / "missing.v2m")], "cannot open V2M music"),
+    ):
+        missing = subprocess.run([player, source, "--font-file", font, "--duration", ".05", *extra],
+                                 env=env, capture_output=True, text=True, timeout=5)
+        assert missing.returncode != 0 and error in missing.stderr, missing.stdout + missing.stderr
+    for extension in ("ogg", "v2m"):
+        broken = path / ("broken." + extension)
+        broken.write_bytes(b"not a music file")
+        invalid = subprocess.run([player, project, "--music", broken, "--mute", "--duration", ".05"],
+                                 env=env, capture_output=True, text=True, timeout=5)
+        assert invalid.returncode != 0 and "player:" in invalid.stderr, invalid.stdout + invalid.stderr
+        assert "silent 44100 Hz stereo clock" not in invalid.stdout, "corrupt existing music was treated as absent"
+    print("Mute preserves available music and callback timing; only absent music falls back to silence; captures match")
     # A warm-up pass must not consume particle RNG or retain simulated state.
     cold = subprocess.run([player, project, "--font-file", font, "--width", "160",
                            "--height", "120", "--duration", "2", "--no-preload",
