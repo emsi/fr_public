@@ -32,55 +32,54 @@ current graph connection finds 20,989 operators reachable from its entry points.
 The `_c` project names the included `debris/debris_ost.v2m`; the other project
 still names `debris.v2m`.
 
-**The full saved Debris project renders offline.** Its opening frame prepares on the CPU: the
-main viewport contains 76 mesh instances, two lights and 26 ChainLine cables.
-With an explicit font, the native player renders the opening city at 1280x640:
-1,251 consecutive frames through 20 seconds pass in both offline and
-audio-callback-paced playback, with byte-identical endpoint captures.
-Continuous GPU rendering and callback-paced playback now pass 330 seconds
-(20,626 frames), including spline-deformed geometry, baked building textures,
-tangled rails and the 3D greetings. Captures at 250, 255, 260, 280 and 300 seconds
-are byte-identical between offline and callback-paced runs.
-The optimized X11 run on the Radeon RX 7900 XT completes all 20,626 frames
-through 330 seconds in 327.83 wall seconds with SDL dummy audio: 19,453
-presentations (59.34 per wall second), a 34.26 ms maximum draw and 42.04 ms
-maximum audio-clock catch-up. The earlier unoptimized callback run fell up to
-22.27 seconds behind; that older run overlapped other validation work.
-Preparation now takes 71.75 seconds, compared with a fresh 343.02-second
-offscreen measurement of the previous binary on the same host and resolution.
-These preparation times exclude music synthesis and window setup. Preparation
-still evaluates all 20,626 simulation frames, but needs only 734 GPU draws.
-Its bounded texture cache reuses 341 recipe branches and retains 133,169,152
-bytes of CPU pixels. No other repository builds/tests ran during the final X11
-check. Captures at 20, 30, 60, 180, 250, 300 and 330 seconds match the prior
-continuous rendering byte for byte.
-Playback creates no additional cached meshes, fonts,
-render surfaces, bitmap uploads, mesh/shadow/instance buffers, shaders or lighting
-tables, and does not rebake textures. Physical audio-device latency remains
-unverified; these measurements establish windowed rendering and callback pacing.
-Optimized particle mesh instancing, Color Correction, Bitmap Render,
-BoneChain/BoneTrain, weighted skinning, Pipe, MINMESH Perlin, Font3D and Multiply
-are supported. With the cached EventTime spline alias and Water effect ported,
-an unrestricted offline run completes all 27,266 frames through 436.224 seconds
-(beat 1425), including the ending after the former 401.647-second blocker.
-The 330-second capture remains byte-identical to the prior verified build.
-Font3D unblocks the 3D greetings from 254.703 seconds;
-captures at 255, 260, 280 and 300 seconds include the saved text scenes.
-The 330-second offline capture matches the callback endpoint byte for byte.
-Font3D geometry and GPU shadow checks also pass under Clang ASan/UBSan.
-The full release suite passes 86 checks, including 28 graphics checks. Shared
-texture reuse/eviction, preparation resource discovery and scene draw ordering
-also pass three focused Clang ASan/UBSan checks. The SDL integration test compares
-selective preparation, full preparation, cold playback and offline captures.
-DejaVu Sans captures show textured buildings,
-lighting, shadows and cables. The playback test uses dummy audio; physical
-speaker output and synchronization remain unverified. This is progress through
-the saved editor project, not a comparison against the released executable's
-images. To play the supported opening from the repository root:
+**The full saved Debris project plays natively on Linux.** Both uninterrupted
+offline rendering and callback-paced playback complete all 27,266 frames through
+436.224 seconds (beat 1425). This includes the final camera's cached EventTime
+alias, Water reflections, and the animated bridge scene after the former
+401.647-second blocker. BoneChain/BoneTrain, weighted skinning, Pipe, MINMESH
+Perlin, Font3D, Multiply, optimized particle instancing, Color Correction, Glare
+and Bitmap Render are supported. The opening city contains 76 mesh instances,
+two lights and 26 ChainLine cables.
+
+The full callback-paced run on the Radeon RX 7900 XT at 1280x640 uses SDL's
+offscreen video and dummy audio backends. It completes in 433.371 wall seconds
+with 25,713 presentations (59.33 per wall second), 18,789 audio callbacks,
+a 24.05 ms maximum draw and 47.28 ms maximum audio-clock catch-up. The first
+full run had accumulated 12.82 seconds of lag in the ending. Profiling found
+repeated animated-mesh validation, color conversion and geometry preparation;
+the cached version reduces the isolated ending probe from about 24 ms to 10 ms
+per draw. No concurrent build or GPU test ran during the final timing check.
+The earlier X11 run validated windowed playback through 330 seconds at 59.34
+presentations per wall second. A full-length X11 attempt was cancelled during
+loading; the complete-timeline timing above is from offscreen callback playback.
+Physical audio-device latency and synchronization remain unverified.
+
+Preparation for the entire timeline takes 92.45 seconds, excluding music
+synthesis and window setup. It evaluates every simulation frame but performs
+only 768 GPU warm-up draws, preparing 540 meshes, 250 bitmap uploads and 42
+shader programs. Shared texture recipes reuse 347 branches and retain
+132,644,864 bytes of CPU pixels. The earlier 330-second preparation took
+71.75 seconds, versus a fresh 343.02-second measurement before the resource
+caches and selective warm-up. Playback creates no additional cached meshes,
+fonts, render surfaces, bitmap uploads, mesh/shadow/instance buffers, shaders,
+lighting tables or Water index buffers, and does not rebake textures.
+
+Thirteen captures at 20, 30, 60, 180, 250, 300, 330, 400, 405, 410, 420 and 430
+seconds and the endpoint match the preceding verified rendering byte for byte.
+The ending captures also match the uninterrupted offline run. The full release
+suite passes 86 checks, including 28 graphics checks. Five focused Clang
+ASan/UBSan checks cover weighted bones, real Debris bone recipes, Explode,
+preparation and GPU shadows. Water CPU/GPU and spatial spline checks also pass
+under Clang ASan/UBSan. The SDL integration tests compare selective preparation,
+full preparation, cold playback and offline captures.
+
+This validates the saved editor project; its images have not yet been compared
+against the released Debris executable. To play the complete project from the
+repository root:
 
 ```sh
 build/native/wz3-player werkkzeug3/data/debris/debris_9241_c.k \
-  --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf --duration 330
+  --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
 ```
 
 DejaVu Sans substitutes for the project's Arial font; its appearance is not an

@@ -4,18 +4,18 @@ This fork has an ongoing **native Linux port of fr-038: Theta** on the
 `native-linux` branch. See [the native build instructions](werkkzeug3/native/README.md)
 for the project reader, graph inspector, procedural textures, font atlases and
 native GPU mesh previews.
-Theta plays through its complete timeline on Linux. Native support for
-**fr-041: Debris** is now in progress: its archived project renders through
-its complete 436.224-second timeline offline on Linux, and its V2 soundtrack
-synthesizes natively.
-Audio-callback playback is validated through 330 seconds. Bone animation,
-Pipe meshes, Perlin displacement, 3D font outlines and mesh repetition are supported.
-All 563 reachable MINMESH operators evaluate. The ending now supports its
-EventTime camera alias and Water reflections. The optimized native player
-prepares the 330-second sequence in 72 seconds and presents about 59 frames per
-second in the tested X11/Radeon run, with a 42 ms maximum audio-clock catch-up
-using SDL dummy audio. Visual parity with the released Debris executable
-remains unverified.
+Theta plays through its complete timeline on Linux. Native playback of
+**fr-041: Debris's saved project** now completes its full 436.224-second timeline,
+including the ending's Water reflections and animated bridges, with a native V2
+soundtrack. All 563 reachable MINMESH operators evaluate. The full callback-paced
+check on a Radeon RX 7900 XT at 1280x640 averages 59.33 presentations per second,
+with a 24 ms maximum draw and 47 ms maximum audio-clock lag. Preparing the full
+project takes 92 seconds, plus music synthesis. This complete-timeline check uses
+SDL offscreen video and dummy audio; earlier X11 playback was verified through
+330 seconds. Thirteen captures remain byte-identical after the performance fixes.
+The release suite passes 86 checks, including 28 graphics checks. Visual parity
+with the released Debris executable and physical audio synchronization remain
+unverified.
 The original archive follows below.
 
 This is it. Pretty much a history of Farbrausch tools 2001-2011. We've been
