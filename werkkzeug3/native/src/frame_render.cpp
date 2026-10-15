@@ -276,13 +276,14 @@ struct FrameRenderer::Impl {
     std::vector<std::size_t> instance_limits;
   };
   struct MeshVertex {SceneEffectVertex vertex;Vec3 normal,tangent;};
-  struct MeshDraw {GLuint buffer;GLint first;GLsizei count;SceneMatrix model;bool instanced{};GLuint instance_buffer{};GLsizei instance_count{};};
+  struct MeshDraw {GLuint buffer;GLint first;GLsizei count;SceneMatrix model;bool instanced{};GLuint instance_buffer{};GLsizei instance_count{};bool water_layout{};GLuint index_buffer{};};
   struct MeshInstances {
     std::shared_ptr<const Mesh> owner;
     std::shared_ptr<const std::vector<SceneMatrix>> matrices;
     GLuint buffer{};std::size_t bytes{},reserved{};
   };
   std::map<const Mesh*,MeshInstances> instance_buffers;
+  std::map<unsigned,GLuint> water_indices;
   SceneMatrix last_model=scene_identity();
   struct LightDraw {Vec3 position,eye;std::array<float,4> attenuation,color;std::array<float,2> specular;bool directional;};
   struct ShadowGeometry {
@@ -320,6 +321,7 @@ struct FrameRenderer::Impl {
     for(const auto& [id,g]:geometry) {static_cast<void>(id);glDeleteBuffers(1,&g.buffer);}
     for(const auto& [id,g]:shadows) {static_cast<void>(id);glDeleteBuffers(1,&g.buffer);}
     for(const auto& [id,g]:instance_buffers) {static_cast<void>(id);glDeleteBuffers(1,&g.buffer);}
+    for(const auto& [width,buffer]:water_indices){static_cast<void>(width);glDeleteBuffers(1,&buffer);}
     glDeleteProgram(shadow_program);glDeleteBuffers(1,&shadow_index_buffer);
     glDeleteTextures(1,&normal_cube);glDeleteTextures(1,&attenuation_volume);
     glDeleteBuffers(1,&particle_buffer);glDeleteSamplers(4,samplers.data());glDeleteVertexArrays(1,&vao);
@@ -543,6 +545,22 @@ struct FrameRenderer::Impl {
     if(!ok) {char log[4096]{};glGetProgramInfoLog(p,sizeof(log),nullptr,log);glDeleteProgram(p);throw std::runtime_error(std::string("frame shader link failed: ")+log);}
     programs.emplace(key,p);material_programs.emplace(configuration,p);++stats.program_compilations;return p;
   }
+  void vertex_attributes(bool mesh,bool water=false) {
+    const auto stride=water ? 16*sizeof(float) : mesh ? sizeof(MeshVertex) : sizeof(SceneEffectVertex);
+    glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,stride,reinterpret_cast<void*>(offsetof(SceneEffectVertex,position)));
+    glVertexAttribPointer(1,2,GL_FLOAT,GL_FALSE,stride,reinterpret_cast<void*>(water ? 8*sizeof(float) : offsetof(SceneEffectVertex,uv)));
+    glVertexAttribPointer(2,4,GL_UNSIGNED_BYTE,GL_TRUE,stride,reinterpret_cast<void*>(water ? 6*sizeof(float) : offsetof(SceneEffectVertex,color)));
+    for(unsigned i=0;i<3;++i)glEnableVertexAttribArray(i);
+    if(mesh) {
+      glVertexAttribPointer(3,3,GL_FLOAT,GL_FALSE,stride,reinterpret_cast<void*>(water ? 3*sizeof(float) : offsetof(MeshVertex,normal)));
+      glVertexAttribPointer(4,3,GL_FLOAT,GL_FALSE,stride,reinterpret_cast<void*>(water ? 10*sizeof(float) : offsetof(MeshVertex,tangent)));
+      glEnableVertexAttribArray(3);glEnableVertexAttribArray(4);
+    }else {glDisableVertexAttribArray(3);glDisableVertexAttribArray(4);}
+  }
+  static void draw_mesh(const MeshDraw& mesh) {
+    if(mesh.index_buffer) {glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,mesh.index_buffer);glDrawElements(GL_TRIANGLES,mesh.count,GL_UNSIGNED_SHORT,nullptr);}
+    else glDrawArrays(GL_TRIANGLES,mesh.first,mesh.count);
+  }
   void quad(const FrameQuad& q,const FrameTarget& target,const SceneEffectDraw* effect=nullptr,const SceneMatrix* projection=nullptr,const MeshDraw* mesh=nullptr,const LightDraw* light=nullptr,const SceneFog* fog=nullptr,const SceneCamera* camera=nullptr) {
     const auto destination=target.surface;
     if(q.released_layer && !effect && !mesh &&
@@ -620,18 +638,13 @@ struct FrameRenderer::Impl {
         glBindBuffer(GL_ARRAY_BUFFER,particle_buffer);glBufferData(GL_ARRAY_BUFFER,triangles.size()*sizeof(SceneEffectVertex),triangles.data(),GL_STREAM_DRAW);count=GLsizei(triangles.size());
       }
       glUniformMatrix4fv(glGetUniformLocation(p,"view_projection"),1,GL_FALSE,projection->data());
-      const auto stride=mesh ? sizeof(MeshVertex) : sizeof(SceneEffectVertex);
-      glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,stride,reinterpret_cast<void*>(offsetof(SceneEffectVertex,position)));
-      glVertexAttribPointer(1,2,GL_FLOAT,GL_FALSE,stride,reinterpret_cast<void*>(offsetof(SceneEffectVertex,uv)));
-      glVertexAttribPointer(2,4,GL_UNSIGNED_BYTE,GL_TRUE,stride,reinterpret_cast<void*>(offsetof(SceneEffectVertex,color)));
-      glEnableVertexAttribArray(0);glEnableVertexAttribArray(1);glEnableVertexAttribArray(2);
-      if(mesh){glVertexAttribPointer(3,3,GL_FLOAT,GL_FALSE,stride,reinterpret_cast<void*>(offsetof(MeshVertex,normal)));glVertexAttribPointer(4,3,GL_FLOAT,GL_FALSE,stride,reinterpret_cast<void*>(offsetof(MeshVertex,tangent)));glEnableVertexAttribArray(3);glEnableVertexAttribArray(4);}else {glDisableVertexAttribArray(3);glDisableVertexAttribArray(4);}
+      vertex_attributes(mesh!=nullptr,mesh && mesh->water_layout);
       if(mesh && mesh->instanced) {
         glBindBuffer(GL_ARRAY_BUFFER,mesh->instance_buffer);
         for(unsigned c=0;c<4;++c){glVertexAttribPointer(5+c,4,GL_FLOAT,GL_FALSE,sizeof(SceneMatrix),reinterpret_cast<void*>(c*4*sizeof(float)));glEnableVertexAttribArray(5+c);glVertexAttribDivisor(5+c,1);}
         glDrawArraysInstanced(GL_TRIANGLES,first,count,mesh->instance_count);
         for(unsigned c=0;c<4;++c){glVertexAttribDivisor(5+c,0);glDisableVertexAttribArray(5+c);}
-      }else glDrawArrays(GL_TRIANGLES,first,count);
+      }else if(mesh)draw_mesh(*mesh);else glDrawArrays(GL_TRIANGLES,first,count);
     }
   }
   FrameTexture resolve_texture(std::size_t id,const SceneEffectDraw* effect=nullptr) {
@@ -733,19 +746,37 @@ struct FrameRenderer::Impl {
       else glBlendFunc(GL_ONE,lit && (shader.compiled_parameters[0]&4) ? GL_ONE_MINUS_SRC_COLOR : GL_ONE);
     }else glDisable(GL_BLEND);
     glBindBuffer(GL_ARRAY_BUFFER,mesh.buffer);
-    glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,sizeof(MeshVertex),reinterpret_cast<void*>(offsetof(SceneEffectVertex,position)));
-    glVertexAttribPointer(1,2,GL_FLOAT,GL_FALSE,sizeof(MeshVertex),reinterpret_cast<void*>(offsetof(SceneEffectVertex,uv)));
-    glVertexAttribPointer(2,4,GL_UNSIGNED_BYTE,GL_TRUE,sizeof(MeshVertex),reinterpret_cast<void*>(offsetof(SceneEffectVertex,color)));
-    glVertexAttribPointer(3,3,GL_FLOAT,GL_FALSE,sizeof(MeshVertex),reinterpret_cast<void*>(offsetof(MeshVertex,normal)));
-    glVertexAttribPointer(4,3,GL_FLOAT,GL_FALSE,sizeof(MeshVertex),reinterpret_cast<void*>(offsetof(MeshVertex,tangent)));
-    for(unsigned i=0;i<5;++i)glEnableVertexAttribArray(i);
+    vertex_attributes(true,mesh.water_layout);
     // ZFill::Set does not publish LastMatrix; all four color passes do.
     if(!depth)last_model=mesh.model;
-    glDrawArrays(GL_TRIANGLES,mesh.first,mesh.count);
+    draw_mesh(mesh);
   }
-  void effect(const SceneEffectDraw& draw,const SceneMatrix& projection,const FrameTarget& target,const SceneCamera& camera) {
+  void effect(const SceneEffectDraw& draw,const SceneMatrix& projection,const FrameTarget& target,const SceneFrame& scene) {
+    const auto& camera=scene.camera;
     if(draw.glare){glare(*draw.glare,target);return;}
     if(draw.color_correction){color_correction(*draw.color_correction,target);return;}
+    if(draw.water) {
+      const auto data=water_geometry(*draw.water);
+      glBindVertexArray(vao);
+      auto [indices,added]=water_indices.try_emplace(data.width);
+      if(added) {
+        glGenBuffers(1,&indices->second);glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,indices->second);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER,data.indices.size()*sizeof(std::uint16_t),data.indices.data(),GL_STATIC_DRAW);++stats.water_uploads;
+      }
+      glBindBuffer(GL_ARRAY_BUFFER,particle_buffer);
+      glBufferData(GL_ARRAY_BUFFER,data.vertices.size()*sizeof(float),data.vertices.data(),GL_STREAM_DRAW);++stats.water_updates;
+      MeshDraw mesh{particle_buffer,0,GLsizei(data.indices.size()),draw.material_model,false,0,0,true,indices->second};
+      auto draw_camera=camera;if(draw.camera_world)draw_camera.world=*draw.camera_world;
+      const auto matrix=scene_combine(scene_raster_projection(draw_camera,target.width,target.height),mesh.model);
+      if(draw.shader.material20) {
+        SceneFrame material_scene;material_scene.camera=draw_camera;material_scene.ambient=scene.ambient;
+        material20(*draw.shader.material20,target,mesh,matrix,material_scene,nullptr);
+      }else {
+        std::optional<SceneFog> fog;if(draw.shader.words[0]&0x40)fog=scene_fog(draw_camera,mesh.model);
+        quad(resolve_material(draw.shader,&draw),target,&draw,&matrix,&mesh,nullptr,fog ? &*fog : nullptr,&draw_camera);
+      }
+      return;
+    }
     if(draw.vertices.empty() && !draw.ribbon) {if(draw.material_on_empty)last_model=draw.material_model;return;}
     std::optional<SceneEffectDraw> resolved;const auto* geometry=&draw;
     if(draw.ribbon) {
@@ -764,7 +795,7 @@ struct FrameRenderer::Impl {
     const auto projection=scene_raster_projection(scene.camera,target.width,target.height);
     std::array<bool,256> capture{};for(const auto& draw:scene.effects)if(draw.color_correction)capture[draw.sort_key>>24]=true;
     unsigned previous=256;
-    for(const auto& draw:scene.effects){const auto pass=draw.sort_key>>24;if(pass!=previous && capture[pass])capture_current(target);previous=pass;effect(draw,projection,target,scene.camera);}
+    for(const auto& draw:scene.effects){const auto pass=draw.sort_key>>24;if(pass!=previous && capture[pass])capture_current(target);previous=pass;effect(draw,projection,target,scene);}
   }
   const MeshGeometry& mesh_geometry(const std::shared_ptr<const Mesh>& mesh,const std::vector<SceneMeshBatch>& batches) {
     const auto key=mesh->animation_source ? mesh->animation_source.get() : mesh.get();auto found=geometry.find(key);
@@ -880,7 +911,7 @@ struct FrameRenderer::Impl {
       restore_scissor();if(light){const auto& r=draws.lights[*light].rectangle;const int left=int(target.width*(1+r[0])*.5f),right=int(target.width*(1+r[2])*.5f),top=int(target.height*(1-r[3])*.5f),bottom=int(target.height*(1-r[1])*.5f);glScissor(left,surfaces.at(target.surface).height-bottom,right-left,bottom-top);}
     };
     const auto paint=[&](const auto& job) {
-      if(job.effect) {effect(scene.effects[*job.effect],projection,target,scene.camera);return;}
+      if(job.effect) {effect(scene.effects[*job.effect],projection,target,scene);return;}
       const auto& instance=scene.instances[job.instance];const auto& batches=draws.meshes.at(instance.mesh.get());
       const auto material=batches[job.batch].material;const auto& pass=(material ? scene.materials.at(*material) : scene_default_material()).passes[job.material_pass];
       try {

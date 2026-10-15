@@ -166,6 +166,12 @@ struct ScenePlayer::Impl {
       require(p.size()==11 && graph.nodes[id].inputs.empty() && graph.nodes[id].links.empty(),"unsupported Glare/Color Correction layout");
       effect_order.emplace(id,EffectOrder{std::bit_cast<std::int32_t>(p[0]),0});return;
     }
+    if(cmd==0x73) {
+      require(p.size()==6 && graph.nodes[id].inputs.size()==1 && graph.nodes[id].links.size()==1 && p[5]>=1 && p[5]<=8,"unsupported Water effect layout");
+      std::int32_t pass=0;unsigned usage=7;
+      if(const auto material=graph.nodes[id].links[0]){const auto m=materials.snapshot(*material);if(!m.passes.empty()){pass=m.passes[0].render_pass;usage=unsigned(m.passes[0].usage);}}
+      effect_order.emplace(id,EffectOrder{pass,usage});return;
+    }
     if(cmd!=0x64 && cmd!=0x61 && cmd!=0x6b)return;
     require((cmd==0x64 ? p.size()==12 : cmd==0x6b ? p.size()==21 : (p.size()==5 || p.size()==6)) && graph.nodes[id].inputs.empty() && graph.nodes[id].links.size()==1,"unsupported particle/Print/ChainLine effect layout");
     std::int32_t pass=0;unsigned usage=7;
@@ -198,7 +204,7 @@ struct ScenePlayer::Impl {
       auto& parameters=op.command==0x74 ? draw.glare.emplace().parameters : draw.color_correction.emplace().parameters;
       std::copy(scope.parameters.begin(),scope.parameters.end(),parameters.begin());frame.effects.push_back(std::move(draw));return;
     }
-    require(op.command==0x64 || op.command==0x61 || op.command==0x6b,"effect alias execution is not ported");
+    require(op.command==0x64 || op.command==0x61 || op.command==0x6b || op.command==0x73,"effect alias execution is not ported");
     std::optional<SceneRibbon> ribbon;
     if(op.command==0x6b)ribbon=chains.update(instance(id,env),scope.parameters,markers,clock);
     // The handler reads its first cached material pass; it does not execute the
@@ -206,6 +212,11 @@ struct ScenePlayer::Impl {
     if(node.links[0]) {const auto material=materials.snapshot(*node.links[0]);if(!material.passes.empty()) {
       SceneEffectDraw draw;draw.operator_id=id;draw.sort_key=key;draw.shader=material.passes[0].shader;
       if(op.command==0x64)draw.vertices=effects.draw(scope.parameters,frame.camera,world,clock);
+      else if(op.command==0x73) {
+        auto& water=draw.water.emplace();std::copy(scope.parameters.begin(),scope.parameters.end(),water.parameters.begin());
+        water.spline=spatial.static_curve(node.inputs[0],env);water.time=env.variables[0][0];
+        draw.material_model=world;draw.camera_world=current_camera.world;
+      }
       else if(op.command==0x6b) {draw.ribbon=std::move(ribbon);current_camera.world=scene_identity();}
       else {
         draw.material_on_empty=true;
@@ -252,7 +263,7 @@ struct ScenePlayer::Impl {
       frame.instances.push_back({id,geometry(target),world,env.variables[0][0],pass});return;
     }
     if(operator_info(project.operators[target].command).category=="EFFECT") {
-      if((project.operators[target].command!=0x64 && project.operators[target].command!=0x61 && project.operators[target].command!=0x6b && project.operators[target].command!=0x74 && project.operators[target].command!=0x75))throw std::runtime_error("scene effect "+std::to_string(target)+" ("+std::string(operator_info(project.operators[target].command).name)+") is not ported");
+      if((project.operators[target].command!=0x64 && project.operators[target].command!=0x61 && project.operators[target].command!=0x6b && project.operators[target].command!=0x73 && project.operators[target].command!=0x74 && project.operators[target].command!=0x75))throw std::runtime_error("scene effect "+std::to_string(target)+" ("+std::string(operator_info(project.operators[target].command).name)+") is not ported");
       require(jobs.size()<65536,"effect job limit");
       const auto key=effect_order.at(target);const auto render_pass=std::clamp(std::int64_t(key.pass)+pass,std::int64_t(0),std::int64_t(255));
       jobs.push_back({id,world,env.variables,(std::uint32_t(render_pass)<<24)|(key.usage<<16)});return;
@@ -462,7 +473,11 @@ void write_scene(const std::filesystem::path& path,const SceneFrame& frame) {
     out<<",\"direction\":";array(v.direction);out<<",\"flags\":"<<v.flags<<",\"color\":"<<v.color<<",\"amplify\":"<<v.amplify<<",\"range\":"<<v.range<<'}';
   }
   out<<"],\"effects\":[";
-  for(std::size_t i=0;i<frame.effects.size();++i) {const auto& e=frame.effects[i];out<<(i ? "," : "")<<"{\"operator\":"<<e.operator_id<<",\"sort_key\":"<<e.sort_key<<",\"quads\":"<<(e.ribbon ? 31 : e.vertices.size()/4)<<'}';}
+  for(std::size_t i=0;i<frame.effects.size();++i) {
+    const auto& e=frame.effects[i];out<<(i ? "," : "")<<"{\"operator\":"<<e.operator_id<<",\"sort_key\":"<<e.sort_key<<",\"quads\":"<<(e.ribbon ? 31 : e.vertices.size()/4);
+    if(e.water)out<<",\"water_grid_exponent\":"<<e.water->parameters[5]<<",\"water_time\":"<<e.water->time;
+    out<<'}';
+  }
   out<<"],\"materials\":{";bool first_material=true;
   for(const auto& [id,material]:frame.materials) {out<<(first_material ? "" : ",")<<'\"'<<id<<"\":";write_material(out,material);first_material=false;}
   out<<"}}\n";require(bool(out),"cannot write scene output");

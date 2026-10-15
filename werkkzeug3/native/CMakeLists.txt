@@ -28,6 +28,13 @@ set_source_files_properties(src/mesh_kernel.cpp src/mesh_noise.cpp src/animation
 target_link_libraries(wz3_project PRIVATE JPEG::JPEG Freetype::Freetype PkgConfig::GLU)
 target_sources(wz3_project PRIVATE src/frame_preload.cpp)
 target_sources(wz3_project PRIVATE src/texture_cache.cpp)
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/water_kernel.inc" "${CMAKE_CURRENT_BINARY_DIR}/generated/water_oracle.inc"
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/water_kernel.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../geneffect.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/water_kernel.inc"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/water_oracle.inc"
+  DEPENDS tools/water_kernel.py tools/particles_oracle.py ../geneffect.cpp VERBATIM)
+target_sources(wz3_project PRIVATE src/water.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/water_kernel.inc")
+set_source_files_properties(src/water.cpp PROPERTIES COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
 target_sources(wz3_project PRIVATE src/glare.cpp src/color_correction.cpp)
 set_source_files_properties(src/glare.cpp src/color_correction.cpp PROPERTIES COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
 add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/dxt_kernel.inc"
@@ -214,6 +221,11 @@ if(WZ3_BUILD_PLAYER)
 endif()
 
 if(BUILD_TESTING)
+  add_executable(wz3-water-tests tests/water.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/water_oracle.inc")
+  target_include_directories(wz3-water-tests PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_compile_options(wz3-water-tests PRIVATE -frounding-math -ffp-contract=off)
+  target_link_libraries(wz3-water-tests PRIVATE wz3_project)
+  add_test(NAME water_geometry COMMAND wz3-water-tests "${CMAKE_CURRENT_SOURCE_DIR}/../data/debris/debris_9241_c.k")
   add_executable(wz3-chainline-tests tests/chainline.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/chainline_oracle.inc")
   target_include_directories(wz3-chainline-tests PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
   target_compile_options(wz3-chainline-tests PRIVATE -frounding-math -ffp-contract=off)
@@ -579,6 +591,12 @@ if(BUILD_TESTING)
     target_link_libraries(wz3-instance-render-tests PRIVATE wz3_project PkgConfig::EGL PkgConfig::GLES)
     add_test(NAME gpu_mesh_instances COMMAND wz3-instance-render-tests)
     set_tests_properties(gpu_mesh_instances PROPERTIES LABELS graphics)
+    add_executable(wz3-water-render-tests tests/render_water.cpp src/frame_render.cpp src/render.cpp)
+    target_include_directories(wz3-water-render-tests PRIVATE src)
+    target_compile_options(wz3-water-render-tests PRIVATE -ffp-contract=off)
+    target_link_libraries(wz3-water-render-tests PRIVATE wz3_project PkgConfig::EGL PkgConfig::GLES)
+    add_test(NAME gpu_water COMMAND wz3-water-render-tests)
+    set_tests_properties(gpu_water PROPERTIES LABELS graphics)
     add_executable(wz3-environment-render-tests tests/render_environment.cpp src/frame_render.cpp src/render.cpp)
     target_include_directories(wz3-environment-render-tests PRIVATE src)
     target_link_libraries(wz3-environment-render-tests PRIVATE wz3_project PkgConfig::EGL PkgConfig::GLES)

@@ -6,14 +6,16 @@ for the project reader, graph inspector, procedural textures, font atlases and
 native GPU mesh previews.
 Theta plays through its complete timeline on Linux. Native support for
 **fr-041: Debris** is now in progress: its archived project renders through
-400 seconds offline on Linux and its V2 soundtrack synthesizes natively.
+its complete 436.224-second timeline offline on Linux, and its V2 soundtrack
+synthesizes natively.
 Audio-callback playback is validated through 330 seconds. Bone animation,
 Pipe meshes, Perlin displacement, 3D font outlines and mesh repetition are supported.
-All 563 reachable MINMESH operators evaluate. The next runtime blocker is an
-EventTime spatial spline wrapper at 401.647 seconds. The optimized native player
+All 563 reachable MINMESH operators evaluate. The ending now supports its
+EventTime camera alias and Water reflections. The optimized native player
 prepares the 330-second sequence in 72 seconds and presents about 59 frames per
 second in the tested X11/Radeon run, with a 42 ms maximum audio-clock catch-up
-using SDL dummy audio. The full demo is not yet supported.
+using SDL dummy audio. Visual parity with the released Debris executable
+remains unverified.
 The original archive follows below.
 
 This is it. Pretty much a history of Farbrausch tools 2001-2011. We've been

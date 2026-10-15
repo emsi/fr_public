@@ -32,7 +32,7 @@ current graph connection finds 20,989 operators reachable from its entry points.
 The `_c` project names the included `debris/debris_ost.v2m`; the other project
 still names `debris.v2m`.
 
-**Debris playback is incomplete.** Its opening frame now prepares on the CPU: the
+**The full saved Debris project renders offline.** Its opening frame prepares on the CPU: the
 main viewport contains 76 mesh instances, two lights and 26 ChainLine cables.
 With an explicit font, the native player renders the opening city at 1280x640:
 1,251 consecutive frames through 20 seconds pass in both offline and
@@ -60,13 +60,15 @@ tables, and does not rebake textures. Physical audio-device latency remains
 unverified; these measurements establish windowed rendering and callback pacing.
 Optimized particle mesh instancing, Color Correction, Bitmap Render,
 BoneChain/BoneTrain, weighted skinning, Pipe, MINMESH Perlin, Font3D and Multiply
-are supported. An unrestricted run now passes 400 seconds (25,001 consecutive
-frames) and stops at 401,647 ms on spatial spline operator 6067 (EventTime).
+are supported. With the cached EventTime spline alias and Water effect ported,
+an unrestricted offline run completes all 27,266 frames through 436.224 seconds
+(beat 1425), including the ending after the former 401.647-second blocker.
+The 330-second capture remains byte-identical to the prior verified build.
 Font3D unblocks the 3D greetings from 254.703 seconds;
 captures at 255, 260, 280 and 300 seconds include the saved text scenes.
 The 330-second offline capture matches the callback endpoint byte for byte.
 Font3D geometry and GPU shadow checks also pass under Clang ASan/UBSan.
-The full release suite passes 84 checks, including 27 graphics checks. Shared
+The full release suite passes 86 checks, including 28 graphics checks. Shared
 texture reuse/eviction, preparation resource discovery and scene draw ordering
 also pass three focused Clang ASan/UBSan checks. The SDL integration test compares
 selective preparation, full preparation, cold playback and offline captures.
@@ -83,12 +85,32 @@ build/native/wz3-player werkkzeug3/data/debris/debris_9241_c.k \
 
 DejaVu Sans substitutes for the project's Arial font; its appearance is not an
 original-output match. DXT textures require S3TC support from the GLES driver.
-Remaining work includes the EventTime spatial spline wrapper and the Water
-effect. RenderAuto is also unported, but it is not reachable in this project.
+Comparison with the released Debris images remains outstanding. RenderAuto is
+unported, but it is not reachable in this project.
 The player synthesizes its V2 soundtrack into stereo PCM before playback, using
 the same SDL callback clock as Ogg music. The existing Theta renderer and released-clock profile
 do not establish compatibility with Debris. `debris_projects` compares the real
 wrapped files with their legacy documents and tests malformed container handling.
+
+The final camera's EventTime wrapper returns the same cached spline object as
+its input, matching `Init_Misc_EventTime`. Viewport and ApplySpline evaluate that
+object directly; they do not execute the stateful EventTime handler. Tests
+preserve both the caller's spline time and the inner shaker's event identity.
+This does not implement stateful EventTime execution in other graph contexts.
+
+Water uses the archived radial waveform tables, interpolation, height-derived
+normals, two packed colors, UVs and triangle order. Geometry is generated only
+when drawing, so preparation can inspect every simulation step cheaply. The
+renderer streams its original 64-byte vertices and retains one 16-bit index
+buffer per grid size. It uses the first cached material pass and the current
+model/camera transforms, including reflection-generated texture coordinates.
+`water_geometry` compares all vertex words and indices against the extracted
+archived handler in 29 synthetic cases and seven samples of the real recipe.
+It also checks invalid inputs, rounding restoration, the 128-wave limit,
+material caching and the maximum 256-by-256 grid. `gpu_water` compares indexed
+Water against ordinary triangle meshes with independently baked reflection UVs,
+and checks direct UVs, packed colors, animation, preload discovery and reset.
+Water CPU/GPU tests and spatial spline tests pass under Clang ASan/UBSan.
 
 The renderer retains up to 512 MiB of uploaded bitmap mip data. The old 256 MiB
 limit was reached at 333.071 seconds when the later city sequence requested

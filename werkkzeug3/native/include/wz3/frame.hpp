@@ -63,6 +63,7 @@ public:
   struct Stats {
     std::size_t surface_allocations{},bitmap_uploads{},mesh_uploads{},shadow_uploads{},program_compilations{},lighting_uploads{};
     std::size_t mesh_updates{},shadow_updates{},instance_uploads{},instance_updates{},bitmap_renders{};
+    std::size_t water_uploads{},water_updates{};
     std::size_t bitmap_bytes{}; // Retained mip payloads; excludes driver overhead.
     bool operator==(const Stats&) const = default;
   };

@@ -43,6 +43,7 @@ struct FramePreloader::Impl {
       return remember(std::move(key));
     }
     if(effect.color_correction){key.push_back(2);return remember(std::move(key));}
+    if(effect.water){key.insert(key.end(),{3,effect.water->parameters[5]});shader(key,effect.shader);return remember(std::move(key));}
     if(effect.vertices.empty() && !effect.ribbon)return false;
     key.push_back(0);key.push_back(effect.normalized);shader(key,effect.shader);
     bool changed=remember(std::move(key));

@@ -231,6 +231,6 @@ int main(int argc,char** argv) {
     std::cout<<(offline ? "Offline allocations: " : "Playback allocations: ")<<cpu.meshes-prepared_cpu.meshes<<" meshes, "<<cpu.fonts-prepared_cpu.fonts
       <<" fonts, "<<gpu.surface_allocations-prepared_gpu.surface_allocations<<" surfaces, "<<gpu.bitmap_uploads-prepared_gpu.bitmap_uploads
       <<" bitmaps, "<<gpu.mesh_uploads-prepared_gpu.mesh_uploads<<" mesh uploads, "<<gpu.shadow_uploads-prepared_gpu.shadow_uploads
-      <<" shadow uploads, "<<gpu.instance_uploads-prepared_gpu.instance_uploads<<" instance buffers, "<<gpu.bitmap_renders-prepared_gpu.bitmap_renders<<" bitmap renders, "<<gpu.program_compilations-prepared_gpu.program_compilations<<" programs, "<<gpu.lighting_uploads-prepared_gpu.lighting_uploads<<" lighting tables\n";
+      <<" shadow uploads, "<<gpu.instance_uploads-prepared_gpu.instance_uploads<<" instance buffers, "<<gpu.bitmap_renders-prepared_gpu.bitmap_renders<<" bitmap renders, "<<gpu.program_compilations-prepared_gpu.program_compilations<<" programs, "<<gpu.lighting_uploads-prepared_gpu.lighting_uploads<<" lighting tables, "<<gpu.water_uploads-prepared_gpu.water_uploads<<" water grids\n";
   }catch(const std::exception& e){std::cerr<<"player: "<<e.what()<<'\n';return 1;}
 }
