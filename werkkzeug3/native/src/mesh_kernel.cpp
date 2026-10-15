@@ -41,6 +41,15 @@ sU32 sGetRnd() {
   random_state=a*0x343fdu+0x269ec3u;
   return ((random_state>>10)&0xffffu)|((a<<6)&0xffff0000u);
 }
+sU32 sGetRnd(sU32 max) {return sGetRnd()%max;}
+bool multiply2_over_limit(sInt3 a,sInt3 b,sInt3 c) {
+  const int counts[]={a.x,a.y,a.z,b.x,b.y,b.z,c.x,c.y,c.z};
+  // The archive replaces all counts with one above 1024 copies. Avoid signed
+  // product overflow; the evaluator validates the editor's 1..255 dimensions.
+  unsigned total=1;
+  for(auto n:counts) {total*=unsigned(n);if(total>1024)return true;}
+  return false;
+}
 void sSetRndSeed(sU32 seed) {
   const auto product=seed*121u;
   const auto mixed=seed+seed*17u+product+std::uint32_t(std::bit_cast<std::int32_t>(product)/17);

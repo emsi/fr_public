@@ -144,6 +144,17 @@ void markers() {
   check(player.markers()[3]==saved && player.markers()[31][12]==20,"backward time or childless marker lost state");
   rejects([&]{player.viewport(invalid,wz3::frame_environment(0),1);});
 }
+void empty_scene() {
+  Fixture x;auto p=srt(15);p.push_back(0);
+  const auto cube=x.cube(),empty=x.add(0xc0,p),full=x.add(0xc0,p,{cube});
+  const auto root=x.viewport(x.add(0xc1,{}, {empty,full}));
+  const auto invalid=x.viewport(x.add(0xc0,p,{cube,cube}));
+  const auto empty_transform=x.viewport(x.add(0xc3,srt()));
+  wz3::ScenePlayer player(x.p,x.g);const auto frame=player.viewport(root,wz3::frame_environment(0),1);
+  check(frame.instances.size()==1 && frame.instances[0].world[12]==15,"Scene must accept an optional mesh and transform a present mesh");
+  rejects([&]{player.viewport(invalid,wz3::frame_environment(0),1);});
+  rejects([&]{player.viewport(empty_transform,wz3::frame_environment(0),1);});
+}
 void theta(const char* file) {
   const auto p=wz3::read_project(file);const auto g=wz3::connect(p);const wz3::SplineLibrary splines(p);wz3::ScenePlayer player(p,g);
   auto env=wz3::frame_environment(56*65536);const wz3::EventAnimationScope event(p.events[1],56*65536,splines,env);
@@ -158,7 +169,7 @@ void theta(const char* file) {
 }
 int main(int argc,char** argv) {
   try {if(argc==3 && std::string_view(argv[1])=="--release-camera-oracle") {released_camera_oracle(argv[2]);return 0;}
-    check(argc==2,"expected Theta project");composition();animation_and_instances();lights();selection_and_passes();markers();theta(argv[1]);
+    check(argc==2,"expected Theta project");composition();animation_and_instances();lights();selection_and_passes();markers();empty_scene();theta(argv[1]);
     std::cout<<"scene transforms, instancing, scoped animation, lights and Theta viewports passed\n";
   }catch(const std::exception& error) {std::cerr<<error.what()<<'\n';return 1;}
 }

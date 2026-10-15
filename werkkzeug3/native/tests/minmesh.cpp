@@ -144,12 +144,12 @@ void debris(const char* path) {
       const std::string message=e.what();const auto begin=message.find('('),end=message.find(')',begin);
       if(begin==std::string::npos || end==std::string::npos || !message.ends_with(" is not ported"))throw;
       const auto name=message.substr(begin+1,end-begin-1);
-      const std::set<std::string> remaining={"Perlin Displace","Explode","BoneChain","BoneTrain","Multiply","Font3D","Pipe","Delete Faces","Extrude Normal"};
+      const std::set<std::string> remaining={"Perlin Displace","Explode","BoneChain","BoneTrain","Multiply","Font3D","Pipe"};
       if(!remaining.contains(name))throw;
       ++unsupported[name];
     }
   }
-  check(converted>=232,"real Debris MINMESH coverage regressed");
+  check(converted>=242,"real Debris MINMESH coverage regressed");
   std::cout<<converted<<" reachable Debris MINMESH operators evaluate; remaining dependencies:\n";
   for(const auto& [message,count]:unsupported)std::cout<<count<<" blocked: "<<message<<'\n';
 }

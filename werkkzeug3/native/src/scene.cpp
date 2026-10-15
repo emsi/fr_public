@@ -228,7 +228,10 @@ struct ScenePlayer::Impl {
     const auto& op=project.operators[id];const auto& node=graph.nodes[id];
     const AnimationScope animation(program(id),splines,op.parameters,env);const auto& p=animation.parameters;
     if(op.command>=1 && op.command<=3) {execute(alias(id),env,world,frame,timeline,depth+1,pass);return;}
-    const auto one=[&](){require(node.inputs.size()==1,"scene operator needs one input");return node.inputs[0];};
+    const auto one=[&](){
+      if(node.inputs.size()!=1)throw std::runtime_error("scene operator "+std::to_string(id)+" ("+std::string(operator_info(op.command).name)+") needs one input; got "+std::to_string(node.inputs.size()));
+      return node.inputs[0];
+    };
     const auto children=[&](const SceneMatrix& transform,std::int32_t adjust) {for(auto input:node.inputs)execute(input,env,transform,frame,timeline,depth+1,adjust);};
     switch(op.command) {
     case 5:case 6:
@@ -237,8 +240,11 @@ struct ScenePlayer::Impl {
       require(p.empty() && node.inputs.empty() && node.links.size()==1,"unsupported MatHack layout");
       if(node.links[0])materials.execute(*node.links[0],env);
       break;
-    case 0xc0:case 0xc3:
-      require(p.size()==(op.command==0xc0 ? 10u : 9u),"unsupported scene transform layout");
+    case 0xc0:
+      require(p.size()==10 && node.inputs.size()<=1,"unsupported Scene layout");
+      children(scene_combine(world,scene_srt(p)),pass);break;
+    case 0xc3:
+      require(p.size()==9,"unsupported scene transform layout");
       execute(one(),env,scene_combine(world,scene_srt(p)),frame,timeline,depth+1,pass);break;
     case 0xc1:require(p.empty(),"unsupported scene Add layout");children(world,pass);break;
     case 0xc2: {

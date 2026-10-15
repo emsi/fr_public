@@ -18,7 +18,7 @@ CalcBBox CopyVert TransVert SelectCube SelectSphere Ring Extrude Subdivide
 FixVertCycle Crease UnCrease CalcNormals NeedAllNormals Triangulate DeleteFaces
 CubicProjection""".split()
 COMMANDS = """Cube Cylinder Torus Sphere SelectCube SelectSphere SelectFace SelectRandom
-Subdivide Extrude SmoothAngle Bend2 Grid SelectLogic Triangulate Color ShadowEnable Bend""".split()
+Subdivide Extrude ExtrudeNormal SmoothAngle Bend2 Grid SelectLogic Triangulate Color ShadowEnable Bend Multiply2""".split()
 
 
 def extract(source, name):
@@ -75,6 +75,18 @@ def main():
         if name == "Mesh_Extrude":
             body = body.replace("static sInt stk[4096];", "sInt stk[4096];")
             body = body.replace("stk[j++] = i;", "sVERIFY(j<4096); stk[j++] = i;")
+        if name == "Mesh_Multiply2":
+            # Replace x86 stack varargs with borrowed inputs. GenMesh::Add's
+            # second argument is unused; append preserves material/pass identity.
+            body = body.replace("sInt inCount,GenMesh *inMesh,...", "std::span<const GenMesh* const> inputs")
+            body = body.replace("if(!inCount)", "const sInt inCount = inputs.size();\n  if(!inCount)")
+            body = body.replace("GenMesh *mesh = new GenMesh;", "auto owner = std::make_unique<GenMesh>(); GenMesh *mesh = owner.get();")
+            body = body.replace("GenMesh *in = (&inMesh)[", "const GenMesh *in = inputs[")
+            body = body.replace("mesh->Add(in,!!start);", "mesh->append(*in);")
+            body = body.replace("count3.x*count3.y*count3.z * count2.x*count2.y*count2.z * count1.x*count1.y*count1.z > 1024",
+                                "multiply2_over_limit(count1,count2,count3)")
+            body = body.replace("for(sInt i=0;i<inCount;i++)\n    (&inMesh)[i]->Release();", "// Input ownership remains with the evaluator.")
+            body = body.replace("return mesh;", "return owner.release();")
         bodies.append(body)
     Path(sys.argv[2]).write_text(
         "// Generated from genmesh.cpp, distributed under werkkzeug3/LICENSE.txt.\n" +

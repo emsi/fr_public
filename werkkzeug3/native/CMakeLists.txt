@@ -385,7 +385,8 @@ if(BUILD_TESTING)
   add_executable(wz3-mesh-tests tests/mesh.cpp)
   target_link_libraries(wz3-mesh-tests PRIVATE wz3_project)
   add_test(NAME mesh_geometry COMMAND wz3-mesh-tests
-    "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta/theta_final.k")
+    "${CMAKE_CURRENT_SOURCE_DIR}/../data/theta/theta_final.k"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../data/debris/debris_9241_c.k")
   add_executable(wz3-texture-tests tests/texture.cpp tests/composite.cpp tests/filters.cpp)
   target_link_libraries(wz3-texture-tests PRIVATE wz3_project)
   add_test(NAME texture_arithmetic COMMAND wz3-texture-tests)

@@ -186,6 +186,88 @@ void operators() {
   const auto animated = p.add(0x88,{0,f(1),f(1),f(1),0,0,0,0,0,0},{base});
   p.project.operators[animated].animations.push_back({});rejects([&]{p.get(animated);});
 }
+void multiply2() {
+  Fixture p;const auto base=p.add(0x81,cube());const auto original=p.get(base);
+  auto parameters=std::vector<std::uint32_t>{1,2,2,2,f(1),f(2),f(3),2,2,2,f(10),f(20),f(30),0,2,2,2,f(100),f(200),f(300)};
+  const auto grid=p.get(p.add(0xb4,parameters,{base}));
+  check(grid->vertices.size()==512*24 && grid->faces.size()==512*6,"Multiply 2 nine-dimensional count");
+  for(unsigned copy=0;copy<512;++copy)for(unsigned v=0;v<24;++v) {
+    const auto& actual=grid->vertices[copy*24+v];const auto& source=original->vertices[v];
+    for(unsigned c=0;c<3;++c) {
+      const float offset=(c+1)*(((copy>>c)&1)+10*((copy>>(c+3))&1)+100*((copy>>(c+6))&1));
+      near(actual.position[c],source.position[c]+offset,"Multiply 2 nesting order/translation");
+    }
+    check(actual.uv==source.uv && actual.mask==source.mask && actual.point==source.point+copy*24,"Multiply 2 lost vertex attributes/topology");
+    check(grid->kernel->Vert[copy*24+v].Select==(copy==511),"Multiply 2 must select only the last copy's vertices");
+  }
+  // Fixed samples from the archive's 32-bit seed mixing and two-step LCG.
+  // Different material/pass/shadow values identify the selected input without
+  // depending on native random helpers in this test.
+  const unsigned expected[][32]={
+    {2,2,0,0,1,2,0,2,0,1,0,2,1,1,2,0,1,0,2,0,1,2,2,1,0,1,2,2,2,2,2,0},
+    {2,2,2,2,2,2,0,0,2,2,2,2,2,2,0,2,2,1,2,2,2,2,2,2,1,2,2,2,2,2,1,0},
+    {2,2,2,2,2,2,2,0,2,0,1,1,1,2,0,0,2,2,2,2,0,0,2,0,2,0,2,2,1,2,0,2}};
+  std::vector<std::size_t> inputs,materials;
+  for(unsigned i=0;i<3;++i) {
+    materials.push_back(p.add(0xd0,{}));const auto bound=p.add(0x96,{0,i+3},{base},{materials.back()});
+    inputs.push_back(p.add(0xb0,{i&1},{bound}));
+  }
+  parameters={1,32,1,1,f(2),0,0,1,1,1,0,0,0,0,1,1,1,0,0,0};
+  for(unsigned test=0;test<3;++test) {
+    parameters[0]=test==2 ? 0xffffffffu : 1;parameters[13]=test ? 2 : 0;
+    const auto result=p.get(p.add(0xb4,parameters,inputs));
+    check(result->faces.size()==192,"Multiply 2 random input count");
+    for(unsigned copy=0;copy<32;++copy)for(unsigned face=0;face<6;++face) {
+      const auto choice=expected[test][copy];const auto& actual=result->faces[copy*6+face];const auto& source=original->faces[face];
+      check(actual.material==materials[choice] && actual.pass==int(choice+3) && actual.casts_shadow==bool(choice&1),"Multiply 2 seeded input selection/material/shadow");
+      check(actual.mask==source.mask && actual.crease==source.crease,"Multiply 2 changed face attributes");
+      for(unsigned corner=0;corner<4;++corner)check(actual.vertices[corner]==source.vertices[corner]+copy*24,"Multiply 2 face indices");
+    }
+  }
+  // The source's limit replaces all nine dimensions with one, rather than
+  // producing the first 1024 copies. Include a product that exceeds uint64.
+  for(auto count:{5u,255u}) {
+    for(auto index:{1,2,3,7,8,9,14,15,16})parameters[index]=count;
+    const auto limited=p.get(p.add(0xb4,parameters,{base}));
+    check(limited->vertices.size()==24 && limited->faces.size()==6,"Multiply 2 over-limit fallback");
+    for(unsigned v=0;v<24;++v)check(limited->vertices[v].position==original->vertices[v].position,"Multiply 2 fallback moved input");
+  }
+  parameters[1]=0;
+  rejects([&]{p.get(p.add(0xb4,parameters,{base}));});
+  rejects([&]{p.get(p.add(0xb4,parameters,{}));});
+  parameters[1]=256;rejects([&]{p.get(p.add(0xb4,parameters,{base}));});
+  parameters[1]=1;parameters[13]=256;rejects([&]{p.get(p.add(0xb4,parameters,{base}));});
+  parameters[13]=0;parameters[4]=f(std::numeric_limits<float>::infinity());rejects([&]{p.get(p.add(0xb4,parameters,{base}));});
+}
+void deletion_and_normal_extrusion() {
+  Fixture p;const auto base=p.add(0x81,cube());const auto original=p.get(base);
+  const auto deleted=p.get(p.add(0x93,{3},{base}));
+  check(deleted->faces.size()==4 && deleted->vertices.size()==24,"Delete Faces must retain vertices and remove masked faces");
+  for(const auto& face:deleted->faces)check(!(face.mask&3),"Delete Faces removed wrong faces");
+  check(p.get(p.add(0x93,{0},{base}))->faces.empty(),"Delete Faces zero mask must remove all faces");
+  const auto selected=p.add(0x86,{0x10000,2,0,f(.5f),0,f(2),f(.01f),f(2)},{base});
+  for(unsigned mask:{0u,1u}) {
+    const auto extruded=p.get(p.add(0x8e,{mask,f(.25f)},{selected}));
+    for(unsigned v=0;v<24;++v)for(unsigned c=0;c<3;++c) {
+      const auto& pos=original->vertices[v].position;
+      const float scale=(!mask || pos[1]>0) ? 1+.5f/std::sqrt(3.f) : 1;
+      near(extruded->vertices[v].position[c],pos[c]*scale,"Extrude Normal mask/distance/direction");
+    }
+  }
+  const auto branches=p.get(p.add(0x92,{}, {base,p.add(0x93,{0},{base})}));
+  check(branches->faces.size()==6,"Delete Faces modified a shared input");
+}
+void debris(const char* path) {
+  const auto p=wz3::read_project(path);const auto g=wz3::connect(p);
+  const auto repeated=wz3::evaluate_mesh(p,g,16395);
+  check(repeated->vertices.size()==4320 && repeated->faces.size()==840,"Debris repeated window structure changed topology");
+  const auto bounds=wz3::mesh_bounds(*repeated);
+  near(bounds.min[0],-1.2375f,"Debris repeated window lower bound X");near(bounds.max[0],37.7375f,"Debris repeated window upper bound X");
+  near(bounds.min[1],-2.004f,"Debris repeated window lower bound Y");near(bounds.max[1],21.956f,"Debris repeated window upper bound Y");
+  const auto extruded=wz3::evaluate_mesh(p,g,10882);
+  check(extruded->vertices.size()==327 && extruded->faces.size()==312,"Debris normal extrusion changed topology");
+  for(auto id:{10284u,10353u,33207u})wz3::validate_mesh(*wz3::evaluate_mesh(p,g,id));
+}
 void normals() {
   // Two unequal triangles: area weighting would favor Y by 4:1. GenMesh's
   // inverse squared-edge-product weighting instead favors Z by 4:1.
@@ -445,7 +527,7 @@ void noise_displacement() {
 }
 int main(int argc,char** argv) {
   try {
-    check(argc==2,"expected Theta project");primitives();operators();normals();bends();indexed_operations();attributes_and_grids();displacement();noise_displacement();
+    check(argc==3,"expected Theta and Debris projects");primitives();operators();multiply2();deletion_and_normal_extrusion();normals();bends();indexed_operations();attributes_and_grids();displacement();noise_displacement();debris(argv[2]);
     const auto project=wz3::read_project(argv[1]);const auto graph=wz3::connect(project);
     for (const auto* name : {"mesh.cube","mesh.bwflattorus","mesh.LineCircle","mesh.FireGradientCircle",
         "mesh.bwflattorus8","mesh.bwflattorus4","mesh.flatfractal","mesh.g4flat","mesh.citybridge",
@@ -456,6 +538,6 @@ int main(int argc,char** argv) {
       wz3::validate_mesh(*mesh);check(!mesh->faces.empty(),"empty Theta mesh");
       wz3::mesh_normals(*mesh);
     }
-    std::cout << "indexed mesh geometry, attributes, displacement and all 32 real Theta recipes passed\n";
+    std::cout << "indexed mesh geometry, attributes, displacement, 32 real Theta recipes and Debris repetition/extrusion/deletion passed\n";
   } catch(const std::exception& error) {std::cerr<<error.what()<<'\n';return 1;}
 }

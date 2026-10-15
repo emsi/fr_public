@@ -86,6 +86,7 @@ struct sMatrix {
 };
 using sF323=sVector;
 using sF322=sVector;
+struct sInt3 {int x,y,z;void Init(int a,int b,int c) {x=a;y=b;z=c;}};
 struct sFSRT {sVector s,r,t;float v[9];};
 struct sAABox {sVector Min,Max;};
 
@@ -183,6 +184,9 @@ GenMesh* Mesh_SelectFace(GenMesh*,sU32,int,int);
 GenMesh* Mesh_SelectRandom(GenMesh*,sU32,int,sU32,int);
 GenMesh* Mesh_Subdivide(KOp*,GenMesh*,int,float,int);
 GenMesh* Mesh_Extrude(KOp*,GenMesh*,int,int,int,int,sF323,sF323,sF323);
+GenMesh* Mesh_ExtrudeNormal(KOp*,GenMesh*,int,float);
+GenMesh* Mesh_DeleteFaces(GenMesh*,int);
+GenMesh* Mesh_Multiply2(int,sInt3,sF323,sInt3,sF323,int,sInt3,sF323,std::span<const GenMesh* const>);
 GenMesh* Mesh_SmoothAngle(GenMesh*,float);
 GenMesh* Mesh_Bend2(GenMesh*,sF323,sF323,float,float);
 GenMesh* Mesh_Grid(int,int,int);

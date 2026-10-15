@@ -84,6 +84,14 @@ public:
         require(op,0);if(node.inputs.empty())throw std::runtime_error("mesh Add requires inputs");
         mesh=std::make_shared<GenMesh>();mesh->Init(sGMF_DEFAULT,0);
         for(auto source:node.inputs)mesh->append(*get(source,depth+1));
+      }else if(op.command==0xb4) {
+        require(op,20);if(node.inputs.empty() || node.inputs.size()>256)throw std::runtime_error("Multiply 2 needs 1..256 mesh inputs");
+        const auto counts=[&](unsigned i) {return sInt3{int(integer(op,i,255,1)),int(integer(op,i+1,255,1)),int(integer(op,i+2,255,1))};};
+        const auto a=counts(1),b=counts(7),c=counts(14);
+        const auto ta=vector(op,4),tb=vector(op,10),tc=vector(op,17);const auto bias=integer(op,13);
+        std::vector<const GenMesh*> inputs;inputs.reserve(node.inputs.size());
+        for(auto source:node.inputs)inputs.push_back(get(source,depth+1).get()); // cache owns each input
+        mesh.reset(Mesh_Multiply2(std::bit_cast<std::int32_t>(op.parameters[0]),a,ta,b,tb,bias,c,tc,inputs));
       }else {
         mesh=std::make_shared<GenMesh>(*input());
         switch(op.command) {
@@ -103,6 +111,10 @@ public:
           require(op,3);Mesh_Subdivide(nullptr,mesh.get(),integer(op,0),real(op,1),integer(op,2,8,1));break;
         case 0x8c:
           require(op,3);Mesh_Triangulate(mesh.get(),integer(op,0),integer(op,1,256,3),integer(op,2,2));break;
+        case 0x8e:
+          require(op,2);Mesh_ExtrudeNormal(nullptr,mesh.get(),integer(op,0),real(op,1));break;
+        case 0x93:
+          require(op,1);Mesh_DeleteFaces(mesh.get(),integer(op,0));break;
         case 0x91: {
           require(op,13);const auto mask=integer(op,0);if(mask)mesh->Mask2Sel(mask<<16);else mesh->All2Sel();
           // Mesh_Perlin leaves GotNormals unchanged in the archive.

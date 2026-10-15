@@ -34,7 +34,7 @@ still names `debris.v2m`.
 
 **Debris does not play yet.** CPU frame preparation now passes material
 initialization, spline-camera evaluation and the first MINMESH objects, then
-stops at indexed mesh `Multiply 2` operator 16395.
+stops at `ChainLine` effect operator 16577.
 Material 2.0 GPU shaders/albedo capture, remaining MINMESH/scene operators and
 Water/Glare/Color Correction effects also remain to be ported.
 The player synthesizes its V2 soundtrack into stereo PCM before playback, using
@@ -51,9 +51,9 @@ own kernels. Material links retain operator identities and pass numbers.
 Animated mesh initialization, bones, Pipe, Explode, Font3D, Multiply and Perlin
 displacement still fail explicitly.
 
-Currently 232 of the 563 reachable MINMESH operators evaluate in isolation.
-The remaining operators depend on unported commands, including a few older
-mesh modifiers. These counts describe geometry coverage, not rendered scenes.
+Currently 242 of the 563 reachable MINMESH operators evaluate in isolation.
+The remaining operators depend on unported commands. These counts describe
+geometry coverage, not rendered scenes.
 Tests compare conversion against the archived `Mesh_ToMin` and shadow planes,
 edges and triangle indices against `EngMesh::PrepareJob(GenMinMesh*)`; they also
 check primitive dimensions/winding, UV seams, selection, cluster reuse,
@@ -68,6 +68,15 @@ build/native/wz3-mesh-render werkkzeug3/data/debris/debris_9241_c.k 925 build/na
 
 The image uses diagnostic lighting; the saved Material 2.0 shader is not yet
 rendered. This preview does not establish Debris visual compatibility.
+
+The older indexed mesh core also supports Multiply 2, Delete Faces and Extrude
+Normal. Multiply 2 uses the archived nine nested loops and seeded input selection,
+including the bias toward the last input and the one-copy fallback above 1024
+copies. Counts are checked against the editor's 1..255 range and their product
+cannot overflow. Material/pass bindings, shadow flags, selection and topology
+survive each append. Debris operator 16395 now builds its 60 copies into 4,320
+vertices and 840 polygons. Scene nodes also accept an absent mesh, as in the
+original runtime.
 
 Scene Marker stores the complete current transform before running its optional
 child. The 32 markers start as identity matrices and survive frame/viewport
