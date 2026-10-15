@@ -37,8 +37,11 @@ main viewport contains 76 mesh instances, two lights and 26 ChainLine cables.
 With an explicit font, the native player renders the opening city at 1280x640:
 1,251 consecutive frames through 20 seconds pass in both offline and
 audio-callback-paced playback, with byte-identical endpoint captures.
-The CPU-only timeline reaches 53,888 ms (beat 176.034) before the unported
-MINMESH Explode at operator 8156. This does not establish GPU playback that far.
+Continuous GPU rendering now also passes 53 seconds in offline mode, with
+captures at 50 and 53 seconds. It stops at 53,887 ms on the unported MINMESH
+Explode at operator 8156; callback-paced playback beyond 20 seconds has not
+been checked. The CPU-only timeline reaches the same operator at 53,888 ms
+(beat 176.034).
 DejaVu Sans captures show textured buildings,
 lighting, shadows and cables. The playback test uses dummy audio; physical
 speaker output and synchronization remain unverified. This is progress through
@@ -47,7 +50,7 @@ images. To play the supported opening from the repository root:
 
 ```sh
 build/native/wz3-player werkkzeug3/data/debris/debris_9241_c.k \
-  --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf --duration 20
+  --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf --duration 53
 ```
 
 DejaVu Sans substitutes for the project's Arial font; its appearance is not an
@@ -66,8 +69,8 @@ them between frames and reports missing S3TC support explicitly. Tests compare
 882 synthetic uploads and all five reachable Debris compressed textures against
 the archived `UpdateTexture` handler (using the same archived compressor).
 Separate GPU tests compare every sampled channel, including alpha and 1x1/2x2
-mips, with an independent block decoder. The 68-test Release suite, including
-22 graphics tests, passes on the Radeon RX 7900 XT; DXT CPU checks also pass
+mips, with an independent block decoder. The 69-test Release suite, including
+23 graphics tests, passes on the Radeon RX 7900 XT; DXT CPU checks also pass
 under Clang ASan/UBSan.
 
 Glare now executes as an ordered scene effect. It captures the current viewport,
@@ -97,6 +100,23 @@ handler checks 1,032 synthetic cases (434 skipped copies) and all 54 reachable
 Debris parameter sets, using the native transform/color/merge primitives as its
 backend. The complete failing recipe and all three material texture graphs also
 evaluate. These checks pass under Clang ASan/UBSan.
+
+Material 1.1 now generates environment and projection texture coordinates for
+unlit meshes. It supports spherical, reflection and raw-normal coordinates,
+plus model, world and eye-space projection, followed by the saved texture
+transforms. Reflection preserves the original shader's fourth coordinate,
+including its effect on texture translation. Normals use the archived model/view
+transform even with nonuniform scaling. Lit generated-coordinate passes,
+shader instancing, secondary UV sets and projective texture division still
+fail explicitly.
+
+`gpu_environment` compares 72 combinations of coordinate mode, texture transform,
+model scale and camera pose against per-vertex arithmetic from `material11.vsh`,
+using the archived matrix/vector routines and the ordinary UV renderer as the
+reference. Two saved Debris passes also match with controlled replacement
+textures. These checks pass under Clang ASan/UBSan and unblock reflection
+material 37759 at 48,991 ms. They establish coordinate behavior, not a match
+against images from the released executable.
 
 The native MINMESH core uses the archived grid/cube/sphere, selection, material
 cluster, transform, bend, extrusion along normals, triangulation and centering

@@ -34,7 +34,7 @@ std::string source(const MaterialShader& s,unsigned index) {
 std::string material_fragment_shader(const MaterialShader& s) {
   require(!s.material20,"Material 2.0 GPU shaders are not ported");
   require(!(s.words[2]&7),"lighting requires the scene mesh shader");
-  require(!(s.words[1]&0x731),"environment/projective material shader is not ported");
+  require(!(s.words[1]&1) && ((s.words[1]>>8)&15)<=3,"unsupported material special flags");
   std::string code="#version 300 es\nprecision highp float;\nin vec2 material_uv[4];\nin vec4 material_vertex_color;\nuniform vec4 material_colors[4];\nout vec4 color;\n";
   for(unsigned i=0;i<4;++i)if(s.textures[i])code+="uniform highp sampler2D material_tex"+std::to_string(i)+";\n";
   code+="void main() {\nvec3 current=vec3(0.0);\n";
@@ -69,24 +69,27 @@ std::string material_fragment_shader(const MaterialShader& s) {
   if(s.words[0]&1)code+="if(alpha_value<=128.0/255.0)discard;\n";
   return code+"color=vec4(clamp(current,0.0,1.0),alpha_value);\n}\n";
 }
-std::array<float,9> material_uv_matrix(const MaterialShader& s,unsigned slot) {
+std::array<float,16> material_uv_transform(const MaterialShader& s,unsigned slot) {
   require(!s.material20,"Material 2.0 UV binding is not ported");
   require(slot<4,"invalid material texture slot");const auto flags=s.words[4+slot];
   require(!(flags&0x4030),"secondary/projective UV input is not ported");
   const auto real=[&](unsigned i) {const auto v=as_float(s.words[i]);require(std::isfinite(v),"nonfinite material UV transform");return v;};
-  std::array<float,9> matrix={1,0,0,0,1,0,0,0,1};
+  std::array<float,16> matrix={1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
   switch((flags>>12)&3) {
-  case 1:matrix[0]=matrix[4]=real(24+slot);break;
+  case 1:matrix[0]=matrix[5]=real(24+slot);break;
   case 2: {
     float values[9];for(unsigned i=0;i<9;++i)values[i]=real(34+i);legacy::sMatrix m;m.InitSRT(values);
-    matrix={m.i.x,m.i.y,0,m.j.x,m.j.y,0,m.l.x,m.l.y,1};break;
+    matrix={m.i.x,m.i.y,m.i.z,m.i.w,m.j.x,m.j.y,m.j.z,m.j.w,m.k.x,m.k.y,m.k.z,m.k.w,m.l.x,m.l.y,m.l.z,m.l.w};break;
   }
   case 3: {
     const auto a=real(45),sine=float(std::sin(double(a))),cosine=float(std::cos(double(a)));
-    matrix={real(43)*cosine,-real(43)*sine,0,real(44)*sine,real(44)*cosine,0,real(46),real(47),1};break;
+    matrix={real(43)*cosine,-real(43)*sine,0,0,real(44)*sine,real(44)*cosine,0,0,0,0,1,0,real(46),real(47),0,1};break;
   }
   }
   for(auto value:matrix)require(std::isfinite(value),"nonfinite material UV matrix");
   return matrix;
+}
+std::array<float,9> material_uv_matrix(const MaterialShader& s,unsigned slot) {
+  const auto m=material_uv_transform(s,slot);return {m[0],m[1],0,m[4],m[5],0,m[12],m[13],1};
 }
 } // namespace wz3

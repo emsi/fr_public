@@ -57,10 +57,11 @@ public:
   void reset();
 };
 void write_material(std::ostream&,const Material&);
-// Translate the original unlit pixel combiner to GLES3; lighting/environment
-// shaders require their own vertex inputs and are rejected here.
+// Translate the original unlit pixel combiner to GLES3. Environment/projection
+// coordinates require a mesh vertex shader; lighting uses its own combiner.
 std::string material_fragment_shader(const MaterialShader&);
 std::array<float,9> material_uv_matrix(const MaterialShader&,unsigned slot);
+std::array<float,16> material_uv_transform(const MaterialShader&,unsigned slot);
 struct Texture;
 std::vector<std::uint8_t> render_material_quad(const Material&,
   const std::map<std::size_t,std::shared_ptr<const Texture>>& textures,

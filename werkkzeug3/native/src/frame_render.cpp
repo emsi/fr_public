@@ -95,6 +95,47 @@ constexpr const char* light_vertex=R"(#version 300 es
     halfway_vector=vec3(dot(H,normal),dot(H,B),dot(H,tangent));
     attenuation_uv=position*attenuation_parameters.w+attenuation_parameters.xyz;
   })";
+constexpr const char* generated_uv_vertex=R"(#version 300 es
+  layout(location=0) in vec3 position;
+  layout(location=1) in vec2 uv;
+  layout(location=2) in vec4 color;
+  layout(location=3) in vec3 normal;
+  uniform mat4 view_projection,model,model_view;
+  uniform mat4 coordinate_transform[4];
+  uniform vec4 flip_texture;
+  uniform int environment_mode,projection_mode;
+  uniform vec4 fog_plane;
+  out float material_fog;
+  out vec2 material_uv[4];
+  out vec4 material_vertex_color;
+  void main(){
+    vec4 pos=vec4(position,1.0);
+    gl_Position=view_projection*pos;
+    material_fog=clamp(dot(pos,fog_plane),0.0,1.0);
+    for(int i=0;i<4;++i){
+      vec4 coord=vec4(uv,0.0,1.0);
+      if(i==2){
+        if(environment_mode==1){
+          vec3 n=mat3(model_view)*normal;
+          coord.xy=n.xy*vec2(0.5,-0.5)+0.5;
+        }else if(environment_mode==2){
+          vec3 eye=normalize((model_view*pos).xyz);
+          vec3 n=mat3(model_view)*normal;
+          coord.w=dot(eye,n)*(2.0/dot(n,n));
+          coord.xyz=n*coord.w-eye;
+          coord.xy=coord.xy*vec2(0.5,-0.5)+0.5;
+        }else if(environment_mode==3){coord.xyz=normal;}
+      }
+      if(i==3){
+        if(projection_mode==1)coord=pos;
+        else if(projection_mode==2)coord=model*pos;
+        else if(projection_mode==3)coord=model_view*pos;
+      }
+      material_uv[i]=(coordinate_transform[i]*coord).xy;
+      if(flip_texture[i]>0.5)material_uv[i].y=1.0-material_uv[i].y;
+    }
+    material_vertex_color=color.bgra;
+  })";
 constexpr const char* shadow_vertex=R"(#version 300 es
   layout(location=0) in vec4 position;
   uniform mat4 view_projection;
@@ -360,26 +401,28 @@ struct FrameRenderer::Impl {
     glActiveTexture(GL_TEXTURE4);glBindTexture(GL_TEXTURE_CUBE_MAP,normal_cube);glBindSampler(4,0);glUniform1i(glGetUniformLocation(p,"normal_cube"),4);
     glActiveTexture(GL_TEXTURE5);glBindTexture(GL_TEXTURE_3D,attenuation_volume);glBindSampler(5,0);glUniform1i(glGetUniformLocation(p,"attenuation_volume"),5);
   }
-  GLuint program(const MaterialShader& s,bool particle) {
+  GLuint program(const MaterialShader& s,bool particle,bool mesh=false) {
     const bool lit=(s.words[2]&7)!=0;require(!lit || particle,"lighting needs mesh vertex data");
+    const bool generated=(s.words[1]&0xf30)!=0;
+    require(!generated || (mesh && !lit),"generated environment/projection UVs need an unlit mesh shader");
     auto source=lit ? material_light_fragment_shader(s) : material_fragment_shader(s);if(s.words[0]&0x40)source=fog_fragment_shader(std::move(source));
-    const auto key=(lit ? "light:" : particle ? "particle:" : "quad:")+source;if(auto found=programs.find(key);found!=programs.end())return found->second;
+    const auto key=(generated ? "generated:" : lit ? "light:" : particle ? "particle:" : "quad:")+source;if(auto found=programs.find(key);found!=programs.end())return found->second;
     require(programs.size()<4096,"frame shader cache limit");
-    const auto vertex=gles::shader(GL_VERTEX_SHADER,lit ? light_vertex : particle ? particle_vertex : quad_vertex);GLuint fragment;
+    const auto vertex=gles::shader(GL_VERTEX_SHADER,generated ? generated_uv_vertex : lit ? light_vertex : particle ? particle_vertex : quad_vertex);GLuint fragment;
     try {fragment=gles::shader(GL_FRAGMENT_SHADER,source.c_str());}catch(...) {glDeleteShader(vertex);throw;}
     const auto p=glCreateProgram();glAttachShader(p,vertex);glAttachShader(p,fragment);glLinkProgram(p);glDeleteShader(vertex);glDeleteShader(fragment);
     GLint ok=0;glGetProgramiv(p,GL_LINK_STATUS,&ok);
     if(!ok) {char log[4096]{};glGetProgramInfoLog(p,sizeof(log),nullptr,log);glDeleteProgram(p);throw std::runtime_error(std::string("frame shader link failed: ")+log);}
     programs.emplace(key,p);++stats.program_compilations;return p;
   }
-  void quad(const FrameQuad& q,const FrameTarget& target,const SceneEffectDraw* effect=nullptr,const SceneMatrix* projection=nullptr,const MeshDraw* mesh=nullptr,const LightDraw* light=nullptr,const SceneFog* fog=nullptr) {
+  void quad(const FrameQuad& q,const FrameTarget& target,const SceneEffectDraw* effect=nullptr,const SceneMatrix* projection=nullptr,const MeshDraw* mesh=nullptr,const LightDraw* light=nullptr,const SceneFog* fog=nullptr,const SceneCamera* camera=nullptr) {
     const auto destination=target.surface;
     if(q.released_layer && !effect && !mesh &&
        (q.rectangle[0]==q.rectangle[2] || q.rectangle[1]==q.rectangle[3]))return;
     const auto& s=q.shader;const auto flags=s.words[0];
     require(!(flags&(light ? 0xcc0018u : 0xfc0018u)),"draw shadow state or depth bias is not ported");
     require(!(flags&0x700000) || (light && (flags&0x700000)==0x300000),"unsupported stencil material operation");
-    const bool vertices=effect || mesh;require(!(s.words[2]&7) || light,"missing scene light uniforms");require(!(flags&0x40) || (vertices && fog),"fog requires a scene camera");const auto p=program(s,vertices);glUseProgram(p);glBindVertexArray(vao);
+    const bool vertices=effect || mesh;require(!(s.words[2]&7) || light,"missing scene light uniforms");require(!(flags&0x40) || (vertices && fog),"fog requires a scene camera");const auto p=program(s,vertices,mesh!=nullptr);glUseProgram(p);glBindVertexArray(vao);
     std::array<float,36> matrices{};std::array<float,16> rects{},colors{};std::array<float,4> flip{};
     for(unsigned i=0;i<4;++i) {
       auto uv_shader=s;if(!vertices)uv_shader.words[4+i]&=~0x10u; // Quad UV0 and UV1 are supplied explicitly.
@@ -408,6 +451,19 @@ struct FrameRenderer::Impl {
     glUniform2f(glGetUniformLocation(p,"layer_viewport"),q.released_layer ? target.width : 0,q.released_layer ? target.height : 0);
     glUniform4fv(glGetUniformLocation(p,"uv_rect[0]"),4,rects.data());glUniformMatrix3fv(glGetUniformLocation(p,"uv_transform[0]"),4,GL_FALSE,matrices.data());
     glUniform4fv(glGetUniformLocation(p,"flip_texture"),1,flip.data());glUniform4fv(glGetUniformLocation(p,"material_colors[0]"),4,colors.data());
+    if(s.words[1]&0xf30) {
+      require(mesh && camera,"generated UVs require model and camera transforms");
+      require(!(s.words[3]&0xc0000),"generated UVs with shader instancing are not ported");
+      require(!(s.words[1]&0x30) || !(flags&0x20000),"environment UVs require mesh normals");
+      auto view=scene_identity();for(unsigned c=0;c<3;++c)for(unsigned r=0;r<3;++r)view[c*4+r]=camera->world[r*4+c];
+      for(unsigned r=0;r<3;++r)view[12+r]=-(view[r]*camera->world[12]+view[4+r]*camera->world[13]+view[8+r]*camera->world[14]);
+      const auto model_view=scene_combine(view,mesh->model);
+      glUniformMatrix4fv(glGetUniformLocation(p,"model"),1,GL_FALSE,mesh->model.data());glUniformMatrix4fv(glGetUniformLocation(p,"model_view"),1,GL_FALSE,model_view.data());
+      glUniform1i(glGetUniformLocation(p,"environment_mode"),(s.words[1]>>4)&3);glUniform1i(glGetUniformLocation(p,"projection_mode"),(s.words[1]>>8)&15);
+      std::array<float,64> transforms;
+      for(unsigned i=0;i<4;++i){const auto transform=material_uv_transform(s,i);std::copy(transform.begin(),transform.end(),transforms.begin()+i*16);}
+      glUniformMatrix4fv(glGetUniformLocation(p,"coordinate_transform"),4,GL_FALSE,transforms.data());
+    }
     if(light) {
       light_tables(p);glUniform3fv(glGetUniformLocation(p,"light_position"),1,light->position.data());glUniform3fv(glGetUniformLocation(p,"eye_position"),1,light->eye.data());
       glUniform1i(glGetUniformLocation(p,"directional"),light->directional);glUniform4fv(glGetUniformLocation(p,"attenuation_parameters"),1,light->attenuation.data());glUniform4fv(glGetUniformLocation(p,"light_color"),1,light->color.data());glUniform2fv(glGetUniformLocation(p,"specular_parameters"),1,light->specular.data());
@@ -656,7 +712,7 @@ struct FrameRenderer::Impl {
           draw.color=light_color(pass.shader,l);draw.specular=light_specular_parameters(as_float(pass.shader.words[32]));setup=draw;
         }
         std::optional<SceneFog> fog;if(pass.shader.words[0]&0x40)fog=scene_fog(scene.camera,instance.world);
-        quad(resolve_material(pass.shader),target,nullptr,&matrix,&mesh,setup ? &*setup : nullptr,fog ? &*fog : nullptr);
+        quad(resolve_material(pass.shader),target,nullptr,&matrix,&mesh,setup ? &*setup : nullptr,fog ? &*fog : nullptr,&scene.camera);
       }catch(const std::exception& e) {throw std::runtime_error("mesh material "+(material ? std::to_string(*material) : "default")+": "+e.what());}
     };
     if(project.runtime_graph) {

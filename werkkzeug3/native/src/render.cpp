@@ -282,6 +282,7 @@ std::vector<std::uint8_t> render_material_quad(const Material& material,
   std::vector<std::string> fragments;std::vector<std::array<float,36>> transforms;
   for(const auto& pass:material.passes) {
     if(pass.usage!=MaterialUsage::other || (pass.shader.words[0]&0xfc0078))throw std::runtime_error("material quad needs an unlit pass without fog, shadow or depth bias");
+    if(pass.shader.words[1]&0xf30)throw std::runtime_error("environment/projection coordinates require a mesh preview");
     fragments.push_back(material_fragment_shader(pass.shader));std::array<float,36> matrices{};
     for(unsigned i=0;i<4;++i) {const auto uv=material_uv_matrix(pass.shader,i);std::copy(uv.begin(),uv.end(),matrices.begin()+i*9);}
     transforms.push_back(matrices);
