@@ -9,6 +9,8 @@
 #include <chrono>
 #include <cmath>
 #include <iostream>
+#include <iomanip>
+#include <sstream>
 #include <stdexcept>
 #include <thread>
 namespace {
@@ -158,8 +160,13 @@ int main(int argc,char** argv) {
       catch(const std::exception& e){throw std::runtime_error("at "+std::to_string(timing.milliseconds(sample))+" ms: "+e.what());}
       max_draw_ms=std::max(max_draw_ms,std::chrono::duration<double,std::milli>(Clock::now()-start).count());
       current=sample;++rendered;
-      for(auto& snapshot:snapshots)if(!snapshot.saved && double(sample)/pcm.rate>=snapshot.seconds) {
+      for(std::size_t i=0;i<snapshots.size();++i)if(auto& snapshot=snapshots[i]; !snapshot.saved && double(sample)/pcm.rate>=snapshot.seconds) {
         wz3::write_ppm(snapshot.path,width,height,renderer.readback());snapshot.saved=true;
+        std::ostringstream record;record<<std::setprecision(17)
+          <<"Snapshot: {\"version\":1,\"index\":"<<i<<",\"requested_seconds\":"<<snapshot.seconds
+          <<",\"sample\":"<<sample<<",\"sample_rate\":"<<pcm.rate<<",\"frame_index\":"<<rendered-1
+          <<",\"milliseconds\":"<<timing.milliseconds(sample)<<",\"beat_fixed\":"<<timing.beat(sample)<<"}\n";
+        std::cout<<record.str();
       }
     };
     draw(0);window.present(renderer);SDL_SetWindowTitle(window.window,"fr-038: Theta - Escape to exit");

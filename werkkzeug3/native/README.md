@@ -59,6 +59,13 @@ selected positions without restarting the simulation. Snapshot disk I/O can
 delay presentation. `--mute` outputs silence through the same audio device and
 clock; it does not bypass the need for a working audio backend.
 
+Each saved snapshot emits a `Snapshot: {...}` JSON record on standard output,
+including its argument index, requested time, actual PCM sample/rate, frame index,
+milliseconds and fixed-point beat. Keep the player log for reference comparisons.
+For example, requesting `0.016` seconds captures sample 1,411 (31.995 ms), because
+the preceding step lands at sample 705 (15.986 ms), just before the request.
+The record also handles a playback endpoint between regular simulation steps.
+
 `--offline` renders the same sample positions and simulation history without
 opening an audio device or waiting for real time. It skips preparation, still
 decodes the song to establish its sample rate, and requires the graphics backend.
@@ -1214,7 +1221,8 @@ packages the unchanged graph in `theta.wz3r` with the recovered clock profile:
 ```sh
 SDL_AUDIODRIVER=dummy build/native/wz3-player build/reference/theta/extracted/theta.wz3r
 SDL_VIDEODRIVER=offscreen build/native/wz3-player build/reference/theta/extracted/theta.wz3r \
-  --offline --width 1024 --height 768 --snapshot 220 build/reference/theta/native-220.ppm
+  --offline --width 1024 --height 768 --snapshot 220 build/reference/theta/native-220.ppm \
+  > build/reference/theta/native-220.log 2>&1
 ```
 
 Omit `SDL_AUDIODRIVER=dummy` to use a working sound device. The recovered font
@@ -1320,7 +1328,8 @@ uv run --no-project --with numpy python werkkzeug3/native/tools/reference_align.
 ```
 
 The tool records media hashes, overlap/window correlations and requested seek
-times. Frame requests use the native 16 ms simulation step. Audio alignment is
+times. Frame requests predict the native 16 ms simulation step with integer
+44.1 kHz sample rounding. Audio alignment is
 not exact visual alignment: nearby-frame searches for all five native captures
 select video timestamps 33, 123, 198, 223 and 253 seconds. That is approximately
 **video time = native music time + 3.0 s**, about 67 ms earlier than the audio
@@ -1337,12 +1346,21 @@ captures to their 1024×614 picture at (0,77) before comparison:
 uv run --no-project --with numpy python werkkzeug3/native/tools/reference_compare.py \
   build/reference/theta/annikras-reference.mp4 \
   --alignment build/reference/theta/aligned/alignment.json \
+  --player-log build/reference/theta/native-220.log \
   --crop 1024 614 0 77 --output build/reference/theta/compared \
   --snapshot 220 build/reference/theta/native-220.ppm
 ```
 
 Repeat `--snapshot SECONDS IMAGE` for each continuous-player capture. The tool
-records hashes, all candidate errors and selected timestamps. Errors below are
+uses the actual saved sample positions when `--player-log` is supplied; retain
+all snapshot arguments in their original order. It rejects missing records or
+different requested times. The report includes the log hash and captured clock
+records. Without a log, timing is predicted for regular uninterrupted steps;
+this fallback cannot identify early termination or a duration-clamped endpoint.
+The frame extraction helper uses the same prediction, replacing its earlier
+nominal-millisecond rounding.
+
+The tool records hashes, all candidate errors and selected timestamps. Errors below are
 mean squared differences of bicubic-resized 240×144 RGB images, useful for
 selecting frame phase, not an acceptance threshold. Resolution, filtering,
 simulation cadence and video compression still limit this comparison.
@@ -1499,6 +1517,25 @@ shift by about 13 ms, and repetitive music gives a false whole-capture match.
 It is qualitative evidence only, not a reason to infer different release content
 or change the native sample clock. The table uses the previously validated
 Annikras timing. No physical audio device was measured.
+
+The remaining large errors near 111 and 146 seconds are strongly sensitive to
+frame phase. A continuous Radeon render with recorded snapshot samples reproduced
+these four images byte for byte from the earlier captures:
+
+| Actual native sample | Native time | Best video time | RGB MSE |
+| ---: | ---: | ---: | ---: |
+| 4,907,448 | 111.280000 s | 114.200000 s | 12044.88 |
+| 4,909,564 | 111.327982 s | 114.333333 s | 173.88 |
+| 6,440,716 | 146.047982 s | 149.000000 s | 9919.73 |
+| 6,444,244 | 146.127982 s | 149.133333 s | 1460.08 |
+
+Both scenes have rapid beat-driven camera animation. Nearby samples substantially
+reduce the error; this does not establish exact visual synchronization or remove
+the remaining differences. The complete original particle-motion audit above
+independently checks their moving mesh clouds. No camera, lighting or clock
+parameters were adjusted to minimize these video errors. The capture-log change
+passes all 43 local tests, including 16 graphics tests, and the SDL player test
+also passes under Clang ASan/UBSan.
 
 The earlier bright-versus-dark 220-second mismatch was a frame-selection issue;
 it does not justify changing the renderer's lighting. The later release-specific

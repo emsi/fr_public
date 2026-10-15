@@ -17,6 +17,7 @@ import numpy as np
 
 from reference_align import digest
 from reference_gallery import write_gallery
+from reference_timing import snapshot_records, snapshot_sample
 
 
 def run(command):
@@ -44,6 +45,7 @@ def main():
     ap.add_argument("video", type=Path)
     ap.add_argument("--alignment", required=True, type=Path)
     ap.add_argument("--snapshot", nargs=2, action="append", required=True, metavar=("SECONDS", "IMAGE"))
+    ap.add_argument("--player-log", type=Path, help="use captured sample positions; snapshots must retain player argument order")
     ap.add_argument("--output", required=True, type=Path)
     ap.add_argument("--crop", nargs=4, type=int, required=True, metavar=("WIDTH", "HEIGHT", "X", "Y"))
     ap.add_argument("--size", nargs=2, type=int, default=[240, 144], metavar=("WIDTH", "HEIGHT"))
@@ -64,25 +66,28 @@ def main():
     time_base, fps = Fraction(metadata["time_base"]), float(Fraction(metadata["r_frame_rate"]))
     if not 1 <= fps <= 240:
         ap.error("unsupported reference frame rate")
+    requests = [float(request) for request, _ in args.snapshot]
+    if any(not math.isfinite(t) or not 0 <= t < 600 for t in requests):
+        ap.error("snapshot time must be in [0,600)")
+    records = snapshot_records(args.player_log, requests) if args.player_log else None
+    rates = {r["sample_rate"] for r in records} if records else {44100}
+    if len(rates) != 1:
+        ap.error("snapshot log mixes sample rates")
+    native_rate = rates.pop()
     args.output.mkdir(parents=True, exist_ok=True)
     crop = "crop=" + ":".join(map(str, args.crop))
     report = dict(video_sha256=video_hash, audio_offset_seconds=offset, video_time_base=str(time_base),
-        native_sample_rate=44100, native_step_ms=16, crop=args.crop, comparison_size=args.size,
+        native_sample_rate=native_rate, native_step_ms=16, crop=args.crop, comparison_size=args.size,
+        timing_source="recorded player samples" if records else "predicted regular 16 ms step",
         search_radius_seconds=args.radius, metric="mean squared error of bicubic-resized 8-bit RGB",
         limitation="nearest visual matches in a lossy third-party capture; not proof of pixel fidelity or device latency",
         frames=[])
+    if args.player_log:
+        report["player_log_sha256"] = digest(args.player_log)
     for number, (request, path) in enumerate(args.snapshot):
         seconds, native = float(request), Path(path)
-        if not math.isfinite(seconds) or not 0 <= seconds < 600:
-            ap.error("snapshot time must be in [0,600)")
-        step_ms = math.ceil(seconds * 1000 / 16) * 16
-        sample = step_ms * 44100 // 1000
-        # A 16 ms boundary may fall between 44.1 kHz samples. The player saves
-        # on the first sample at or beyond the request, not at nominal step time.
-        if sample / 44100 < seconds:
-            step_ms += 16
-            sample = step_ms * 44100 // 1000
-        native_time = sample / 44100
+        sample = records[number]["sample"] if records else snapshot_sample(seconds, native_rate)
+        native_time = sample / native_rate
         center, start = native_time + offset, max(0, native_time + offset - args.radius)
         frames, stamps = candidates(args.video, start, math.ceil(2 * args.radius * fps) + 3, args.size)
         raw, _ = run(["ffmpeg", "-v", "error", "-i", str(native), "-vf",
@@ -110,6 +115,8 @@ def main():
             visual_offset_seconds=times[best] - native_time, best_mse=float(errors[best]),
             best_at_search_edge=best in (eligible[0], eligible[-1]),
             candidates=[dict(video_pts=stamps[i], video_seconds=times[i], mse=float(errors[i])) for i in eligible]))
+        if records:
+            report["frames"][-1]["player_snapshot"] = records[number]
     (args.output / "comparison.json").write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
     write_gallery(report, args.output)
     for frame in report["frames"]:

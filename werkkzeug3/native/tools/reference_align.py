@@ -12,6 +12,7 @@ import math
 from pathlib import Path
 import subprocess
 import numpy as np
+from reference_timing import snapshot_sample
 
 RATE = 8000
 
@@ -76,7 +77,8 @@ def main():
     for number, seconds in enumerate(args.frames):
         if not math.isfinite(seconds) or not 0 <= seconds < 600:
             ap.error("frame times must be finite and in [0,600)")
-        native = math.ceil(seconds * 1000 / 16) * .016
+        sample = snapshot_sample(seconds)
+        native = sample / 44100
         video = native + lag / RATE
         if video < 0:
             ap.error("requested frame precedes the reference video")
@@ -85,7 +87,8 @@ def main():
                         "-frames:v", "1", "-update", "1", str(output)], check=True)
         if not output.exists():
             raise ValueError(f"reference contains no frame at {video} seconds")
-        report["frames"].append(dict(requested_seconds=seconds, native_step_seconds=native,
+        report["frames"].append(dict(requested_seconds=seconds, native_step_seconds=native, native_sample=sample,
+                                     native_sample_rate=44100, timing_source="predicted regular 16 ms step",
                                      video_seek_seconds=video, file=output.name))
     (args.output / "alignment.json").write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
     print(json.dumps(report, indent=2, allow_nan=False))

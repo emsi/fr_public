@@ -9,6 +9,9 @@ import subprocess
 import sys
 import tempfile
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+from reference_timing import snapshot_records, snapshot_sample
+
 player, project, font = sys.argv[1:]
 with tempfile.TemporaryDirectory(prefix="wz3-player-") as directory:
     path = Path(directory)
@@ -55,10 +58,15 @@ with tempfile.TemporaryDirectory(prefix="wz3-player-") as directory:
     assert not (path / "prepare.f32").exists(), "preload-only opened an audio device"
     # Offline rendering uses the same integer sample positions, but must work
     # even when the requested audio driver does not exist.
+    requests = [2., .016, 705/44100, math.nextafter(705/44100, 0), math.nextafter(705/44100, math.inf),
+                .032, .048, .08, 0.]
+    extra_snapshots = []
+    for i, request in enumerate(requests[1:], 1):
+        extra_snapshots += ["--snapshot", repr(request), str(path / f"sample-{i}.ppm")]
     offline = subprocess.run([player, project, "--font-file", font, "--width", "160",
                               "--height", "120", "--duration", "2", "--offline",
                               "--snapshot", "2", str(path / "offline-snapshot.ppm"),
-                              "--capture", str(path / "offline.ppm")],
+                              "--capture", str(path / "offline.ppm"), *extra_snapshots],
                              env=dict(env, SDL_AUDIODRIVER="nonexistent", SDL_DISKAUDIOFILE=str(path / "offline.f32")),
                              capture_output=True, text=True, timeout=30)
     if offline.returncode:
@@ -68,3 +76,31 @@ with tempfile.TemporaryDirectory(prefix="wz3-player-") as directory:
     assert image == (path / "offline.ppm").read_bytes() == (path / "offline-snapshot.ppm").read_bytes()
     assert not (path / "offline.f32").exists(), "offline rendering opened an audio device"
     print("Offline and callback-paced frames match without any audio driver")
+    log = path / "offline.log"
+    log.write_text(offline.stdout)
+    records = snapshot_records(log, requests)
+    expected = [88200, 1411, 705, 705, 1411, 2116, 2822, 3528, 0]
+    assert [r["sample"] for r in records] == expected, "wrong sample positions at snapshot boundaries"
+    assert [snapshot_sample(t) for t in requests] == expected, "predicted timing differs from actual player captures"
+    assert all(r["sample_rate"] == 44100 and r["milliseconds"] == r["sample"]*1000//44100 for r in records)
+    assert (path / "sample-1.ppm").read_bytes() == (path / "sample-4.ppm").read_bytes()
+    assert (path / "sample-2.ppm").read_bytes() == (path / "sample-3.ppm").read_bytes()
+    # An endpoint between regular steps cannot be inferred from the request.
+    clipped = subprocess.run([player, project, "--font-file", font, "--width", "160", "--height", "120",
+                              "--duration", ".023", "--offline", "--snapshot", ".0225", str(path / "clipped.ppm"),
+                              "--snapshot", "1", str(path / "unsaved.ppm")],
+                             env=env, capture_output=True, text=True, timeout=30)
+    if clipped.returncode:
+        raise RuntimeError(clipped.stderr)
+    log.write_text(clipped.stdout)
+    clipped_record = snapshot_records(log, [.0225])[0]
+    assert clipped_record["sample"] == 1015 and clipped_record["frame_index"] == 2
+    assert snapshot_sample(.0225) == 1411 and not (path / "unsaved.ppm").exists()
+    for wrong_requests in ([.0225, 1.], [.0226]):
+        try:
+            snapshot_records(log, wrong_requests)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("incomplete or mismatched capture log accepted")
+    print("Captured sample logs and prediction agree at exact/adjacent boundaries; clipped endpoint recorded correctly")
