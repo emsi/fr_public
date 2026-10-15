@@ -34,7 +34,7 @@ still names `debris.v2m`.
 
 **Debris does not play yet.** CPU frame preparation now passes material
 initialization, spline-camera evaluation and the first MINMESH objects, then
-stops at scene `Marker` operator 15780.
+stops at indexed mesh `Multiply 2` operator 16395.
 Material 2.0 GPU shaders/albedo capture, remaining MINMESH/scene operators and
 Water/Glare/Color Correction effects also remain to be ported.
 The player synthesizes its V2 soundtrack into stereo PCM before playback, using
@@ -68,6 +68,13 @@ build/native/wz3-mesh-render werkkzeug3/data/debris/debris_9241_c.k 925 build/na
 
 The image uses diagnostic lighting; the saved Material 2.0 shader is not yet
 rendered. This preview does not establish Debris visual compatibility.
+
+Scene Marker stores the complete current transform before running its optional
+child. The 32 markers start as identity matrices and survive frame/viewport
+boundaries and backward time, matching `KEnvironment::InitView`; deferred effects
+can read the most recently stored attachments. Apply Spline evaluates its
+animated time and composes the spatial spline with the parent scene transform,
+without applying its zoom to the camera.
 
 Spatial camera paths use the archived Hermite, derivative, quaternion and
 orientation kernels, with bounded blob readers and cached native spline objects.

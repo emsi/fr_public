@@ -67,6 +67,20 @@ void shake() {
     }
   }
 }
+void apply_to_scene() {
+  Fixture fx;const auto curve=fx.curve(0,7),marker=fx.add(0x182,{2});
+  const auto applied=fx.add(0x181,{f(.25f)},{marker,curve});
+  wz3::Animation load,store;load.fields={0,0,3,2,0,0,0,0};store.fields={0,1,3,0x91,0,5,0,0};fx.p.operators[applied].animations={load,store};
+  const auto parent=fx.add(0xc3,{f(2),f(1),f(1),0,0,0,f(3),0,0},{applied});
+  const auto view=fx.add(0xf0,{3,3,0xff000000,0,0,0,0,0,f(-5),f(4096),f(.125f),0,0,f(1),f(1),0xff000000,f(4096),f(16)},{parent});
+  wz3::ScenePlayer player(fx.p,fx.g);
+  for(int beat:{0,16384,32768,65536}) {
+    const auto frame=player.viewport(view,wz3::frame_environment(beat),1);
+    near(player.markers()[2][12],3+20*(beat/65536.f),"Apply Spline must evaluate its animated time and compose with parent");
+    near(frame.camera.zoom_x,1,"scene spline zoom must not change camera zoom");
+    near(frame.camera.world[12],0,"scene spline must not replace camera");
+  }
+}
 void invalid() {
   for(unsigned kind=0;kind<7;++kind) {
     Fixture fx;const auto id=fx.curve();auto& op=fx.p.operators[id];
@@ -94,6 +108,6 @@ void debris(const char* path) {
 }
 }
 int main(int argc,char** argv) {
-  try {check(argc==2,"expected Debris project");paths();shake();invalid();debris(argv[1]);}
+  try {check(argc==2,"expected Debris project");paths();shake();apply_to_scene();invalid();debris(argv[1]);}
   catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
 }

@@ -127,6 +127,23 @@ void selection_and_passes() {
   check(frame.instances.size()==1 && frame.instances[0].world[12]==2 && frame.instances[0].pass_adjust==3,"scene selection and pass adjustment");
   check(frame.ambient==0xff204080,"scene ambient metadata");rejects([&]{player.viewport(bad,wz3::frame_environment(0),1);});
 }
+void markers() {
+  Fixture fxt;const auto cube=fxt.cube(),inner=fxt.add(0x182,{3},{cube});
+  const auto outer=fxt.add(0x182,{3},{fxt.add(0xc3,srt(2,3,4),{inner})});
+  const auto root=fxt.viewport(fxt.add(0xc3,srt(10),{outer}));
+  const auto empty=fxt.viewport(fxt.add(0xc1));const auto only=fxt.viewport(fxt.add(0x182,{31}));
+  const auto invalid=fxt.viewport(fxt.add(0x182,{32}));
+  wz3::ScenePlayer player(fxt.p,fxt.g);
+  for(const auto& m:player.markers())check(m==wz3::scene_identity(),"markers must initialize to identity");
+  const auto frame=player.viewport(root,wz3::frame_environment(0),1);
+  check(frame.instances.size()==1 && player.markers()[3]==frame.instances[0].world,"nested marker must store before executing its child");
+  near(player.markers()[3][12],12,"marker parent composition");near(player.markers()[3][13],3,"marker local translation");
+  const auto saved=player.markers()[3];player.begin_frame(100);player.viewport(empty,wz3::frame_environment(65536),1);
+  check(player.markers()[3]==saved,"frame/viewport boundary reset marker");
+  player.begin_frame(0);player.viewport(only,wz3::frame_environment(0),1,wz3::scene_srt(srt(20)));
+  check(player.markers()[3]==saved && player.markers()[31][12]==20,"backward time or childless marker lost state");
+  rejects([&]{player.viewport(invalid,wz3::frame_environment(0),1);});
+}
 void theta(const char* file) {
   const auto p=wz3::read_project(file);const auto g=wz3::connect(p);const wz3::SplineLibrary splines(p);wz3::ScenePlayer player(p,g);
   auto env=wz3::frame_environment(56*65536);const wz3::EventAnimationScope event(p.events[1],56*65536,splines,env);
@@ -141,7 +158,7 @@ void theta(const char* file) {
 }
 int main(int argc,char** argv) {
   try {if(argc==3 && std::string_view(argv[1])=="--release-camera-oracle") {released_camera_oracle(argv[2]);return 0;}
-    check(argc==2,"expected Theta project");composition();animation_and_instances();lights();selection_and_passes();theta(argv[1]);
+    check(argc==2,"expected Theta project");composition();animation_and_instances();lights();selection_and_passes();markers();theta(argv[1]);
     std::cout<<"scene transforms, instancing, scoped animation, lights and Theta viewports passed\n";
   }catch(const std::exception& error) {std::cerr<<error.what()<<'\n';return 1;}
 }

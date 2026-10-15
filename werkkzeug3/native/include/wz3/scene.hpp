@@ -9,6 +9,7 @@
 namespace wz3 {
 // Column-major matrices. combine(parent,local) applies local first.
 using SceneMatrix=std::array<float,16>;
+using SceneMarkers=std::array<SceneMatrix,32>;
 SceneMatrix scene_identity();
 SceneMatrix scene_srt(std::span<const std::uint32_t> parameters);
 SceneMatrix scene_combine(const SceneMatrix& parent,const SceneMatrix& local);
@@ -92,6 +93,9 @@ public:
   // evaluates nested scene events too; IPP compositing is not bypassed.
   std::vector<SceneFrame> event_viewports(std::size_t id,EventTimeline&,float aspect);
   MaterialRuntime& materials();
+  // KEnvironment markers survive frame and viewport boundaries until a new
+  // player/view is initialized. Deferred effects read the latest transforms.
+  const SceneMarkers& markers() const;
   // Required for elapsed-time simulation; a fresh standalone viewport has delta 0.
   void begin_frame(std::int32_t milliseconds);
   void prepare_effect(std::size_t id,std::span<const std::uint32_t> parameters);

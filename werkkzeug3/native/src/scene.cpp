@@ -98,6 +98,7 @@ struct ScenePlayer::Impl {
   const Project& project;const Graph& graph;SplineLibrary splines;MaterialRuntime materials;SpatialSplines spatial;
   std::shared_ptr<ParticleRandom> random=std::make_shared<ParticleRandom>();
   SceneParticles particles;EffectParticles effects;FrameClock clock;SceneWalk walker;
+  SceneMarkers markers;
   struct EffectJob {std::size_t id;SceneMatrix world;std::array<AnimationVector,32> variables;std::uint32_t key;};
   std::vector<EffectJob> jobs;
   struct EffectOrder {std::int32_t pass{};unsigned usage=7;};
@@ -111,6 +112,7 @@ struct ScenePlayer::Impl {
   Impl(const Project& p,const Graph& g,const TextureOptions& options,std::shared_ptr<SceneAssets> shared):project(p),graph(g),splines(p),materials(p,g),spatial(p,g),particles(splines,random,p.runtime_graph),effects(random),walker(splines),assets(shared ? std::move(shared) : std::make_shared<SceneAssets>(p,g,options)),prepared(p.operators.size()),programs(p.operators.size()),visiting(programs.size()) {
     require(graph.nodes.size()==project.operators.size(),"scene graph size mismatch");
     require(assets->matches(p,g,options),"scene assets belong to a different project, graph or font");
+    markers.fill(scene_identity());
   }
   void valid(std::size_t id) const {require(id<programs.size() && graph.nodes[id].active,"invalid or inactive scene operator");}
   std::size_t alias(std::size_t id) const {
@@ -291,6 +293,14 @@ struct ScenePlayer::Impl {
       require(p.size()==1,"unsupported AdjustPass layout");const auto adjust=std::int64_t(pass)+std::bit_cast<std::int32_t>(p[0]);
       require(adjust>=-2147483648LL && adjust<=2147483647LL,"scene pass overflow");execute(one(),env,world,frame,timeline,depth+1,std::int32_t(adjust));break;
     }
+    case 0x181: {
+      require(p.size()==1 && node.inputs.size()==2,"Apply Spline needs a scene, a spline and a time");
+      const auto pose=spatial.evaluate(node.inputs[1],real(p,0),0,env,timeline);
+      execute(node.inputs[0],env,scene_combine(world,pose.world),frame,timeline,depth+1,pass);break;
+    }
+    case 0x182:
+      require(p.size()==1 && p[0]<markers.size() && node.inputs.size()<=1,"invalid scene Marker");
+      markers[p[0]]=world;children(world,pass);break;
     case 0x184:require(p.size()==1 && node.inputs.empty(),"unsupported Ambient layout");frame.ambient=p[0];break;
     case 0x185: {
       require(p.size()==1,"unsupported scene Select layout");if(node.inputs.empty())break;
@@ -353,6 +363,7 @@ struct ScenePlayer::Impl {
 ScenePlayer::ScenePlayer(const Project& p,const Graph& g,const TextureOptions& options,std::shared_ptr<SceneAssets> assets):impl(std::make_unique<Impl>(p,g,options,std::move(assets))) {}
 ScenePlayer::~ScenePlayer()=default;
 MaterialRuntime& ScenePlayer::materials() {return impl->materials;}
+const SceneMarkers& ScenePlayer::markers() const {return impl->markers;}
 void ScenePlayer::begin_frame(std::int32_t milliseconds) {impl->clock.advance(milliseconds);}
 void ScenePlayer::prepare_effect(std::size_t id,std::span<const std::uint32_t> p) {impl->prepare_effect(id,p);}
 SceneFrame ScenePlayer::viewport(std::size_t id,AnimationEnvironment env,float aspect,const SceneMatrix& world,EventTimeline* timeline) {
