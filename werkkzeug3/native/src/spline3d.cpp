@@ -47,10 +47,11 @@ std::shared_ptr<BlobSpline> curve(std::span<const std::uint8_t> bytes) {
   // only live keys. Version 1/2 resets tension, continuity and uniform timing.
   return out;
 }
-std::shared_ptr<BlobSpline> pipe(std::span<const std::uint8_t> bytes) {
+std::shared_ptr<BlobSpline> pipe(std::span<const std::uint8_t> bytes,std::shared_ptr<legacy::BlobPipe>& original) {
   require(bytes.size()>=64,"truncated pipe spline header");const auto count=word(bytes,0);
   require(word(bytes,4)==1 && count && count<=32768 && bytes.size()-64>=std::size_t(count)*32,"invalid pipe spline version or key count");
   auto out=std::make_shared<BlobSpline>();out->Mode=4;out->Count=2*count;out->Keys.resize(out->Count);out->Tension=real(word(bytes,12));
+  original=std::make_shared<legacy::BlobPipe>();original->Count=count;original->Keys.resize(count);
   sMatrix mat;mat.InitEuler(0,0,real(word(bytes,28))*legacy::sPI2F);float old_radius=0;
   sVector v;v.Init(real(word(bytes,16)),real(word(bytes,20)),real(word(bytes,24)));
   for(unsigned i=0;i<count;++i) {
@@ -61,6 +62,7 @@ std::shared_ptr<BlobSpline> pipe(std::span<const std::uint8_t> bytes) {
     p.AddScale3(d,old_radius);
     auto& first=out->Keys[2*i];first.Time=i+0.f;first.px=p.x;first.py=p.y;first.pz=p.z;first.rx=quat.x;first.ry=quat.y;first.rz=quat.z;first.Zoom=quat.w;
     old_radius=real(word(bytes,base+12));p=v;p.AddScale3(d,-old_radius);
+    original->Keys[i]={v.x,v.y,v.z,old_radius};
     auto& second=out->Keys[2*i+1];second.Time=i+.5f;second.px=p.x;second.py=p.y;second.pz=p.z;second.rx=quat.x;second.ry=quat.y;second.rz=quat.z;second.Zoom=quat.w;
   }
   out->Normalize();return out;
@@ -75,6 +77,7 @@ struct SpatialSplines::Impl {
   struct Node {
     std::size_t id{};
     std::shared_ptr<BlobSpline> data;
+    std::shared_ptr<legacy::BlobPipe> pipe;
     std::shared_ptr<Node> parent,amplitude;
     unsigned mode{};
     sVector translate_amp,rotate_amp,translate_freq,rotate_freq,center;
@@ -96,7 +99,7 @@ struct SpatialSplines::Impl {
       result=std::make_shared<Node>();result->id=id;
       if(op.command==0x18 || op.command==0x1a) {
         require(p.empty() && node.inputs.empty(),"invalid spatial spline blob operator");
-        result->data=op.command==0x18 ? curve(blob(project,op)) : pipe(blob(project,op));
+        result->data=op.command==0x18 ? curve(blob(project,op)) : pipe(blob(project,op),result->pipe);
       }else if(op.command==0x1c) {
         require(p.size()==4 && node.inputs.size()==1 && !(p[3]&~7u),"invalid SplineScale layout");
         const auto source=prepare(node.inputs[0],env,depth+1);require(bool(source->data),"SplineScale requires a plain or pipe spline");
@@ -156,6 +159,11 @@ void SpatialSplines::precalculate(std::size_t id,AnimationEnvironment& env) {con
 std::shared_ptr<legacy::BlobSpline> SpatialSplines::static_curve(std::size_t id,AnimationEnvironment& env) {
   const Nearest rounding;const auto node=impl->prepare(id,env);
   require(bool(node->data),"bone spline needs a static plain, pipe or scaled curve");return node->data;
+}
+std::pair<std::shared_ptr<legacy::BlobSpline>,std::shared_ptr<legacy::BlobPipe>> SpatialSplines::pipe_curve(std::size_t id,AnimationEnvironment& env) {
+  const Nearest rounding;const auto node=impl->prepare(id,env);
+  require(node->data && node->data->Mode==4 && node->pipe,"Pipe mesh requires an original pipe spline");
+  return {node->data,node->pipe};
 }
 SplinePose SpatialSplines::evaluate(std::size_t id,float time,float phase,const AnimationEnvironment& env,const EventTimeline* timeline) {
   const Nearest rounding;require(std::isfinite(time) && std::isfinite(phase),"invalid spatial spline evaluation time");

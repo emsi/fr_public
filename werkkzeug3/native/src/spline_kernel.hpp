@@ -25,5 +25,7 @@ struct BlobSpline {
   float Normalize();
   void Calc(float,sMatrix&,float&);
 };
+struct BlobPipeKey {float PosX{},PosY{},PosZ{},Radius{};};
+struct BlobPipe {int Count{};std::vector<BlobPipeKey> Keys;};
 void sPerlin3D(const sVector&,sVector&);
 } // namespace wz3::legacy

@@ -46,9 +46,11 @@ render surfaces, bitmap uploads, mesh/shadow/instance buffers, shaders or lighti
 tables, and did not rebake any textures during playback. Synchronized real-time
 Debris playback still needs performance work.
 Optimized particle mesh instancing, Color Correction and Bitmap Render are now
-supported. BoneChain/BoneTrain and weighted skinning now extend continuous
-playback through 124 seconds. The next failure is at 124,911 ms:
-MINMESH Pipe operator 4164 is not ported.
+supported. BoneChain/BoneTrain and weighted skinning extend continuous
+playback through 124 seconds. Pipe meshes now extend offline rendering through
+180 seconds (11,251 frames), including the tangled-rail sequence. The 124-second
+capture remains byte-identical to the preceding milestone. Later scenes are
+still being checked; this is not a complete Debris playback claim.
 DejaVu Sans captures show textured buildings,
 lighting, shadows and cables. The playback test uses dummy audio; physical
 speaker output and synchronization remain unverified. This is progress through
@@ -195,8 +197,23 @@ routines. It also supports Add and conversion from the older indexed mesh
 format. MINMESH retains up to eight corners per polygon, both UV sets and
 two-vertex stitch records; normals/tangents and shadow adjacency come from its
 own kernels. Material links retain operator identities and pass numbers.
-Animated mesh initialization, Pipe, Font3D, Multiply and Perlin
+Animated mesh initialization, Font3D, Multiply and Perlin
 displacement still fail explicitly.
+
+MINMESH Pipe runs the archived constructor with borrowed source meshes and an
+owned result. Pipe splines retain their original corner positions and setbacks
+alongside the quaternion curve; SplineScale still drops that metadata, as in
+the archive. Straight sections retain the 1..64 repetition rule. Bends rotate
+the supplied curved mesh (or reuse the straight mesh), and optional rings are
+placed at both ends and between them. Continuous UV mapping preserves the
+original interior-angle distance expression, even when it differs from the
+geometric arc length. Vertex attributes, material clusters and face flags survive.
+
+`minmesh_pipe` checks 128 combinations of flags and optional curve/ring inputs
+against analytic geometry and UVs, a 60-degree bend with negative texture scale,
+the repetition cap, malformed inputs, rounding-mode restoration and unchanged
+source meshes. All 31 complete saved Pipe graphs build, and their shadow topology
+matches the archived engine preparation. These checks pass under Clang ASan/UBSan.
 
 MINMESH BoneChain runs the archived cubic binding algorithm, including negative
 weights, 1/1024 quantization, endpoint clamping and its original use of vertex X

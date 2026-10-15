@@ -1,6 +1,7 @@
 // Distributed under the BSD license in werkkzeug3/LICENSE.txt.
 #include "minmesh_kernel.hpp"
 #include "wz3/texture.hpp"
+#include "wz3/spline3d.hpp"
 #include <bit>
 #include <tuple>
 
@@ -114,6 +115,15 @@ public:
         parameters(op,3);require(node.inputs.size()==2,"BoneTrain needs a mesh and spline");
         mesh=std::make_shared<GenMinMesh>(*get(node.inputs[0],depth+1));
         bone_train(*mesh,bone_spline(project,graph,node.inputs[1]),real(op,0),integer(op,1,7),real(op,2));break;
+      }
+      case 0x12c: {
+        parameters(op,4);require(node.inputs.size()>=2 && node.inputs.size()<=4,"Pipe needs a spline, straight mesh and optional curve/ring meshes");
+        SpatialSplines splines(project,graph);auto env=frame_environment(0);
+        auto [spline,pipe]=splines.pipe_curve(node.inputs[0],env);
+        const auto straight=get(node.inputs[1],depth+1);
+        const auto curved=node.inputs.size()>2 ? get(node.inputs[2],depth+1) : nullptr;
+        const auto rings=node.inputs.size()>3 ? get(node.inputs[3],depth+1) : nullptr;
+        mesh.reset(pipe_mesh(*spline,*pipe,*straight,curved.get(),rings.get(),op.parameters));break;
       }
       case 0x134: {
         parameters(op,21);require(node.inputs.size()==1 || node.inputs.size()==2,"MINMESH Explode needs a mesh and optional bitmap");

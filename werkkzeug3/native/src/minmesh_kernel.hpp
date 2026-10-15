@@ -5,6 +5,7 @@
 #include "mesh_kernel.hpp"
 #include <map>
 
+namespace wz3::legacy {struct BlobSpline;struct BlobPipe;}
 namespace wz3::legacy::minimal {
 using sU16=std::uint16_t;using sS8=std::int8_t;using sF64=double;
 constexpr int KMM_MAXBONE=4,KMM_MAXUV=2,KMM_MAXVERT=8,KC_MATERIAL=1;
@@ -132,6 +133,7 @@ GenMinMesh* explode(GenMinMesh&,const Texture*,std::span<const std::uint32_t>);
 GenMinMesh* bone_chain(GenMinMesh&,std::span<const std::uint32_t>);
 GenMinMesh* bone_train(GenMinMesh&,std::shared_ptr<GenSpline>,float delta,unsigned mode,float offset);
 std::shared_ptr<GenSpline> bone_spline(const Project&,const Graph&,std::size_t);
+GenMinMesh* pipe_mesh(BlobSpline&,BlobPipe&,const GenMinMesh&,const GenMinMesh*,const GenMinMesh*,std::span<const std::uint32_t>);
 Mesh export_mesh(std::shared_ptr<GenMinMesh>);
 std::shared_ptr<const Mesh> evaluate_kernel(const Project&,const Graph&,std::size_t,const TextureOptions& = {});
 } // namespace wz3::legacy::minimal

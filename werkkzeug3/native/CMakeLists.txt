@@ -78,6 +78,12 @@ add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/bone_kernel.inc
   DEPENDS tools/bone_kernel.py tools/particles_oracle.py ../genminmesh.cpp ../engine.cpp VERBATIM)
 target_sources(wz3_project PRIVATE src/bones.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/bone_kernel.inc")
 set_source_files_properties(src/bones.cpp PROPERTIES COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/pipe_kernel.inc"
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/pipe_kernel.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../genminmesh.cpp" "${CMAKE_CURRENT_BINARY_DIR}/generated/pipe_kernel.inc"
+  DEPENDS tools/pipe_kernel.py tools/particles_oracle.py ../genminmesh.cpp VERBATIM)
+target_sources(wz3_project PRIVATE src/minmesh_pipe.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/pipe_kernel.inc")
+set_source_files_properties(src/minmesh_pipe.cpp PROPERTIES COMPILE_OPTIONS "-frounding-math;-ffp-contract=off")
 add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/spline_kernel.inc"
   COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/spline_kernel.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/../genblobspline.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/../_types.cpp"
@@ -229,6 +235,11 @@ if(BUILD_TESTING)
   add_test(NAME minmesh_bones COMMAND wz3-bone-tests)
   add_test(NAME debris_bones COMMAND wz3-bone-tests "${CMAKE_CURRENT_SOURCE_DIR}/../data/debris/debris_9241_c.k")
   set_tests_properties(debris_bones PROPERTIES TIMEOUT 240)
+  add_executable(wz3-pipe-tests tests/minmesh_pipe.cpp tests/minmesh_reference.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/minmesh_oracle.inc")
+  target_include_directories(wz3-pipe-tests PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_compile_options(wz3-pipe-tests PRIVATE -frounding-math -ffp-contract=off)
+  target_link_libraries(wz3-pipe-tests PRIVATE wz3_project)
+  add_test(NAME minmesh_pipe COMMAND wz3-pipe-tests "${CMAKE_CURRENT_SOURCE_DIR}/../data/debris/debris_9241_c.k")
   if(WZ3_SANITIZE)
     set_tests_properties(debris_bones PROPERTIES TIMEOUT 900)
   endif()
