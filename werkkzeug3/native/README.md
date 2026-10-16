@@ -1,11 +1,21 @@
-# Native Linux work on fr-038: Theta
+# Native Linux Werkkzeug3 player and tools
 
-This directory contains a native Linux port of the Werkkzeug3 player used by
-fr-038. `wz3-player` plays the saved Theta project in an SDL2 window with Ogg
-audio and an audio-sample clock. The original Windows sources and Theta assets
-remain the reference; no Wine or Windows SDK is needed for these targets.
+This directory contains the native Linux Werkkzeug3 player, procedural asset
+runtime and inspection/rendering tools. `wz3-player` plays **fr-038: Theta** and
+the complete **saved fr-041: Debris project** in an SDL2 window with EGL/GLES3
+rendering. Ogg decoding and native V2 synthesis feed the same audio-sample clock.
+The archived sources and project assets remain the reference; no Wine or
+Windows SDK is needed to build or run these targets.
 
-The player renders the complete timeline with saved materials, lighting, shadows,
+Start with the repository's [Linux overview and quick start](../../README.md).
+This guide records detailed implementation and validation results, including
+historical intermediate milestones. Current complete-playback status is summarized
+below. Support for these projects does not imply a port of the editor, the
+`.kkrieger` game or every engine in the archive.
+
+## Theta playback status
+
+Theta renders the complete timeline with saved materials, lighting, shadows,
 fog, particles, credits and image effects. It supports both the archived editor
 project and the recovered final 1.01 release graph. The release runs through its
 verified beat-592 endpoint: **16,083 consecutive frames at 1024×768**, advancing
@@ -15,7 +25,7 @@ The editor project has different content and a beat-609 endpoint. Audible
 synchronization on a physical sound device and whole-demo original-output
 fidelity remain unverified; see the release comparison below.
 
-## Debris port in progress
+## Debris playback status
 
 The native reader accepts both archived Debris projects directly:
 
@@ -89,8 +99,7 @@ original-output match. DXT textures require S3TC support from the GLES driver.
 Comparison with the released Debris images remains outstanding. RenderAuto is
 unported, but it is not reachable in this project.
 The player synthesizes its V2 soundtrack into stereo PCM before playback, using
-the same SDL callback clock as Ogg music. The existing Theta renderer and released-clock profile
-do not establish compatibility with Debris. `debris_projects` compares the real
+the same SDL callback clock as Ogg music. `debris_projects` compares the real
 wrapped files with their legacy documents and tests malformed container handling.
 
 The final camera's EventTime wrapper returns the same cached spline object as

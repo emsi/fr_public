@@ -1,22 +1,141 @@
-# Hi!
+# Farbrausch tools — native Linux Werkkzeug3
 
-This fork has an ongoing **native Linux port of fr-038: Theta** on the
-`native-linux` branch. See [the native build instructions](werkkzeug3/native/README.md)
-for the project reader, graph inspector, procedural textures, font atlases and
-native GPU mesh previews.
-Theta plays through its complete timeline on Linux. Native playback of
-**fr-041: Debris's saved project** now completes its full 436.224-second timeline,
-including the ending's Water reflections and animated bridges, with a native V2
-soundtrack. All 563 reachable MINMESH operators evaluate. The full callback-paced
-check on a Radeon RX 7900 XT at 1280x640 averages 59.33 presentations per second,
-with a 24 ms maximum draw and 47 ms maximum audio-clock lag. Preparing the full
-project takes 92 seconds, plus music synthesis. This complete-timeline check uses
-SDL offscreen video and dummy audio; earlier X11 playback was verified through
-330 seconds. Thirteen captures remain byte-identical after the performance fixes.
-The release suite passes 86 checks, including 28 graphics checks. Visual parity
-with the released Debris executable and physical audio synchronization remain
-unverified.
-The original archive follows below.
+The `native-linux` branch adds a native Linux Werkkzeug3 player and procedural
+asset tools to Farbrausch's historical source archive. **Both fr-038: Theta and
+the complete saved fr-041: Debris project now play on Linux**, with native audio,
+GPU rendering and their original procedural scene graphs. Building and running
+the native targets requires no Windows SDK or Wine.
+
+## What works
+
+| Production / component | Native Linux status |
+| --- | --- |
+| **fr-038: Theta** | Complete playback of the archived editor project and the recovered final 1.01 release graph. The release reaches its verified beat-592 endpoint; its cached fonts require no host font substitution. |
+| **fr-041: Debris** | Complete playback of `debris_9241_c.k`: **436.224 seconds**, including the ending's Water reflections and animated bridges. All **563 reachable MINMESH operators** evaluate. The included V2 soundtrack is synthesized natively. |
+| **Procedural graphics** | Texture generation, font atlases and 3D text, meshes, materials, lighting, shadows, fog, particles, skinning, spline animation, render-to-texture and image effects. |
+| **Music** | Ogg Vorbis decoding and CPU synthesis of supported compact `.v2m` modules, with playback driven by SDL's audio callback clock. A standalone tool inspects V2M files and renders WAV audio. |
+| **Inspection and rendering tools** | Project/graph inspection, texture and mesh previews, scene/frame rendering, deterministic offline playback and timestamped captures. |
+
+This is a player/tool port with project-specific verification. It does not yet
+provide the Werkkzeug editor, a playable `.kkrieger` game, or general compatibility
+with every project and engine in the archive. Reading a project graph alone does
+not establish that all its operators can execute.
+
+See the [native port guide](werkkzeug3/native/README.md) for implementation details,
+operator coverage, reference comparisons and validation history.
+
+## Build on Linux
+
+Run these commands from the repository root. On Debian/Ubuntu:
+
+```sh
+sudo apt-get install build-essential cmake ninja-build python3 pkg-config \
+  libjpeg-dev libfreetype-dev libglu1-mesa-dev libsdl2-dev libvorbis-dev \
+  libegl-dev libgles-dev fonts-dejavu-core
+
+cmake -S werkkzeug3/native -B build/native -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DWZ3_BUILD_RENDERER=ON -DWZ3_BUILD_PLAYER=ON -DWZ3_TEST_GRAPHICS=ON
+cmake --build build/native
+ctest --test-dir build/native --output-on-failure
+```
+
+The executable is **`build/native/wz3-player`**. Rendering requires EGL/OpenGL ES
+3.0 and a working graphics driver; Debris's DXT textures also require S3TC support.
+An accelerated GPU is recommended for full-demo playback. CPU-only project
+inspection, procedural asset generation and V2 music synthesis can be built
+without enabling the renderer/player; see [Build and inspect](werkkzeug3/native/README.md#build-and-inspect).
+
+## Play Theta and Debris
+
+The saved editor projects and their music are included in the repository:
+
+```sh
+# fr-038: Theta — archived editor project
+./build/native/wz3-player werkkzeug3/data/theta/theta_final.k \
+  --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+
+# fr-041: Debris — complete saved project, including its ending
+./build/native/wz3-player werkkzeug3/data/debris/debris_9241_c.k \
+  --font-file /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+```
+
+These commands use DejaVu Sans as an explicit substitute for uncached Arial text.
+The recovered **Theta final 1.01 release** has different content from the editor
+project and includes its own cached font atlases. Follow the one-time
+[Linux release extraction instructions](werkkzeug3/native/README.md#release-reference-audit), then run:
+
+```sh
+./build/native/wz3-player build/reference/theta/extracted/theta.wz3r
+```
+
+Useful player options:
+
+- `--width 1920 --height 1080` changes internal rendering resolution. Resizing the
+  window scales the rendered picture while preserving its aspect ratio.
+- `--duration 30` limits both preparation and playback. Omit it for the complete
+  project timeline; `--duration 330` stops Debris before its ending.
+- `--music PATH.ogg` or `--music PATH.v2m` overrides the saved music filename.
+- `--mute` silences output while still loading existing music and preserving the
+  audio clock. Only in this mode may an absent music file use a silent clock;
+  corrupt existing files still fail. A working audio backend is still required.
+- `--offline` renders without an audio device or real-time pacing, retaining the
+  same simulation and render-target history. Use `SDL_VIDEODRIVER=offscreen` for
+  rendering without a visible window.
+- `--capture LAST.ppm` saves the last frame; repeat
+  `--snapshot SECONDS FRAME.ppm` to capture selected times during playback.
+
+The window title uses the loaded project's name, falling back to its filename.
+Escape or closing the window exits. Seeking, pause and looping are not implemented.
+Music is loaded from the saved song's basename beside the project unless overridden;
+it is not embedded in `wz3-player`.
+
+## Performance and verification
+
+Preparation now caches procedural assets, texture branches, material bindings,
+skinning data and GPU resources, and draws only newly encountered resource
+configurations during warm-up. The documented complete Debris run creates no
+additional cached graphics resources or texture bakes during playback.
+
+Recorded results on a **Radeon RX 7900 XT at 1280×640**:
+
+| Complete Debris project | Recorded result |
+| --- | --- |
+| Timeline | 436.224 seconds; 27,266 simulation frames |
+| Preparation | 72.88 seconds, down from 92.45 seconds before material-binding caching |
+| V2 music synthesis | 16.03 seconds; loading finished 88.96 seconds after launch |
+| Callback-paced playback | 59.42 presentations per wall second; maximum draw 22.91 ms |
+| Image regression checks | 13 captures, including the ending, unchanged after the performance fixes |
+
+These complete-timeline measurements use SDL **offscreen video and dummy audio**.
+Windowed X11 playback was separately verified through 330 seconds. The recorded
+release suite passed **86 checks, including 28 graphics checks**, with additional
+focused Clang ASan/UBSan checks. These are prior validation results, not promises
+of the same performance on other hardware or at higher resolutions.
+
+The saved Debris project has not yet been compared against the released Windows
+executable's images. Theta has release-graph extraction and reference comparisons,
+with remaining visual/frame-phase differences. Physical audio-device latency and
+whole-demo audiovisual fidelity remain unverified. Full Debris loading is still
+substantial, and total memory requirements have not been measured. Detailed
+results and remaining work are in the [native port guide](werkkzeug3/native/README.md).
+
+## Inspect compact V2 music
+
+V2M contains synthesizer patches and timed musical events rather than a recorded
+PCM soundtrack. Inspection and synthesis need neither a GPU nor an audio device:
+
+```sh
+./build/native/wz3-v2m werkkzeug3/data/debris/debris_ost.v2m
+./build/native/wz3-v2m werkkzeug3/data/debris/debris_ost.v2m \
+  --render build/native/debris.wav
+```
+
+The native synthesizer uses the archive's C++ V2 DSP. Scheduling is checked against
+the archived player; bit-exact fidelity to its original assembly synthesizer is
+not established. Unsupported historical patch layouts and active Ronan speech
+fail explicitly.
+
+## Original archive README
 
 This is it. Pretty much a history of Farbrausch tools 2001-2011. We've been
 meaning to release all this for ages, in various forms, and always ended up
